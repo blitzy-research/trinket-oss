@@ -4,9 +4,9 @@ This guide walks through the prerequisites, configuration, and commands needed t
 
 ## Prerequisites
 
-- [Docker](https://docs.docker.com/get-docker/) and Docker Compose
+- [Docker](https://docs.docker.com/get-docker/) and Docker Compose - the Compose commands here are the plugin form, `docker compose <verb>`, and not the standalone `docker-compose` script
 - Git
-- Node.js 18+ (only required for local development without Docker)
+- Node.js 22 LTS with npm 10 (only required for local development without Docker). The version is the requirement, not a version manager: `package.json` declares `node >=22.0.0 <23.0.0` and `npm >=10.0.0 <11.0.0`, and `.nvmrc` contains `22`. `nvm use` reads that file where nvm is installed; without nvm, any Node 22 install satisfies it just as well
 - MongoDB 5.0+ (runs inside Docker by default)
 - Redis (optional - falls back to in-memory store when disabled)
 
@@ -25,14 +25,24 @@ When using the Docker workflow, Docker and Git are all you need - everything els
    cp config/local.example.yaml config/local.yaml
    ```
 
-3. Start the services:
+3. Build the stylesheets into the checkout:
    ```bash
-   docker-compose up
+   npm ci && npm run build
+   # or instead of that line, with no Node on the host, run the same build
+   # in a Node 22 container:
+   docker run --rm -v "$PWD":/app -w /app node:22-bookworm sh -c 'npm ci && npm run build'
+   ```
+
+   Compose bind-mounts the checkout over the application directory and keeps only `node_modules` and `public/components` as named volumes, so `/css/base.css` and `/css/embed.css` are served from the checkout's `public/css/` rather than from the copies the image built. Those two files are generated and gitignored: on a fresh clone they are absent and both requests answer 404 until this step has run. An image run without the checkout mounted over it serves its own copies and needs no such step. The build does not run inside the `app` container - the shipped image carries production dependencies only, so `vite` and `sass` are absent there - which is why both forms above build outside it.
+
+4. Start the services:
+   ```bash
+   docker compose up
    ```
 
    Wait until you see `Server started on port:` in the logs.
 
-4. Open **http://localhost:3000** in your browser.
+5. Open **http://localhost:3000** in your browser.
 
 ## Configuration
 
@@ -44,7 +54,7 @@ Configuration is managed through YAML files in the `config/` directory:
 | `local.yaml` | Local overrides and secrets (gitignored) |
 | `production.yaml` | Production overrides (gitignored) |
 
-Copy `config/local.example.yaml` to `config/local.yaml` and fill in the required values.
+Copy `config/local.example.yaml` to `config/local.yaml` and fill in the required values. **One value in that file is Compose-specific**: it ships `db.mongo.host: mongodb`, which is the service name inside the Compose network. Running the application directly on the host, set it to `localhost` — the example file carries the same note inline against that key (**measured**: `config/local.example.yaml:29`).
 
 ### Required Configuration
 
@@ -52,12 +62,14 @@ Copy `config/local.example.yaml` to `config/local.yaml` and fill in the required
 |---------|-------------|
 | `app.plugins.session.cookieOptions.password` | Session cookie secret (min 32 chars) |
 
+In production this secret is mandatory - the application prints the setting it needs and exits with status 1 when the value is unset or shorter than 32 characters. Outside production it generates an ephemeral secret when none is configured, so a freshly cloned checkout boots, and logs one line to say it has done so. That generated secret is not for production use: it is new on every start, so sessions signed with it do not survive a restart. Set the value in `config/local.yaml` (or through the runtime environment) to keep sessions valid across restarts.
+
 ### Optional Integrations
 
 | Setting | Description |
 |---------|-------------|
 | `app.mail.*` | SMTP settings for email (password reset, notifications) |
-| `aws.*` | S3 (or S3-compatible) storage for user-uploaded assets |
+| `aws.*` | S3 storage for user-uploaded assets |
 | `app.auth.google.*` | Google OAuth login |
 | `app.recaptcha.*` | reCAPTCHA spam protection |
 | `db.redis.*` | Redis cache/session store (in-memory fallback otherwise) |
@@ -69,12 +81,19 @@ Without email configured, password reset is unavailable but users can still regi
 
 1. Install dependencies:
    ```bash
-   npm install
+   npm ci
    ```
 
-2. Start MongoDB locally (Redis is optional).
+2. Build the frontend assets:
+   ```bash
+   npm run build
+   ```
 
-3. Run the application:
+   The frontend components are gitignored and distributed separately, so `npm run build` retrieves and verifies them before compiling the CSS; `npm run fetch-components` retrieves them on their own. The build writes `public/css/base.css` and `public/css/embed.css`. From a freshly cleaned tree, `npm ci` exits 0 without `--legacy-peer-deps`, `npm run build` exits 0, and both stylesheets are present afterwards. A second `npm run build` re-verifies the installed component tree against the digest recorded when it was published and skips the download.
+
+3. Start MongoDB locally (Redis is optional).
+
+4. Run the application:
    ```bash
    node app.js
    ```
@@ -85,6 +104,8 @@ Without email configured, password reset is unavailable but users can still regi
 npm test
 ```
 
+The test script starts an in-memory MongoDB instance for the run and stops it afterwards, so a locally running database is not needed to run the tests.
+
 ## Services
 
 | Service | Port | Description |
@@ -92,14 +113,15 @@ npm test
 | app | 3000 | Trinket web application |
 | mongodb | 17017 | MongoDB database |
 | redis | 16379 | Redis (optional - uses in-memory fallback if disabled) |
-| nginx | 443 | HTTPS proxy (optional) |
+
+These are the services `docker-compose.yml` defines. The repository's only nginx is the serverside reverse proxy, published on 8080 and documented in `serverside/README.md`; the root Compose file has no HTTPS proxy and no 443 listener.
 
 ## Creating an Admin User
 
 After registering a user through the web interface, promote them to admin:
 
 ```bash
-docker-compose exec app npm run make-admin user@example.com
+docker compose exec app npm run make-admin user@example.com
 ```
 
 Admin users can access `/admin` for site administration features.

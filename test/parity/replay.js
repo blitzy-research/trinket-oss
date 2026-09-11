@@ -1,0 +1,21857 @@
+#!/usr/bin/env node
+'use strict';
+
+// The parity gate: replay, diff and coverage accounting.
+//
+// Drives the committed baseline corpus against a RUNNING application and
+// compares what came back with what was recorded, entry by entry and field by
+// field. A clean replay is what establishes that the tree under test answers
+// every registered route as the baseline did - status, content-type, cookies,
+// body shape. The verdict is binary: either every scenario was compared
+// against every route in the manifest and it exits 0, or it exits non-zero
+// naming what differed. It records no baseline and never rewrites a corpus;
+// capture.js does that, deliberately in a separate file.
+//
+// INVOCATION
+//   node test/parity/replay.js --app . --port 3010
+//   node test/parity/replay.js --app <baseline-worktree> --pass non-secure
+//   node test/parity/replay.js --app . --only /quirk\./ --pass non-secure
+//   -h prints the whole option list. Diagnostics and the report go to stderr;
+//   stdout carries nothing unless --print-report asks for it. As a module,
+//   `replay(options)` returns the result document and never throws for a
+//   difference; the CLI runs under `require.main === module` only.
+//
+// ARTIFACT
+//   --out    the result document: schema, tool, verdict, exitCode,
+//            gateQualifying and the requirement-by-requirement
+//            gateQualification, warningGate, gates, approvedDeviations,
+//            volatileSet, comparisonContract, sources, passes.
+//   <out>.provenance.json  the sidecar over the exact bytes written; the same
+//            block is embedded in the result, so it is attributable alone.
+//   --report the human report, echoed to stderr and written to a file so it
+//            can be cited rather than re-run.
+//   All three are written atomically and whatever the verdict, because a
+//   failing run is exactly the run whose artifacts someone needs.
+//
+// THE APPLICATION IS A CHILD PROCESS, NEVER A REQUIRE. `--app` names the
+// worktree and ./server spawns the application there against that tree's own
+// install, which is what lets one process drive a baseline worktree and a
+// migrated one. Nothing here loads app.js, the configuration or library trees,
+// or the suite's helper and spec directories - the suite's flow helper requires
+// app.js at its top, so naming those would pull the application in sideways.
+//
+// AN INPUT IS VERIFIED BEFORE IT IS CONSUMED. The corpus and the route manifest
+// pass through `require('./manifest').provenance`, and a corpus additionally
+// REQUIRES its `<corpus>.provenance.json` sidecar to attest a capture of the
+// baseline commit - one captured from the tree under test compares cleanly
+// against itself and proves nothing. A corpus holding no recorded response is
+// not replayable and the run says so, naming capture.js. Capture drops the
+// `expectedDeviation` and `unreachableReason` markers that live in the
+// committed definition corpus, so `--annotations <path>` joins them back on
+// by scenario id; without it a missing marker makes the difference FAIL.
+//
+// NOTHING IS NORMALIZED AWAY THAT COULD BE COMPARED EXACTLY. Every field
+// normalized is a field the migration is no longer checked on, so the volatile
+// set is a closed list of six categories held in one named value (THE VOLATILE
+// SET below), every act of normalization goes through it, and the probes beside
+// it assert at startup that each rule fires and touches nothing around it.
+// Everything else is compared exactly - each named header and Set-Cookie
+// attribute, the markup surface, JSON scalar by scalar, and bodies under the
+// contract `describeBinaryBodyContract` emits into every artifact.
+//
+// EVERY REQUEST HAS A FINITE BUDGET, AND AN EXPECTED TIMEOUT IS A RESULT. A
+// step replays under the timeout it recorded, or --timeout where it recorded
+// none, so a route that never settles is compared as the timeout it is.
+//
+// COVERAGE IS ACCOUNTED, NOT SAMPLED. Every manifest entry has to be
+// represented by a scenario: an unrepresented route FAILS the run, and an
+// entry that cannot be driven is listed with its stated reason. Both cookie
+// configurations run by default and are reported separately, the secure pass
+// deriving its expectation from the non-secure recording, and saying so, until
+// --secure-corpus supplies a measured one. A difference fails even when the new
+// behaviour looks better, unless the scenario carries an approved deviation
+// marker and the deviation materialized as approved: there is no --force, no
+// threshold and no pass-with-warnings mode, and a narrowed run is labelled
+// `gateQualifying: false` in both artifacts and in the closing line.
+
+var http         = require('http');
+var https        = require('https');
+var fs           = require('fs');
+var os           = require('os');
+var path         = require('path');
+var crypto       = require('crypto');
+var childProcess = require('child_process');
+// For one thing only: inflating a ZIP entry so an archive container can be
+// compared by its STRUCTURE instead of by a digest that is a clock read. See
+// the ARCHIVE CONTAINERS section, which is the whole of this dependency.
+var zlib         = require('zlib');
+// For one thing only: asking the application's port whether anything is still
+// listening. See `serverAlive` for why the process record is not enough.
+var net          = require('net');
+
+// The parity modules. Every one of these is a declared dependency of this file.
+var server   = require('./server');
+var mongo    = require('./mongo');
+var seed     = require('./seed');
+var manifest = require('./manifest');
+
+// Applied BEFORE the fixture catalogues below, because ./fixtures/mail requires
+// lib/util/mailer.js, which requires the npm `config` package at module scope -
+// so merely requiring THIS file loads `config`, and without the isolation the
+// `config` package then creates config/runtime.json inside the checkout it is
+// resolving from.
+//
+// `appRoot: TOOL_ROOT` is the second half and is not optional: the config this
+// PROCESS loads is this tool's own tree, and `config` resolves its directory
+// from the working directory unless told otherwise - so an inherited
+// NODE_CONFIG_DIR pointing at another tree would be honoured and the fixtures
+// would read that tree's buckets, mail settings and feature flags into this
+// run's evidence. The runtime-layer controls alone do not reconcile it, so the
+// call names the tree.
+//
+// The root is computed here rather than read from TOOL_ROOT below, because
+// `var` hoists the declaration but not the assignment: this call runs before
+// that line, so TOOL_ROOT would still be `undefined` and the reconciliation
+// would silently be skipped. It is the same path by the same expression.
+mongo.isolateRuntimeConfig({
+  appRoot   : path.resolve(__dirname, '..', '..'),
+  configDir : 'set'
+});
+
+// The zero-warning gate, stated once for all four parity gates. Nothing about
+// the bar is decided in this file: what counts as a notice, which flags the
+// measurement requires, and the fact that there are no allowances all live in
+// test/parity/warning-policy.js, and this file supplies the evidence and the
+// breadth requirements that only a full replay can know about.
+var warningPolicy = require('./warning-policy');
+
+// The fixture catalogues, required for their frozen reference data only.
+//
+// Both auto-install on first require, and the http one patches this process's
+// global fetch so that an endpoint it holds no recording for REJECTS rather
+// than reaching the network. A driver built on global fetch would therefore
+// have every one of its own requests to localhost refused the moment the
+// catalogue loaded. This file drives through node:http and restores both
+// fixtures immediately, so nothing in this process stays patched; the copies
+// that matter run in the CHILD, where ./server preloads them.
+var httpFixture = require('./fixtures/http');
+var mailFixture = require('./fixtures/mail');
+
+// The model-boundary fault fixture, required for its `arming()` builder only,
+// so the arming document's field names live in one place. Safe to require here
+// for the reason its header gives: it loads no application module and patches
+// nothing until something requires lib/models/user, which this process never
+// does.
+var modelFixture = require('./fixtures/model');
+
+// Required lazily, after PARITY_S3_ROOT has been pointed at the launcher's
+// store, because it resolves its root at load.
+var awsFixture = null;
+
+// The restores are wrapped because a restore fault must not take the run down
+// before it has reported anything useful.
+try {
+  httpFixture.restore();
+}
+catch (httpRestoreError) {
+  process.stderr.write('replay: warning: could not restore the http fixture ' +
+    'in this process: ' +
+    (httpRestoreError && httpRestoreError.message
+      ? httpRestoreError.message
+      : String(httpRestoreError)) + '\n');
+}
+
+try {
+  mailFixture.restore();
+}
+catch (mailRestoreError) {
+  process.stderr.write('replay: warning: could not restore the mail fixture ' +
+    'in this process: ' +
+    (mailRestoreError && mailRestoreError.message
+      ? mailRestoreError.message
+      : String(mailRestoreError)) + '\n');
+}
+
+try {
+  modelFixture.restore();
+}
+catch (modelRestoreError) {
+  process.stderr.write('replay: warning: could not restore the model fixture ' +
+    'in this process: ' +
+    (modelRestoreError && modelRestoreError.message
+      ? modelRestoreError.message
+      : String(modelRestoreError)) + '\n');
+}
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+var LOG_PREFIX = 'replay: ';
+
+// The repository root. Used as the working directory of every child this file
+// spawns, so one consistent module tree resolves for the tooling regardless of
+// which worktree `--app` names.
+var TOOL_ROOT = path.resolve(__dirname, '..', '..');
+
+// The two committed inputs. These are READ defaults and stay repository paths:
+// reading the corpus and the manifest a reviewer can see is the point, and a
+// read cannot damage either.
+var DEFAULT_CORPUS   = path.join(__dirname, 'corpus.json');
+var COMMITTED_MANIFEST = path.join(__dirname, 'route-manifest.json');
+
+// The secure-mode recording, and the reason it is a READ DEFAULT rather than a
+// flag every caller has to remember.
+//
+// AAP §0.9.3 requires two passes - the overlay run once with `isSecure` unset
+// and once in secure mode - and the secure pass is only a MEASUREMENT when it
+// compares against a corpus captured in that configuration. Without one the
+// pass derives its expectation from the non-secure recording and
+// `qualifyGate`'s `measured-secure-pass` requirement refuses gate status, which
+// is what `npm run verify:corpus` was doing: it passes `--pass both` and no
+// `--secure-corpus`, so the gate command could not qualify however cleanly the
+// comparison ran.
+//
+// Resolving the committed artifact here rather than in the npm script is what
+// closes that without a second command-line: `--secure-corpus` still overrides
+// it, `--no-secure-corpus` still declines it, and a tree that carries no
+// secure recording behaves exactly as before. Like DEFAULT_CORPUS this is a
+// path this tool only ever READS.
+var DEFAULT_SECURE_CORPUS = path.join(__dirname, 'corpus.secure.json');
+
+// The authorized rendered-output difference register. Read by default for the
+// same reason, and written only by `--authorize`.
+//
+// It is NOT the approved-deviation register and must never be confused with
+// it: that one is closed at the two deviations AAP §0.7 decided and is hand
+// authored in this file (`approvedDeviationRegister`). This one is a GENERATED
+// record of the rendered-output differences that later order-0 remediations
+// mandated - one entry per scenario, step and comparison field, carrying both
+// values verbatim and naming the order-0 finding that authorized it. See THE
+// AUTHORIZED RENDERED-OUTPUT DIFFERENCE REGISTER below for the whole contract.
+var DEFAULT_AUTHORIZED_DIFFERENCES =
+  path.join(__dirname, 'corpus.authorized.json');
+
+// The environment variable that names ONE scratch directory for the default
+// artifacts of every test/parity tool.
+//
+// There is deliberately NO repository default for anything this tool WRITES.
+// Result, provenance and report destinations that fall back to test/parity/
+// mean every ordinary invocation - a diagnostic run, an `--only` subset, a
+// harness spawning this file - drops three untracked files into source. So a
+// destination is either named on the command line or taken from this
+// directory; a path inside the worktree is still allowed but has to be asked
+// for.
+var ARTIFACT_DIR_ENV = 'PARITY_ARTIFACT_DIR';
+
+// The basenames used when a destination comes from ARTIFACT_DIR_ENV rather
+// than from a flag.
+var ARTIFACT_NAMES = {
+  result   : 'replay-result.json',
+  report   : 'replay-report.txt',
+  manifest : 'route-manifest.json'
+};
+
+// Matches capture.js. A step that recorded its own timeout carries it, and this
+// is the fallback for one that does not.
+var DEFAULT_TIMEOUT_MS = 15000;
+
+// The readiness budget. Generous because the child provisions a database, loads
+// every controller and compiles the view engine before it answers.
+var DEFAULT_READY_TIMEOUT_MS = 120000;
+
+// Budgets for the children this file runs, all finite. This tool holds an
+// in-memory mongod and one or two application servers open while it works, so a
+// child that never finishes does not just delay the comparison - it strands
+// those and the result artifact is never written.
+//
+//   SEED_TIMEOUT_MS      The seeder writes a fixed set of fixtures into a
+//                        database this process provisioned. Normally under a
+//                        second; the budget covers a cold `mongoose` load and
+//                        mongod's own 30s server-selection window.
+//   SEED_KILL_GRACE_MS   SIGTERM to SIGKILL, and SIGKILL to giving up on
+//                        reaping. Short: the seeder holds nothing worth
+//                        flushing.
+//   GIT_TIMEOUT_MS       `git rev-parse HEAD`, local and instant.
+//   CHILD_TIMEOUT_MS     The route-manifest generator and the object-store
+//                        manifest child, which load application modules.
+var SEED_TIMEOUT_MS    = 120000;
+var SEED_KILL_GRACE_MS = 5000;
+var GIT_TIMEOUT_MS     = 10000;
+var CHILD_TIMEOUT_MS   = 120000;
+
+// The only options that may appear more than once. `--only` accumulates a
+// scenario selection and `--node-flags` accumulates the flags the child is
+// started with; every other option takes effect once, and a second occurrence
+// is a usage error rather than a silent last-one-wins.
+var REPEATABLE_OPTIONS = ['--only', '--node-flags'];
+
+// The text cut-off capture.js applies. Reproduced so that a body the corpus
+// truncated is compared against an equally truncated observation rather than
+// reported as a length difference on every large page.
+var MAX_TEXT_BYTES = 262144;
+
+var EXIT_OK         = 0;
+var EXIT_DIFFERENCE = 1;
+var EXIT_ERROR      = 2;
+
+// The four verdicts, named so the report, the artifact and the exit ladder
+// cannot spell one of them differently.
+//
+// NOT THE GATE is the one that was missing, and its absence was the defect:
+// `qualifyGate` decided ten requirements, the result recorded them, and the
+// exit ladder never read them - so a run without the secure corpus, without
+// the deprecation flags or without worker evidence compared what it could,
+// found no difference in it, and reported PASS / exit 0 while a third of the
+// required exercise had not happened. A run that could not measure the gate
+// is not a run that passed it. It is distinct from NOT PERFORMED, which means
+// a pass could not be driven at all, and from FAIL, which means the
+// comparison found something: this one means the comparison was sound and
+// incomplete, and it is the honest thing for a gate command to exit non-zero
+// on.
+var VERDICT_PASS          = 'PASS';
+var VERDICT_FAIL          = 'FAIL';
+var VERDICT_NOT_THE_GATE  = 'NOT THE GATE';
+var VERDICT_NOT_PERFORMED = 'NOT PERFORMED';
+
+// Which content types are recorded as text. Identical to capture.js's rule,
+// because the corpus's `body.encoding` was decided by it and a divergence here
+// would compare a text body against a binary record.
+var TEXTUAL_TYPE = /^(?:text\/|application\/(?:json|javascript|xml|xhtml\+xml|x-www-form-urlencoded|graphql)|[a-z-]+\/[a-z0-9.+-]*\+(?:json|xml))/i;
+
+var IDENTITY_ANONYMOUS = 'anonymous';
+var IDENTITY_USER      = 'user';
+var IDENTITY_ADMIN     = 'admin';
+var IDENTITY_DISABLED  = 'disabled';
+var IDENTITY_MISSING   = 'missingRecord';
+
+var IDENTITIES = Object.freeze([
+  IDENTITY_ANONYMOUS,
+  IDENTITY_USER,
+  IDENTITY_ADMIN,
+  IDENTITY_DISABLED,
+  IDENTITY_MISSING
+]);
+
+// The three identities that hold a session by logging in. `anonymous` holds
+// none by definition and `missingRecord` is built by a scenario's own steps.
+var PASSWORD_IDENTITIES = Object.freeze([
+  IDENTITY_USER,
+  IDENTITY_ADMIN,
+  IDENTITY_DISABLED
+]);
+
+var ACCEPT_HTML = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8';
+var ACCEPT_JSON = 'application/json';
+
+var FORM_TYPE = 'application/x-www-form-urlencoded';
+var JSON_TYPE = 'application/json';
+
+// The three dependency phases a corpus records per scenario, spelled exactly as
+// ./capture writes them. The destructive one is not a label: ./capture forces a
+// reseed before every case in it, so each delete was RECORDED against freshly
+// seeded fixtures. A replay that drives them in sequence without doing the same
+// compares the second delete against a recording of the first, and reports the
+// order as a behaviour difference - measured, five destructive cases at once.
+// How long `portAccepting` waits for an answer before treating silence as
+// alive. Only ever paid after a transport failure, and only to decide
+// whether the application is still there.
+var LIVENESS_PROBE_MS = 2000;
+
+// How many times an ALIVE reading has to repeat before `serverAlive` believes
+// it, and how long it waits between readings. A child that has just taken
+// itself down is exited-but-unreaped for a moment and its listening socket can
+// accept one more connection on the way out, so a single reading taken inside
+// that window reports a dead application as alive. Only a DEAD reading is
+// returned on the first pass; the delay is therefore paid only where a
+// transport failure has already happened AND the application looks alive, and
+// it is bounded at two further readings so a genuinely alive application costs
+// this branch a fixed fraction of a second rather than a retry loop.
+var LIVENESS_CONFIRM_READINGS = 3;
+var LIVENESS_CONFIRM_DELAY_MS = 250;
+
+var PHASE_READ_ONLY = 'read-only';
+var PHASE_MUTATING = 'mutating';
+var PHASE_DESTRUCTIVE = 'destructive';
+
+// The user agent every replayed request carries. Deliberately distinct from
+// capture.js's, because nothing in the application varies on it and a reader of
+// a server log should be able to tell which tool produced a request.
+var USER_AGENT = 'trinket-parity-replay';
+
+// The fake Google client, byte-identical to the one capture.js injects.
+//
+// Both OAuth handlers short-circuit to request.fail without a configured
+// client, so without this layer the OAuth scenarios would take a different
+// branch than the one the corpus recorded - and the values reach the rendered
+// login page, so they have to be the SAME fake, not merely a fake. Nothing
+// authenticates against anything: the token and profile endpoints are
+// intercepted at the module boundary by fixtures/http.js.
+var GOOGLE_STUB = Object.freeze({
+  clientID: 'parity-harness-client-id.apps.example.invalid',
+  clientSecret: 'parity-harness-not-a-real-secret',
+  callbackURL: '/auth/google/callback'
+});
+
+// The tolerance on the cookie Expires horizon, in whole days.
+//
+// The absolute timestamp is volatile - it is "one year from whenever the
+// response was produced" - but the HORIZON is the contract. Two days absorbs a
+// baseline captured on one date and replayed on another, plus the leap-year
+// step, while still failing outright on the change this assertion exists to
+// catch: a horizon that collapses to session-only, or to hapi's or Yar's own
+// default, is hundreds of days away from a year.
+var EXPIRES_HORIZON_TOLERANCE_DAYS = 2;
+
+// The scenario groups and ids this file asserts on by name. Each is a decision
+// recorded in the corpus, and naming them here is what keeps a rename from
+// silently disabling an assertion: a name that no longer resolves is reported.
+var DEVIATION_SCENARIO_ID = 'quirk.reply-chain.never-settles.image-download';
+var HEADER_RESOLVED_GROUP = 'quirk.reply-chain.header-resolved';
+var AUTH_OUTCOME_GROUP    = 'auth-outcome';
+// The one scenario that cannot assert its outcome without an injected fault.
+// Named here so `assertFaultControls` and `accountAuthOutcomes` refer to the
+// same string rather than each spelling it out.
+var LOOKUP_ERROR_SCENARIO = 'auth.outcome.lookup-error';
+
+// The five outcomes of the session auth scheme registered in app.js, as the
+// corpus ids that drive them. THE LIST IS THE ASSERTION: all five are required
+// independently, and a group that arrived with four scenarios would otherwise
+// report "4 asserted, ok" - which is the exact shape of a gate that passes by
+// not looking. A missing id is a failure under a complete selection, and a
+// renamed one shows up as missing rather than as silence.
+var AUTH_OUTCOME_IDS = Object.freeze([
+  'auth.outcome.not-logged-in',
+  'auth.outcome.valid-user',
+  'auth.outcome.user-not-found',
+  'auth.outcome.account-disabled',
+  'auth.outcome.lookup-error'
+]);
+
+// Four of those five are reachable over HTTP. The fifth needs `User.findById`
+// itself to reject, which no request can cause, so it carries a stated reason
+// and is asserted by the server-level gate that can inject the fault. This
+// minimum is what stops "one outcome was driven" from counting as coverage.
+var MIN_AUTH_OUTCOMES_DRIVEN = 4;
+
+// The four header-resolved reply chains: the attachment branch of
+// `lib/controllers/files.js`'s `download`, the course archive in
+// `lib/controllers/courses.js`'s `download`, and both archive responses in
+// `lib/controllers/trinket.js` - `downloadPostedZip` and `downloadZip`. The
+// corpus scenarios in `HEADER_RESOLVED_GROUP` are the durable identifiers for
+// them. They are the collateral-damage guard on the one
+// approved deviation, so the COUNT is part of the assertion: three of them
+// checked is one chain nobody looked at.
+var HEADER_RESOLVED_CHAIN_COUNT = 4;
+
+// The node flags a gate run measures the zero-warning condition under. The
+// whole exercise - the listening server, the full pass over every registered
+// route, and the worker - runs under both, because two internal re-entrant
+// injections put a deprecation on the LIVE REQUEST PATH and a boot that never
+// serves a request never reveals them. A run without these flags still scans
+// stderr, and still reports what it finds; what it cannot be is the gate.
+var REQUIRED_NODE_FLAGS = Object.freeze([
+  '--pending-deprecation',
+  '--trace-deprecation'
+]);
+
+// The frozen baseline reference. A corpus is a baseline recording, so its
+// provenance sidecar has to name this commit: a corpus captured anywhere
+// else is a recording of some other tree's behaviour, and comparing against it
+// proves nothing about the migration. `--baseline-head` relaxes it explicitly
+// and --self-check turns it off by declaration, because there the corpus comes
+// from the tree under test on purpose.
+var BASELINE_COMMIT = '2f8712a112db46f923918c4507c75abc732d83d0';
+
+// The sidecar every captured artifact in this folder carries, by convention -
+// capture.js writes `<out>.provenance.json` and joi-matrix.js and manifest.js
+// do the same. Replay REQUIRES it for a corpus it compares against, because a
+// corpus without one does not say which tree it recorded.
+var PROVENANCE_SUFFIX = '.provenance.json';
+
+// The only generator whose output is a baseline recording. A corpus is
+// capture.js's artifact - it is what drives the requests and records the
+// responses - so a sidecar naming anything else describes a file that was
+// produced some other way, and a run comparing against it may not be cited as
+// the gate. Matched on the basename, because the sidecar records the path
+// relative to whichever worktree produced it.
+var CAPTURE_GENERATOR = 'capture.js';
+
+// ---------------------------------------------------------------------------
+// The declared expectation grammar
+// ---------------------------------------------------------------------------
+//
+// The complete set of keys an expectation may carry, and the reason it is a
+// closed list: an operator this file does not implement is a check that reads
+// as declared and asserts nothing. Four of these - `statusIn`, `headerPresent`,
+// `bodyIncludes` and `cross.bodiesDiffer` - were authored in the corpus and
+// silently ignored here, which made sixteen clauses and eleven whole scenarios
+// inert, including the OAuth existing-user differentiator. `contentTypeIs` is
+// the same story from the other side: capture.js evaluates it against the
+// recording and the production-client scenarios declare it, so a replay that
+// did not implement it could only refuse the corpus outright. Every key below is
+// implemented by `evaluateExpectation`, and anything outside the list is
+// rejected by `assertExpectationSchema` before a single request is driven.
+// ---------------------------------------------------------------------------
+
+var EXPECTATION_KEYS = Object.freeze(['description', 'steps', 'cross']);
+
+var EXPECTATION_STEP_KEYS = Object.freeze([
+  'index',
+  'timedOut',
+  'status',
+  'statusIn',
+  'notStatus',
+  'locationEndsWith',
+  'headerPresent',
+  'contentTypeIs',
+  'bodyIncludes'
+]);
+
+var EXPECTATION_CROSS_KEYS = Object.freeze(['locationsEqual', 'bodiesDiffer']);
+
+// Every step key except `index`, which addresses a step rather than asserting
+// anything about it. A clause carrying only an index is a clause that checks
+// nothing, and it is rejected as such.
+var EXPECTATION_STEP_OPERATORS = Object.freeze(
+  EXPECTATION_STEP_KEYS.filter(function(key) { return key !== 'index'; }));
+
+// The four error-page headers. Named as a group because they are compared per
+// branch and because the report explains them together.
+var ERROR_PAGE_HEADERS = Object.freeze([
+  'cache-control',
+  'pragma',
+  'expires',
+  'x-frame-options'
+]);
+
+// The headers the comparison contract names for exact comparison, in the order
+// it gives them. Every OTHER header is compared exactly too - this list exists
+// so the report can lead with the ones the contract names.
+var NAMED_HEADERS = Object.freeze([
+  'content-type',
+  'location'
+].concat(ERROR_PAGE_HEADERS).concat(['content-disposition']));
+
+// The cookie attributes compared one by one. `expires` is compared as presence
+// plus horizon rather than as a value, which is why it is not in this list and
+// has an assertion of its own.
+var COOKIE_ATTRIBUTES = Object.freeze([
+  'httponly',
+  'secure',
+  'samesite',
+  'path',
+  'domain',
+  'max-age'
+]);
+
+// A response body larger than this is excerpted rather than quoted whole in a
+// difference record, so one divergent page cannot produce a megabyte of report.
+var EXCERPT_BYTES = 400;
+
+// How many differences one scenario contributes before the rest are summarized.
+// This is a REPORT bound, never a gate bound: the count is always complete and
+// the run always fails, only the enumeration is capped. A single rendered page
+// that changed layout would otherwise emit one record per class attribute.
+var MAX_DIFFERENCES_PER_STEP = 25;
+
+// ---------------------------------------------------------------------------
+// Frozen reference values the volatile set guards against
+// ---------------------------------------------------------------------------
+
+/**
+ * Every identifier the seeder pins, as a lookup.
+ *
+ * This is what makes the generated-id category NARROW rather than a blanket
+ * scrub of anything that looks like an object id. A 24-hex token that IS a
+ * seeded id is compared exactly - a response that returned the wrong seeded
+ * document is precisely the kind of difference this gate exists to catch - and
+ * only a token outside this set is treated as generated.
+ *
+ * @returns {Object} a null-prototype map used as a set
+ */
+function seededIdentifiers() {
+  var known = Object.create(null);
+
+  Object.keys(seed.ids).forEach(function(key) {
+    known[String(seed.ids[key]).toLowerCase()] = true;
+  });
+
+  (seed.MISSING_IDS || []).forEach(function(entry) {
+    if (entry && entry.id) {
+      known[String(entry.id).toLowerCase()] = true;
+    }
+  });
+
+  return known;
+}
+
+/**
+ * Every timestamp the seeder pins, as a lookup.
+ *
+ * The seeder writes fixed dates - `created`, `lastUpdated`, `dueOn` and the
+ * rest are literals, not clock reads - so a timestamp that appears in a
+ * response because a SEEDED document carries it is deterministic and is
+ * compared exactly. Only a timestamp this run produced is volatile, and the
+ * recency guard below is what separates the two.
+ *
+ * @returns {Object} a null-prototype map used as a set
+ */
+function seededTimestamps() {
+  var known = Object.create(null);
+  var dates = (seed.fixtures && seed.fixtures.dates) || {};
+
+  Object.keys(dates).forEach(function(key) {
+    var value = String(dates[key]);
+    var parsed = Date.parse(value);
+
+    known[value] = true;
+
+    if (!isNaN(parsed)) {
+      // The same instant in the two other spellings a response can carry it
+      // in: the model layer renders Dates through JSON as ISO-8601, and a
+      // handler that serialized one numerically emits epoch milliseconds.
+      known[new Date(parsed).toISOString()] = true;
+      known[String(parsed)] = true;
+    }
+  });
+
+  return known;
+}
+
+/**
+ * Every trinket short code the seeder pins, as a lookup.
+ *
+ * The same narrowing the ObjectId rule uses, for the same reason: a code the
+ * seeder wrote is a fixture and is compared EXACTLY - a response that returned
+ * the wrong trinket is precisely the difference this gate exists to catch - and
+ * only a code minted by `hashify` during the run is normalized. Read from the
+ * seeded trinkets rather than listed here, so a trinket added to the seeder is
+ * covered without a second edit.
+ *
+ * @returns {Object} a null-prototype map used as a set
+ */
+function seededShortCodes() {
+  var known = Object.create(null);
+  var trinkets = (seed.fixtures && seed.fixtures.trinkets) || {};
+
+  Object.keys(trinkets).forEach(function(key) {
+    var code = trinkets[key] && trinkets[key].shortCode;
+
+    if (code) {
+      known[String(code).toLowerCase()] = true;
+    }
+  });
+
+  return known;
+}
+
+/**
+ * Every course access code the seeder pins, as a lookup.
+ *
+ * The same narrowing again, and here it is belt and braces: the seeder's code
+ * is `PAR1TY`, whose `1` is not in the alphabet `generateAccessCode`
+ * [lib/controllers/course.js:1848-1858] draws from - it omits I, O, Q, 0, 1 and
+ * l deliberately - so a seeded code cannot match the rule's character class in
+ * the first place. The exemption is kept because a code added to the seeder
+ * later has no such guarantee, and a fixture compared exactly is the point.
+ *
+ * @returns {Object} a null-prototype map used as a set
+ */
+function seededAccessCodes() {
+  var known = Object.create(null);
+  var courses = (seed.fixtures && seed.fixtures.courses) || {};
+  var single = (seed.fixtures && seed.fixtures.course) || null;
+
+  Object.keys(courses).forEach(function(key) {
+    var code = courses[key] && courses[key].accessCode;
+
+    if (code) {
+      known[String(code)] = true;
+    }
+  });
+
+  if (single && single.accessCode) {
+    known[String(single.accessCode)] = true;
+  }
+
+  return known;
+}
+
+var SEEDED_IDS          = Object.freeze(seededIdentifiers());
+var SEEDED_DATES        = Object.freeze(seededTimestamps());
+var SEEDED_SHORT_CODES  = Object.freeze(seededShortCodes());
+var SEEDED_ACCESS_CODES = Object.freeze(seededAccessCodes());
+
+// How close to "now" a timestamp has to be before it is treated as one this
+// run produced.
+//
+// 400 days, and the number is chosen from the fixtures rather than picked: the
+// seeder's own dates sit in 2024, 2020 and 2099, all of them further from any
+// plausible run date than this window, so every pinned timestamp is compared
+// EXACTLY and only a clock read taken during the capture or the replay is
+// normalized. The window is wide enough that a corpus captured a year before it
+// is replayed still compares.
+var RECENT_TIMESTAMP_WINDOW_MS = 400 * 24 * 60 * 60 * 1000;
+
+/**
+ * Whether an instant is close enough to now to have been produced by a run.
+ *
+ * @param {number} instant milliseconds since the epoch
+ * @returns {boolean}
+ */
+function isRunEraInstant(instant) {
+  return !isNaN(instant) &&
+    Math.abs(Date.now() - instant) <= RECENT_TIMESTAMP_WINDOW_MS;
+}
+
+// ---------------------------------------------------------------------------
+// THE VOLATILE SET
+// ---------------------------------------------------------------------------
+//
+// Six categories. This list is the ONLY place in this file where a value is
+// normalized away, and it appears exactly once. Every comparator below reaches
+// its normalization through `normalizeText`, `volatileHeaders`,
+// `presenceOnlyHeaders`, `volatileCookieFields` and `volatileResponseFields`,
+// all of which are DERIVED from this list - so adding a category here changes
+// the comparator everywhere at once, and nothing can be normalized without
+// appearing here.
+//
+// Each entry carries the justification a reviewer needs, in three fixed terms:
+// what the field is, why seeding could not make it deterministic instead, and
+// what coverage is lost. The whole list is emitted
+// into the result document under `volatileSet`, so docs/baseline-parity.md can
+// cite these justifications verbatim rather than paraphrasing them.
+//
+// AN ADDITION TO THIS LIST IS A WEAKENING. Prefer fixing the seed:
+// test/parity/seed.js exists precisely so ids are comparable rather than
+// scrubbed, and its pinned dates are why the timestamp category below is
+// guarded by a recency window instead of matching every date it sees.
+// ---------------------------------------------------------------------------
+
+var VOLATILE_SET = Object.freeze([
+  Object.freeze({
+    id: 'generated-ids',
+    title: 'Generated identifiers not covered by fixed seeds',
+    why: 'A document created DURING the run gets a real MongoDB ObjectId, and ' +
+      'a share or invitation token gets a fresh signature. Neither can be ' +
+      'pinned by seeding, because the value is minted by the code under test ' +
+      'as the mutating scenario runs. Five more values are minted the same ' +
+      'way and were MEASURED to be the whole of the residual difference ' +
+      'between two runs of one tree: a created trinket\'s short code, which ' +
+      '`hashify` derives as sha1(seed + Date.now()) [lib/models/trinket.js:' +
+      '119-120]; the four-digit suffix `generate_username_with_suffix` appends ' +
+      'when a requested username is already taken [lib/util/user.js:19-27], ' +
+      'which the two signup scenarios reach because they share one payload ' +
+      'entry and the second creation therefore collides; the temporary upload ' +
+      'path hapi mints per request for the four routes declaring ' +
+      '`payload.output: file`, which a validation-failure flash echoes back; ' +
+      'a bcrypt password hash, salted per save by design and projected ' +
+      'into two responses; and the six-character course access code ' +
+      '`generateAccessCode` draws from a fixed alphabet with `Math.random` ' +
+      '[lib/controllers/course.js:1848-1858] each time ' +
+      '`POST /api/courses/{courseId}/accessCode` is called.',
+    seedingAlternative: 'Not available for created documents. Every id a ' +
+      'scenario READS is already pinned by test/parity/seed.js and is ' +
+      'therefore compared exactly - only an id this run minted is normalized. ' +
+      'Nor is it available for the five values above: a short code and a ' +
+      'username suffix are minted by the handler that creates the document, ' +
+      'the upload path is composed by hapi from the run directory, the pid ' +
+      'and a random suffix, and a bcrypt hash is re-salted by the model\'s ' +
+      'own pre-save hook, so seeding a fixed hash would mean either ' +
+      'bypassing that hook or committing a live-format hash to source. ' +
+      'The access code is REPLACED by the route under test on every call, ' +
+      'so the seeder\'s pinned `PAR1TY` governs every case that reads it ' +
+      'and only the value the route mints is normalized.',
+    coverageLost: 'That two runs minted the same id, which is not behaviour. ' +
+      'The SHAPE is still compared: a 24-hex id that stopped being emitted, ' +
+      'or was emitted where none was before, still shows as a difference. For ' +
+      'the encrypted roles token, what is lost is the ciphertext - its ' +
+      'plaintext is the seeded user\'s roles, which are fixed by the seeder ' +
+      'and asserted through every other projection that exposes them - while ' +
+      'the element carrying it, its id, its type and its position are all ' +
+      'still compared. For the five values named above: the short code, the ' +
+      'username suffix, the upload path, the password hash and the access ' +
+      'code are each ' +
+      'replaced by a placeholder, so what is lost is that two runs minted the ' +
+      'same one - which is not behaviour. Everything around each of them is ' +
+      'still compared: the field that carries it, the rest of the username, ' +
+      'the fact that an upload path was echoed at all, and the presence and ' +
+      'position of the projected hash, and the fact that a code was ' +
+      'returned at all. Three of the five are also why the ' +
+      'committed corpus carries no credential-format value and no machine ' +
+      'path: capture.js writes these placeholders in place of the recorded ' +
+      'value, exactly as it already does for a Set-Cookie value, and this ' +
+      'file normalizes the live target to the same placeholder so the two ' +
+      'still compare.',
+    headers: [],
+    presenceOnlyHeaders: [],
+    cookieFields: [],
+    responseFields: [],
+    textPatterns: Object.freeze([
+      // THE THREE WRITE-TIME RULES COME FIRST, AND THE ORDER IS LOAD-BEARING.
+      // `redactForRecording` applies only the rules marked
+      // `redactBeforeWrite`, while `normalizeText` applies every rule in this
+      // order - so a write-time rule placed AFTER an identifier rule sees a
+      // different input in the two paths, and the placeholder it writes is
+      // not the placeholder the comparison produces. MEASURED: with the
+      // 12-hex short-code rule ahead of the path rule, an upload path under
+      // a work-unit scratch root whose UUID carries a twelve-hex run
+      // (`.../94fb8942-119f-4be8-abfa-00828e472cd3/...`) normalized to
+      // `/tmp/.../94fb8942-119f-4be8-abfa-<generated-shortcode><upload-path>`
+      // at compare time and to `<upload-path>` at write time, and every one
+      // of the four file-upload routes became an unapproved difference for a
+      // runner whose scratch path happened to contain hex. Running these
+      // three first cannot have that failure mode: nothing has rewritten
+      // the text when they see it. `assertVolatileSetIntegrity` holds the
+      // invariant, and `assertNormalizationRules` proves the two paths agree
+      // value by value.
+      Object.freeze({
+        // The four routes declaring `payload.output: 'file'` make hapi write
+        // the request body to <runDir>/uploads/<epoch>-<pid>-<random>, and the
+        // validation-failure flash echoes that path into the response. All
+        // three components are new on every run, and the run directory is a
+        // path on the machine that captured the corpus - so this is the rule
+        // that keeps a scratch path out of the committed artifact as well as
+        // out of the comparison. Anchored on the /uploads/ segment and the
+        // epoch-pid-random basename, so an application-decided path is not
+        // touched.
+        //
+        // The DIRECTORY part is bounded by what cannot appear in a path
+        // inside a recorded value - the string and markup delimiters, a
+        // newline, a backslash - rather than by an allowlist of the
+        // characters a path is expected to use. An allowlist made the
+        // protection depend on where an operator happened to point TMPDIR:
+        // MEASURED, a run directory containing a space left the leading
+        // absolute path in the recording with only the basename redacted, so
+        // a control against CWE-200 held or failed on the shape of a machine
+        // path. Excluding `<` and `>` is the second half of the ordering
+        // invariant above - the rule cannot reach into a placeholder another
+        // rule has already written.
+        name: 'per-request upload output path',
+        expression: /(?:\/[^\/"'<>\n\r\\]+)+\/uploads\/\d{10,}-\d+-[0-9a-f]{8,}/g,
+        replace: function() {
+          return '<upload-path>';
+        },
+        // See `redactForRecording`: an absolute path on the machine that
+        // captured the corpus has no business being committed (CWE-200), so
+        // capture.js writes the placeholder rather than the path.
+        redactBeforeWrite: true
+      }),
+      Object.freeze({
+        // A bcrypt hash of the seeded fixture password, projected by two
+        // responses [body.json.user.password and body.json.course._owner
+        // .password]. The model re-salts on every save, so the same password
+        // hashes to a different string in the baseline and the target run.
+        // Replaced rather than compared for a second reason as well: a
+        // credential-format value has no place in a tracked artifact
+        // (CWE-540), and capture.js writes this placeholder instead of the
+        // hash.
+        name: 'bcrypt password hash',
+        expression: /\$2[aby]\$\d{2}\$[A-Za-z0-9./]{53}/g,
+        replace: function() {
+          return '<bcrypt-hash>';
+        },
+        // See `redactForRecording`.
+        redactBeforeWrite: true
+      }),
+      Object.freeze({
+        // Recognized by STRUCTURE rather than by segment length. A compact
+        // JWS header is the base64url of a JSON object, so it always begins
+        // `eyJ`; the payload may be any length, including the three
+        // characters `e30` that encode `{}`; and the signature is at least
+        // twenty base64url characters for every algorithm the library will
+        // produce, which is what keeps this rule off an ordinary dotted
+        // identifier. An earlier revision required sixteen characters in
+        // EVERY segment, which is not a JWS requirement: MEASURED, a valid
+        // HS256 token over `{}` from the installed library had segments of
+        // 36/3/43 characters, verified, and passed both `redactForRecording`
+        // and `normalizeText` untouched - so a usable signed token could
+        // still have been written into a tracked artifact by the very
+        // control that exists to prevent it.
+        name: 'JWT-shaped token',
+        expression: /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{20,}\b/g,
+        replace: function() {
+          return '<generated-token>';
+        },
+        // See `redactForRecording`: a signed share token is usable against any
+        // deployment that shares the signing secret, so it is not a value a
+        // tracked artifact should carry (CWE-540/CWE-312) - capture.js writes
+        // this placeholder in its place, and the value was volatile anyway
+        // because the signature covers `iat`.
+        redactBeforeWrite: true
+      }),
+      Object.freeze({
+        name: 'non-seeded ObjectId hex',
+        expression: /\b[0-9a-f]{24}\b/g,
+        replace: function(match) {
+          return SEEDED_IDS[match.toLowerCase()] ? match : '<generated-objectid>';
+        }
+      }),
+      Object.freeze({
+        // `hashify` [lib/models/trinket.js:119-120] mints
+        // sha1(seed + Date.now()).substring(0, 10), so a trinket created by a
+        // scenario echoes ten hex characters no seeder can pin.
+        //
+        // The range covers TWO lengths on purpose. Ten is what the generator
+        // mints now; twelve is what it minted when this corpus was captured,
+        // and seven recorded bodies in test/parity/corpus.json still carry a
+        // twelve-character code (the assignment-submission and remix
+        // scenarios). Both sides of a comparison are normalized, so a rule
+        // that matched only one of the two lengths would scrub the recorded
+        // body and leave the fresh one intact, and every scenario that creates
+        // a trinket would report a diff that is nothing but the length change.
+        //
+        // Every SEEDED short code is a readable label ('pyfixture001'), not
+        // hex, so the exemption below cannot fire today - it is kept because a
+        // seeded code that happened to look like hex must be compared, not
+        // scrubbed, and the same guard is what makes the ObjectId rule narrow.
+        // An all-digits token is left alone: ten to twelve decimal digits is a
+        // number - ten in particular is an epoch-seconds timestamp - and this
+        // rule has no business rewriting one.
+        name: 'generated trinket short code',
+        expression: /\b[0-9a-f]{10,12}\b/g,
+        replace: function(match) {
+          if (SEEDED_SHORT_CODES[match.toLowerCase()] || /^\d{10,12}$/.test(match)) {
+            return match;
+          }
+
+          return '<generated-shortcode>';
+        }
+      }),
+      Object.freeze({
+        // `generate_username_with_suffix` [lib/util/user.js:19-27] appends a
+        // zero-padded four-digit random number when the requested username is
+        // taken. The two signup scenarios share one payload entry per route
+        // key, so the second creation collides with the first and the
+        // application suffixes it - MEASURED as parity-api-signup-6559 against
+        // parity-api-signup-1919 across two runs of the identical tree, in the
+        // created account's username and in the flash that echoes it.
+        // Anchored on the fixture namespace every parity payload uses, so it
+        // cannot reach a username the application itself decided.
+        name: 'generated username suffix on a parity signup fixture',
+        expression: /\b(parity-[a-z0-9-]*signup)-\d{4}\b/g,
+        replace: function(match, base) {
+          return base + '-<generated-suffix>';
+        }
+      }),
+      Object.freeze({
+        // The six characters `generateAccessCode`
+        // [lib/controllers/course.js:1848-1858] draws from a fixed 55-symbol
+        // alphabet with `Math.random`, once per request to
+        // `POST /api/courses/{courseId}/accessCode`. MEASURED as tkXL5e
+        // against F9ETEL on a self-check of one corpus against the very tree
+        // it was captured from, which is the definition of a value no
+        // comparison can own.
+        //
+        // ANCHORED ON THE JSON KEY, and it has to be: six characters of mixed
+        // alphanumerics is the shape of an ordinary English word, so a bare
+        // character-class rule would rewrite prose, slugs and labels across
+        // every body in the corpus. With the key required, the rule can only
+        // fire on the field that carries the code. It fires on the raw text
+        // before the JSON is flattened, which is where the whole comparison
+        // starts, so the flattened `body.json.accessCode` scalar is already
+        // the placeholder by the time it is compared.
+        //
+        // The route is reached only in the mutating phase, and every rendered
+        // page that shows a course's code is driven in the read-only phase
+        // before it, so the seeded `PAR1TY` is what those pages are compared
+        // on - exactly, since `1` is not in the mintable alphabet.
+        name: 'generated course access code',
+        expression: /("accessCode"\s*:\s*")([A-HJ-NPR-Za-kmnp-z2-9]{6})(")/g,
+        replace: function(match, before, code, after) {
+          if (SEEDED_ACCESS_CODES[code]) {
+            return match;
+          }
+
+          return before + '<generated-accesscode>' + after;
+        }
+      }),
+      Object.freeze({
+        // lib/util/roles.js's `encrypt` mints `crypto.randomBytes(16)` as the
+        // key on EVERY call and returns `<32 hex>+<AES ciphertext>`, where the
+        // ciphertext always begins with the base64 of the OpenSSL salt marker.
+        // It is rendered into a hidden input on the home page and into one
+        // user projection, so it appears in both HTML and JSON. MEASURED
+        // across two captures of the identical tree: it is the only rendered
+        // value besides the cache prefix that differs, and it differs in full.
+        name: 'per-render encrypted roles token',
+        expression: /\b[0-9a-f]{32}\+U2FsdGVkX1[A-Za-z0-9+/=]+/g,
+        replace: function() {
+          return '<generated-encrypted-roles>';
+        }
+      })
+    ])
+  }),
+
+  Object.freeze({
+    id: 'timestamps',
+    title: 'Timestamps, including the rendered cache-prefix and recorded timing',
+    why: 'Three distinct sources, all of them clock reads. (1) A document ' +
+      'created or touched during the run carries the instant it was written. ' +
+      '(2) lib/util/stringUtils.js\'s addPrefix inlines Date.now() into every ' +
+      'asset URL as /cache-prefix-<epoch-millis>/ when the prefix is ' +
+      'unconfigured, and all eight config/default.yaml prefixes ARE ' +
+      'unconfigured - measured, 20 of 242 read-only responses differed on ' +
+      'this and on nothing else. (3) The recorded elapsed time of a request, ' +
+      'and the Last-Modified of a file served by the static handler, which is ' +
+      'the checkout mtime of the file rather than anything the application ' +
+      'decides.',
+    seedingAlternative: 'Applied where it exists and preferred over ' +
+      'normalizing: the seeder pins every fixture date as a literal, so a ' +
+      'seeded document\'s timestamps are compared EXACTLY and only an instant ' +
+      'inside the run-era window is normalized. The cache-prefix is not ' +
+      'reachable that way - it is read from the clock at RENDER time, not ' +
+      'from configuration, so no overlay and no fixture can pin it. ' +
+      'Last-Modified is set from the file\'s mtime, which git assigns at ' +
+      'checkout, so two worktrees of the same content cannot agree on it.',
+    coverageLost: 'The exact instant a value was produced. The cache-prefix ' +
+      'literal itself is still compared, and so is the rest of every asset ' +
+      'URL, so a changed asset path or a prefix that became configured is ' +
+      'still a difference. Last-Modified is compared for PRESENCE, so a ' +
+      'static route that stopped sending it still fails. For an archive body ' +
+      'the only thing lost is the RAW digest: the byte length is compared ' +
+      'exactly, and the container is opened and compared in the same step by ' +
+      'the ARCHIVE CONTAINERS section of this file - its writer profile ' +
+      'against the frozen expectation in ARCHIVE_CONTAINER_REGISTER, and its ' +
+      'entry-table fingerprint, which excludes the mtime fields and digests ' +
+      'each entry\'s INFLATED bytes, against the recording where the ' +
+      'recording carries one and against the register\'s pinned measurement ' +
+      'where it does not - and an archive on a registered route compared ' +
+      'against neither fails the run. Either comparison is a difference that ' +
+      'fails the run, so a changed entry, a changed layout or a changed ' +
+      'writer is caught here rather than only by test/parity/storage.js and ' +
+      'test/parity/worker.js.',
+    // `date` is NOT listed here: it has a category of its own below, and one
+    // header removed by two rules would make the report ambiguous about which
+    // weakening covers it.
+    headers: [],
+    presenceOnlyHeaders: ['last-modified'],
+    cookieFields: [],
+    responseFields: ['elapsedMs', 'elapsedBucket'],
+    // A generated archive embeds each entry's modification time in its own
+    // headers, so its content digest changes on every build while its LENGTH
+    // does not - the timestamp fields are fixed-width. MEASURED: two captures
+    // of the identical tree produced two digests for the same 182-byte zip and
+    // the same length both times, and the committed corpus records the SAME
+    // 538-byte course archive twice with two different digests. So the RAW
+    // digest is exempt for these content types, and only the raw digest.
+    //
+    // THE CONTAINER IS NOT EXEMPT, and this list must not be read as saying so.
+    // The ARCHIVE CONTAINERS section of this file opens each of these bodies
+    // and compares it in the same step: its writer profile against the frozen
+    // expectation in ARCHIVE_CONTAINER_REGISTER, and its entry-table
+    // fingerprint - the ordered entries with the mtime fields excluded and
+    // each entry's content taken as the sha256 of its inflated bytes - against
+    // the recording where the recording carries one and against the frozen
+    // register's PINNED measurement where it does not. Both produce real
+    // differences. Until that section existed this exemption had nothing
+    // behind it, and a measured container change on two client-facing routes
+    // was reported as `match`; until the pin existed the fingerprint half was
+    // inert on the committed corpus, which carries no recorded fingerprint at
+    // all, and content drift on a registered route produced zero differences.
+    binaryDigestExemptTypes: [
+      'application/zip',
+      'application/x-zip-compressed',
+      'application/gzip',
+      'application/x-gzip',
+      'application/x-tar',
+      'application/x-compressed'
+    ],
+    textPatterns: Object.freeze([
+      Object.freeze({
+        name: 'rendered cache-prefix epoch',
+        expression: /(\/cache-prefix-)\d+/g,
+        replace: function(match, literal) {
+          return literal + '<timestamp>';
+        }
+      }),
+      Object.freeze({
+        name: 'run-era ISO-8601 instant',
+        expression: /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:?\d{2})/g,
+        replace: function(match) {
+          if (SEEDED_DATES[match]) {
+            return match;
+          }
+
+          return isRunEraInstant(Date.parse(match)) ? '<timestamp>' : match;
+        }
+      }),
+      Object.freeze({
+        // The absolute date the cookie patch appends. It is "one year from
+        // whenever the response was produced", so two runs minutes apart
+        // differ - MEASURED across two captures of the identical tree, where
+        // this was 8 of the 10 differences. Anchored on the attribute name so
+        // it can only fire inside a Set-Cookie: the HORIZON is still compared
+        // in whole days by the cookie comparator, which is the assertion that
+        // detects the patch going silently no-op, and every other attribute of
+        // the header string - including its order and spelling - is still
+        // compared exactly.
+        name: 'Set-Cookie Expires attribute date',
+        expression: /(;\s*Expires=)[A-Za-z]{3},\s*\d{1,2}[ -][A-Za-z]{3}[ -]\d{2,4}\s+\d{2}:\d{2}:\d{2}\s*(?:GMT|UTC)/gi,
+        replace: function(match, literal) {
+          return literal + '<timestamp>';
+        }
+      }),
+      Object.freeze({
+        name: 'run-era epoch milliseconds',
+        expression: /\b1[6-9]\d{11}\b|\b2[0-9]\d{11}\b/g,
+        replace: function(match) {
+          if (SEEDED_DATES[match]) {
+            return match;
+          }
+
+          return isRunEraInstant(Number(match)) ? '<timestamp>' : match;
+        }
+      })
+    ])
+  }),
+
+  Object.freeze({
+    id: 'date-header',
+    title: 'The Date response header',
+    why: 'Node writes the current instant into every response.',
+    seedingAlternative: 'None. It is generated by the HTTP layer below the ' +
+      'application and is not reachable from configuration or a fixture.',
+    coverageLost: 'Nothing the application decides. NOTE THE TRAP: this ' +
+      'category covers `Date` ONLY. The `Expires` HEADER is a different ' +
+      'thing entirely - app.js sets it to the literal "0" as one of the four ' +
+      'cache headers - and it is compared EXACTLY. So is the cookie `Expires` ' +
+      'attribute, through its own presence-and-horizon assertion.',
+    headers: ['date'],
+    presenceOnlyHeaders: [],
+    cookieFields: [],
+    responseFields: [],
+    textPatterns: Object.freeze([])
+  }),
+
+  Object.freeze({
+    id: 'etag',
+    title: 'The ETag response header',
+    why: 'A validator over a representation rather than part of it.',
+    seedingAlternative: 'None that is worth having. The static handler derives ' +
+      'it from the file it served, so it is a property of a build artifact ' +
+      'across two independently installed worktrees rather than of behaviour.',
+    coverageLost: 'The validator value. The body it validates is compared in ' +
+      'full - length and digest for a binary response, and the normalized ' +
+      'text for a textual one - so a changed representation still fails.',
+    headers: ['etag'],
+    presenceOnlyHeaders: [],
+    cookieFields: [],
+    responseFields: [],
+    textPatterns: Object.freeze([])
+  }),
+
+  Object.freeze({
+    id: 'request-ids',
+    title: 'Per-request correlation identifiers',
+    why: 'A value minted per request for tracing, unique by construction.',
+    seedingAlternative: 'None; a correlation id that repeated would not be one.',
+    coverageLost: 'Nothing measured. This application emits no such header at ' +
+      'baseline, so the category is a declared guard rather than an active ' +
+      'weakening - and it is enumerated anyway, because a header that ' +
+      'appeared silently under the new framework should be normalized by a ' +
+      'named rule rather than reported as a difference nobody can act on.',
+    headers: [
+      'x-request-id',
+      'request-id',
+      'x-correlation-id',
+      'x-amzn-requestid',
+      'x-amz-request-id',
+      'x-amz-id-2'
+    ],
+    presenceOnlyHeaders: [],
+    cookieFields: [],
+    responseFields: [],
+    textPatterns: Object.freeze([])
+  }),
+
+  Object.freeze({
+    id: 'cookie-values',
+    title: 'Cookie values, and only the values',
+    why: 'A session cookie\'s value is a server-side session id, minted per ' +
+      'session by design. capture.js already replaces it with its digest ' +
+      'before the corpus is written, so the committed artifact carries no live ' +
+      'token; the digest that replaced it is just as volatile as the value.',
+    seedingAlternative: 'None, and none is wanted: maxCookieSize is 0, so ' +
+      'session state lives on the server and a pinned cookie value would be a ' +
+      'forged session rather than a fixture.',
+    coverageLost: 'Nothing that could be compared. EVERY ATTRIBUTE IS STILL ' +
+      'COMPARED EXACTLY - name, HttpOnly, Secure, SameSite, Path, Domain, ' +
+      'Max-Age - and the Expires attribute is asserted for presence and for ' +
+      'its one-year horizon, which is the only way a silent no-op in the ' +
+      'private-field cookie patch is detectable.',
+    headers: [],
+    presenceOnlyHeaders: [],
+    cookieFields: ['valueDigest', 'valueLength'],
+    responseFields: [],
+    textPatterns: Object.freeze([
+      Object.freeze({
+        name: 'redacted cookie value inside a Set-Cookie header',
+        expression: /<redacted:sha256:[0-9a-f]+>/g,
+        replace: function() {
+          return '<cookie-value>';
+        }
+      })
+    ])
+  })
+]);
+
+// The number of categories is asserted rather than assumed: the set is closed
+// at six, and a seventh added without the justification the entries above
+// carry would be a silent weakening. `assertVolatileSetIntegrity` runs at
+// startup so the failure is loud and immediate.
+var VOLATILE_CATEGORY_COUNT = 6;
+
+// ---------------------------------------------------------------------------
+// NORMALIZATION PROBES - the declared rules, exercised at startup
+// ---------------------------------------------------------------------------
+//
+// A rule that is declared and does not fire is indistinguishable, from outside
+// this file, from a rule that was never declared: both produce a difference on
+// every rendered page, and a reviewer reading the artifact cannot tell which
+// happened. The cache-prefix rule is the case that matters most:
+// `lib/util/stringUtils.js`'s `addPrefix` inlines `Date.now()` into every
+// asset URL as `/cache-prefix-<epoch>/` because every entry under
+// `app.prefixes` in config/default.yaml is empty, and a capture of the
+// read-only responses differs on that and on nothing else.
+//
+// So each probe below states an input and the exact output the declared rules
+// must produce, they are RUN at startup beside the set's own integrity check,
+// and their results are emitted into the artifact. Two properties are asserted
+// per rule and both matter: that the volatile part IS normalized, and that
+// everything around it is NOT - a rule that swallowed the rest of the URL would
+// stop comparing asset paths altogether, which is the failure the narrow
+// pattern exists to avoid.
+// ---------------------------------------------------------------------------
+
+var NORMALIZATION_PROBES = Object.freeze([
+  Object.freeze({
+    id: 'cache-prefix-epoch-normalized',
+    category: 'timestamps',
+    rule: 'rendered cache-prefix epoch',
+    what: 'the epoch digits inside a rendered asset URL are replaced',
+    input: '<script src="/cache-prefix-1735689600000/js/app.js"></script>',
+    expected: '<script src="/cache-prefix-<timestamp>/js/app.js"></script>',
+    mustNormalize: true
+  }),
+  Object.freeze({
+    id: 'cache-prefix-two-renders-agree',
+    category: 'timestamps',
+    rule: 'rendered cache-prefix epoch',
+    what: 'two renders of the same page taken at different instants compare equal',
+    input: '/cache-prefix-1735689600000/css/base.css',
+    expected: '/cache-prefix-<timestamp>/css/base.css',
+    mustNormalize: true
+  }),
+  Object.freeze({
+    id: 'cache-prefix-path-still-compared',
+    category: 'timestamps',
+    rule: 'rendered cache-prefix epoch',
+    what: 'the asset path around the epoch is still compared, so a changed ' +
+      'asset URL is still a difference',
+    input: '/cache-prefix-1735689600000/js/moved.js',
+    expected: '/cache-prefix-<timestamp>/js/moved.js',
+    mustNormalize: true,
+    // Normalizes to something DIFFERENT from the probe above it, which is what
+    // proves the rule did not swallow the path.
+    mustDifferFrom: 'cache-prefix-two-renders-agree'
+  }),
+  Object.freeze({
+    id: 'cache-prefix-literal-still-compared',
+    category: 'timestamps',
+    rule: 'rendered cache-prefix epoch',
+    what: 'a CONFIGURED prefix is left alone, so a prefix that became ' +
+      'configured is still a difference',
+    input: '/v1.2.3/js/app.js',
+    expected: '/v1.2.3/js/app.js',
+    mustNormalize: false
+  }),
+  Object.freeze({
+    id: 'seeded-objectid-compared-exactly',
+    category: 'generated-ids',
+    rule: 'non-seeded ObjectId hex',
+    what: 'an id the seeder pins is compared exactly rather than scrubbed',
+    input: String((seed.ids && seed.ids.user) || ''),
+    expected: String((seed.ids && seed.ids.user) || ''),
+    mustNormalize: false
+  }),
+  Object.freeze({
+    id: 'run-minted-objectid-normalized',
+    category: 'generated-ids',
+    rule: 'non-seeded ObjectId hex',
+    what: 'an id minted during the run is normalized',
+    input: 'aaaaaaaaaaaaaaaaaaaaaaaa',
+    expected: '<generated-objectid>',
+    mustNormalize: true
+  }),
+  Object.freeze({
+    id: 'seeded-short-code-compared-exactly',
+    category: 'generated-ids',
+    rule: 'generated trinket short code',
+    what: 'a short code the seeder pins is compared exactly rather than scrubbed',
+    input: String((seed.fixtures && seed.fixtures.trinkets &&
+      seed.fixtures.trinkets.trinketPython &&
+      seed.fixtures.trinkets.trinketPython.shortCode) || ''),
+    expected: String((seed.fixtures && seed.fixtures.trinkets &&
+      seed.fixtures.trinkets.trinketPython &&
+      seed.fixtures.trinkets.trinketPython.shortCode) || ''),
+    mustNormalize: false
+  }),
+  Object.freeze({
+    id: 'run-minted-short-code-normalized',
+    category: 'generated-ids',
+    rule: 'generated trinket short code',
+    what: 'the ten hex characters hashify mints for a trinket created ' +
+      'during the run are replaced',
+    input: '{"shortCode":"a1b2c3d4e5"}',
+    expected: '{"shortCode":"<generated-shortcode>"}',
+    mustNormalize: true
+  }),
+  Object.freeze({
+    // The corpus was captured while hashify still cut twelve characters, and
+    // seven recorded bodies carry a twelve-character code. Both lengths have to
+    // normalize or those bodies would diff against a fresh ten-character one.
+    id: 'captured-twelve-char-short-code-normalized',
+    category: 'generated-ids',
+    rule: 'generated trinket short code',
+    what: 'a twelve-character code recorded in the committed corpus, from ' +
+      'before hashify cut ten, is replaced by the same placeholder',
+    input: '{"shortCode":"a1b2c3d4e5f6"}',
+    expected: '{"shortCode":"<generated-shortcode>"}',
+    mustNormalize: true
+  }),
+  Object.freeze({
+    id: 'twelve-digit-number-left-alone',
+    category: 'generated-ids',
+    rule: 'generated trinket short code',
+    what: 'twelve decimal digits are a number and are still compared, so the ' +
+      'short-code rule cannot reach a count or an amount',
+    input: '{"total":123456789012}',
+    expected: '{"total":123456789012}',
+    mustNormalize: false
+  }),
+  Object.freeze({
+    // Ten decimal digits is an epoch-seconds timestamp, which is the one false
+    // positive widening the rule from twelve characters to ten could create.
+    id: 'ten-digit-number-left-alone',
+    category: 'generated-ids',
+    rule: 'generated trinket short code',
+    what: 'ten decimal digits are a number - an epoch-seconds timestamp among ' +
+      'them - and are still compared',
+    input: '{"seconds":1757097600}',
+    expected: '{"seconds":1757097600}',
+    mustNormalize: false
+  }),
+  Object.freeze({
+    id: 'generated-username-suffix-normalized',
+    category: 'generated-ids',
+    rule: 'generated username suffix on a parity signup fixture',
+    what: 'the four-digit suffix the application appends to a taken username ' +
+      'is replaced while the username itself is still compared',
+    input: '{"username":"parity-api-signup-6559"}',
+    expected: '{"username":"parity-api-signup-<generated-suffix>"}',
+    mustNormalize: true
+  }),
+  Object.freeze({
+    id: 'unsuffixed-username-left-alone',
+    category: 'generated-ids',
+    rule: 'generated username suffix on a parity signup fixture',
+    what: 'a username WITHOUT a generated suffix is untouched, so a signup ' +
+      'that stopped colliding is still a difference',
+    input: '{"username":"parity-api-signup"}',
+    expected: '{"username":"parity-api-signup"}',
+    mustNormalize: false
+  }),
+  Object.freeze({
+    id: 'upload-output-path-normalized',
+    category: 'generated-ids',
+    rule: 'per-request upload output path',
+    what: 'the whole per-request upload path, including the run directory it ' +
+      'sits in, is replaced',
+    input: '{"path":"/tmp/parity-server-82836-8e3af20f/uploads/' +
+      '1788479204456-82923-3043a307e3c19949"}',
+    expected: '{"path":"<upload-path>"}',
+    mustNormalize: true
+  }),
+  Object.freeze({
+    id: 'application-path-left-alone',
+    category: 'generated-ids',
+    rule: 'per-request upload output path',
+    what: 'a path the application decided is still compared, so a changed ' +
+      'upload route or a changed static path is still a difference',
+    input: '{"path":"/uploads/avatar.png"}',
+    expected: '{"path":"/uploads/avatar.png"}',
+    mustNormalize: false
+  }),
+
+  // The two probes that cover the ORDERING and the CHARACTER-CLASS defects
+  // this rule had. Both are written as the paths a real runner produces
+  // rather than as tidy samples, because both faults were invisible to a
+  // tidy sample and appeared only on somebody else's machine.
+  Object.freeze({
+    id: 'upload-path-under-a-hex-bearing-run-root',
+    category: 'generated-ids',
+    rule: 'per-request upload output path',
+    what: 'a run root whose work-unit UUID carries a twelve-hex run is ' +
+      'still replaced whole - the short-code rule must not reach it first',
+    input: '{"path":"/tmp/blitzy/scratch/' +
+      '94fb8942-119f-4be8-abfa-00828e472cd3/w-000/' +
+      'parity-server-82836-8e3af20f/uploads/' +
+      '1788479204456-82923-3043a307e3c19949"}',
+    expected: '{"path":"<upload-path>"}',
+    mustNormalize: true
+  }),
+  Object.freeze({
+    id: 'upload-path-with-a-space-in-a-directory',
+    category: 'generated-ids',
+    rule: 'per-request upload output path',
+    what: 'a directory containing a space is part of the path, so the ' +
+      'protection does not depend on where TMPDIR points',
+    input: '{"path":"/var/tmp/parity run 3/' +
+      'parity-server-82836-8e3af20f/uploads/' +
+      '1788479204456-82923-3043a307e3c19949"}',
+    expected: '{"path":"<upload-path>"}',
+    mustNormalize: true
+  }),
+  Object.freeze({
+    id: 'bcrypt-hash-normalized',
+    category: 'generated-ids',
+    rule: 'bcrypt password hash',
+    what: 'a projected password hash is replaced, in the comparison and in ' +
+      'the artifact',
+    // Bcrypt-SHAPED and deliberately not a hash of anything: the `$2b$10$`
+    // prefix and the 53 in-alphabet characters are all the rule reads, and a
+    // real digest here would commit credential material to source for no gain
+    // (measured: an earlier revision of this probe carried a hash that
+    // `bcrypt.compareSync('bacon', …)` accepted, and 'bacon' is the seeded
+    // fixture password in test/parity/seed.js).
+    input: '{"password":"$2b$10$notARealHashJustAShapeSampleForTheProbeAAAAAAAAAAAAAA"}',
+    expected: '{"password":"<bcrypt-hash>"}',
+    mustNormalize: true
+  }),
+  Object.freeze({
+    id: 'bcrypt-field-still-compared',
+    category: 'generated-ids',
+    rule: 'bcrypt password hash',
+    what: 'the field carrying the hash is still compared, so a response that ' +
+      'stopped projecting one - or started - is still a difference',
+    input: '{"password":null}',
+    expected: '{"password":null}',
+    mustNormalize: false
+  }),
+
+  // The three rules capture.js applies BEFORE it writes a recording, asserted
+  // to be idempotent here. This is the property that lets the committed corpus
+  // carry a placeholder instead of a credential or a machine path and still
+  // compare against a live response: the baseline arrives already redacted,
+  // the target is normalized to the same placeholder, and normalizing the
+  // placeholder again must not change it. A rule that consumed its own output
+  // would turn every redacted recording into a difference.
+  Object.freeze({
+    id: 'bcrypt-placeholder-is-idempotent',
+    category: 'generated-ids',
+    rule: 'bcrypt password hash',
+    what: 'a recording that arrives already redacted normalizes to itself',
+    input: '{"password":"<bcrypt-hash>"}',
+    expected: '{"password":"<bcrypt-hash>"}',
+    mustNormalize: false
+  }),
+  Object.freeze({
+    id: 'token-placeholder-is-idempotent',
+    category: 'generated-ids',
+    rule: 'JWT-shaped token',
+    what: 'a recording that arrives already redacted normalizes to itself',
+    input: '<a href="/embed/python/<generated-token>">',
+    expected: '<a href="/embed/python/<generated-token>">',
+    mustNormalize: false
+  }),
+
+  // The token rule's own firing, which nothing probed before: only its
+  // idempotence was covered, so a length floor that excluded a whole class of
+  // valid tokens passed unnoticed. Both inputs are STRUCTURALLY tokens and
+  // cryptographically nothing - the signature segment is a run of one
+  // character - so the probes cannot themselves commit a usable credential.
+  Object.freeze({
+    id: 'token-normalized',
+    category: 'generated-ids',
+    rule: 'JWT-shaped token',
+    what: 'an ordinary compact JWS is replaced, in the comparison and in ' +
+      'the artifact',
+    input: '<a href="/embed/python/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.' +
+      'eyJzIjoicHlmaXh0dXJlMDAxIn0.' +
+      'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA">',
+    expected: '<a href="/embed/python/<generated-token>">',
+    mustNormalize: true
+  }),
+  Object.freeze({
+    id: 'short-payload-token-normalized',
+    category: 'generated-ids',
+    rule: 'JWT-shaped token',
+    what: 'a token whose payload is the three characters that encode {} is ' +
+      'replaced - segment length is not a JWS requirement and must not be ' +
+      'what this rule keys on',
+    input: '<a href="/embed/python/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.' +
+      'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA">',
+    expected: '<a href="/embed/python/<generated-token>">',
+    mustNormalize: true
+  }),
+  Object.freeze({
+    id: 'dotted-identifier-left-alone',
+    category: 'generated-ids',
+    rule: 'JWT-shaped token',
+    what: 'a dotted identifier is not a token, so an asset name or a version ' +
+      'string is still compared',
+    input: '<script src="/js/jquery.validate.min.js"></script>',
+    expected: '<script src="/js/jquery.validate.min.js"></script>',
+    mustNormalize: false
+  }),
+
+  // THE JWS HEADER KEY ORDER, pinned as a pair. jsonwebtoken 5.7.0 serialized
+  // the header as {"typ":"JWT","alg":"HS256"} and 9.0.3 serializes it as
+  // {"alg":"HS256","typ":"JWT"}, so the token rendered into
+  // `input#emailToken` [lib/views/includes/shareModals.html:132, signed at
+  // lib/controllers/trinket.js:542,596,884] is a different STRING on the two
+  // trees for the same payload - MEASURED by QA as exactly two differing lines
+  // out of 997, with identical payload segments and cross-version
+  // verification succeeding in both directions.
+  //
+  // The rule above already covers it, because it keys on the structure of a
+  // compact JWS rather than on the header's contents - MEASURED against the
+  // installed 9.0.3 and a hand-built 5.7.0-order token, both of which
+  // normalize to the same placeholder. So no rule and no category is added
+  // here. What was missing is that NOTHING PINNED IT: the three token probes
+  // above cover idempotence, an ordinary JWS and a `{}` payload, and a later
+  // revision that anchored the rule on the 9.x header prefix would have
+  // passed every one of them while turning every emailToken-bearing page into
+  // a difference.
+  //
+  // Declared as a `mustMatch` pair so the two orders cannot be edited apart,
+  // and inside the real hidden-input markup so the surrounding attributes are
+  // shown to survive. Both payloads are cryptographically nothing - the
+  // signature segment is a run of one character, as the neighbouring token
+  // probes do - so no probe commits a usable credential.
+  Object.freeze({
+    id: 'emailtoken-jwt-9x-header-order-normalized',
+    category: 'generated-ids',
+    rule: 'JWT-shaped token',
+    what: 'the token jsonwebtoken 9.x renders into the emailToken hidden ' +
+      'input - header {"alg":"HS256","typ":"JWT"} - is replaced, and the ' +
+      'input\'s id, name, type and surrounding markup are left to be compared',
+    input: '<input id="emailToken" name="emailToken" type="hidden" ' +
+      'value="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.' +
+      'eyJzaG9ydENvZGUiOiJweWZpeHR1cmUwMDEiLCJpYXQiOjE3MzU2ODk2MDB9.' +
+      'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" />',
+    expected: '<input id="emailToken" name="emailToken" type="hidden" ' +
+      'value="<generated-token>" />',
+    mustNormalize: true
+  }),
+  Object.freeze({
+    id: 'emailtoken-jwt-570-header-order-normalized',
+    category: 'generated-ids',
+    rule: 'JWT-shaped token',
+    what: 'the token jsonwebtoken 5.7.0 rendered into the same input - header ' +
+      '{"typ":"JWT","alg":"HS256"}, the SAME payload, a different string - ' +
+      'normalizes to the same placeholder as the 9.x form, so the header key ' +
+      'order the dependency bump changed cannot make an emailToken-bearing ' +
+      'page a difference',
+    input: '<input id="emailToken" name="emailToken" type="hidden" ' +
+      'value="eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.' +
+      'eyJzaG9ydENvZGUiOiJweWZpeHR1cmUwMDEiLCJpYXQiOjE3MzU2ODk2MDB9.' +
+      'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" />',
+    expected: '<input id="emailToken" name="emailToken" type="hidden" ' +
+      'value="<generated-token>" />',
+    mustNormalize: true,
+    // The relation is the assertion: these two inputs differ only in their
+    // header key order and must normalize to one value.
+    mustMatch: 'emailtoken-jwt-9x-header-order-normalized'
+  }),
+  Object.freeze({
+    id: 'upload-path-placeholder-is-idempotent',
+    category: 'generated-ids',
+    rule: 'per-request upload output path',
+    what: 'a recording that arrives already redacted normalizes to itself',
+    input: '{"path":"<upload-path>"}',
+    expected: '{"path":"<upload-path>"}',
+    mustNormalize: false
+  }),
+
+  // The access-code rule, and the three things it must not do. The narrowness
+  // probe is the important one: the value's shape is the shape of a word, so
+  // the rule is only safe while it stays anchored on its key.
+  Object.freeze({
+    id: 'minted-access-code-normalized',
+    category: 'generated-ids',
+    rule: 'generated course access code',
+    what: 'the six characters generateAccessCode mints are replaced',
+    input: '{"accessCode":"tkXL5e"}',
+    expected: '{"accessCode":"<generated-accesscode>"}',
+    mustNormalize: true
+  }),
+  Object.freeze({
+    id: 'seeded-access-code-compared-exactly',
+    category: 'generated-ids',
+    rule: 'generated course access code',
+    what: 'the code the seeder pins is compared exactly rather than scrubbed',
+    input: '{"accessCode":"' +
+      String((seed.fixtures && seed.fixtures.course &&
+        seed.fixtures.course.accessCode) || '') + '"}',
+    expected: '{"accessCode":"' +
+      String((seed.fixtures && seed.fixtures.course &&
+        seed.fixtures.course.accessCode) || '') + '"}',
+    mustNormalize: false
+  }),
+  Object.freeze({
+    id: 'access-code-rule-stays-on-its-key',
+    category: 'generated-ids',
+    rule: 'generated course access code',
+    what: 'a six-character word in any other field is left alone',
+    input: '{"title":"course","slug":"python","joinUrl":"/join/tkXL5e"}',
+    expected: '{"title":"course","slug":"python","joinUrl":"/join/tkXL5e"}',
+    mustNormalize: false
+  }),
+  Object.freeze({
+    id: 'access-code-placeholder-is-idempotent',
+    category: 'generated-ids',
+    rule: 'generated course access code',
+    what: 'a body that already carries the placeholder normalizes to itself',
+    input: '{"accessCode":"<generated-accesscode>"}',
+    expected: '{"accessCode":"<generated-accesscode>"}',
+    mustNormalize: false
+  })
+]);
+
+// ---------------------------------------------------------------------------
+// Errors and diagnostics
+// ---------------------------------------------------------------------------
+
+/**
+ * A reported fault, as opposed to a programming error.
+ *
+ * Carried as its own type so `main` can print the message alone for one and the
+ * stack for the other: a missing corpus is a message, an undefined property is
+ * a stack.
+ *
+ * @param {string} message
+ * @constructor
+ */
+function ToolError(message) {
+  Error.call(this, message);
+  this.name = 'ToolError';
+  this.message = message;
+
+  if (Error.captureStackTrace) {
+    Error.captureStackTrace(this, ToolError);
+  }
+}
+
+ToolError.prototype = Object.create(Error.prototype);
+ToolError.prototype.constructor = ToolError;
+
+/**
+ * A fault whose remedy is a different command line, so `main` prints the usage.
+ *
+ * @param {string} message
+ * @returns {ToolError}
+ */
+function usageError(message) {
+  var err = new ToolError(message);
+
+  err.usage = true;
+
+  return err;
+}
+
+/**
+ * The readable reason of anything that can be thrown.
+ *
+ * @param {*} value
+ * @returns {string}
+ */
+function reasonOf(value) {
+  if (value === null || value === undefined) {
+    return String(value);
+  }
+
+  if (value.message) {
+    return String(value.message);
+  }
+
+  return String(value);
+}
+
+/**
+ * Writes one diagnostic line to stderr.
+ *
+ * Stderr, never stdout: a caller may capture this tool's stdout, and the human
+ * report is written to a FILE so that it can be cited. Progress goes out as it
+ * happens rather than in a block at the end, so a long replay is observable
+ * while it runs and a stall is attributable to a case.
+ *
+ * @param {string} message
+ * @returns {undefined}
+ */
+function note(message) {
+  process.stderr.write(LOG_PREFIX + message + '\n');
+}
+
+// ---------------------------------------------------------------------------
+// Determinism helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Serializes an artifact with two spaces and a trailing newline, matching every
+ * sibling tool so all the artifacts in this directory diff the same way.
+ *
+ * @param {*} value
+ * @returns {string}
+ */
+function serialize(value) {
+  return JSON.stringify(value, null, 2) + '\n';
+}
+
+/**
+ * A copy of a plain object with its keys sorted.
+ *
+ * Applied to every map whose key set is decided by a response rather than by
+ * this file. Objects this file builds itself are left in their declared order,
+ * which reads better than alphabetical and is already stable.
+ *
+ * @param {Object} value
+ * @returns {Object}
+ */
+function sortedKeys(value) {
+  var out = {};
+
+  Object.keys(value || {}).sort().forEach(function(key) {
+    out[key] = value[key];
+  });
+
+  return out;
+}
+
+/**
+ * The sha256 hex digest of a buffer or string.
+ *
+ * @param {(Buffer|string)} value
+ * @returns {string}
+ */
+function sha256Hex(value) {
+  return crypto.createHash('sha256')
+    .update(Buffer.isBuffer(value) ? value : Buffer.from(String(value), 'utf8'))
+    .digest('hex');
+}
+
+/**
+ * Coarse timing, in the buckets capture.js records.
+ *
+ * Reproduced so the observed record has the same shape as the recorded one.
+ * The value is inside the timestamp category of the volatile set and is
+ * therefore NOT a gate field - it is reported as a timing observation, because
+ * a case that moved from under a second to over ten is worth seeing even when
+ * its body matches.
+ *
+ * @param {number} elapsedMs
+ * @returns {string}
+ */
+function elapsedBucket(elapsedMs) {
+  if (elapsedMs < 10) {
+    return '<10ms';
+  }
+  if (elapsedMs < 100) {
+    return '<100ms';
+  }
+  if (elapsedMs < 1000) {
+    return '<1s';
+  }
+  if (elapsedMs < 10000) {
+    return '<10s';
+  }
+
+  return '>=10s';
+}
+
+/**
+ * Whether a response body of this content type is recorded as text.
+ *
+ * @param {(string|undefined)} contentType
+ * @returns {boolean}
+ */
+function isTextualType(contentType) {
+  return TEXTUAL_TYPE.test(String(contentType || ''));
+}
+
+/**
+ * A bounded excerpt of a value, for a difference record.
+ *
+ * @param {*} value
+ * @returns {*} the value, or a truncated string form of it
+ */
+function excerpt(value) {
+  var text;
+
+  if (value === null || value === undefined || typeof value === 'number' ||
+      typeof value === 'boolean') {
+    return value === undefined ? null : value;
+  }
+
+  text = typeof value === 'string' ? value : JSON.stringify(value);
+
+  if (text === undefined) {
+    return String(value);
+  }
+
+  if (text.length <= EXCERPT_BYTES) {
+    return text;
+  }
+
+  return text.slice(0, EXCERPT_BYTES) + '... [' + text.length + ' chars]';
+}
+
+/**
+ * The index of the first character at which two strings diverge, or -1.
+ *
+ * Reported alongside a body difference so a reviewer lands on the divergence
+ * instead of reading two pages side by side.
+ *
+ * @param {string} left
+ * @param {string} right
+ * @returns {number}
+ */
+function firstDivergence(left, right) {
+  var a = String(left === undefined || left === null ? '' : left);
+  var b = String(right === undefined || right === null ? '' : right);
+  var limit = Math.min(a.length, b.length);
+  var i;
+
+  for (i = 0; i < limit; i++) {
+    if (a.charCodeAt(i) !== b.charCodeAt(i)) {
+      return i;
+    }
+  }
+
+  return a.length === b.length ? -1 : limit;
+}
+
+/**
+ * A window of a string around an offset, for the same reason.
+ *
+ * @param {string} value
+ * @param {number} offset
+ * @returns {string}
+ */
+function windowAround(value, offset) {
+  var text = String(value === undefined || value === null ? '' : value);
+  var from = Math.max(0, offset - 60);
+
+  return (from > 0 ? '...' : '') + text.slice(from, offset + 120) +
+    (offset + 120 < text.length ? '...' : '');
+}
+
+// ---------------------------------------------------------------------------
+// The normalization engine - every rule in it comes from THE VOLATILE SET
+// ---------------------------------------------------------------------------
+
+/**
+ * Fails loudly if the volatile set has been changed without its contract.
+ *
+ * Called once at startup. The set is closed at six categories and each entry
+ * must carry the three justification fields, because an entry without them is
+ * a weakening nobody can review.
+ *
+ * @returns {undefined}
+ * @throws {ToolError} If the set no longer satisfies its own contract.
+ */
+function assertVolatileSetIntegrity() {
+  var seen = Object.create(null);
+
+  if (VOLATILE_SET.length !== VOLATILE_CATEGORY_COUNT) {
+    throw new ToolError('the volatile set holds ' + VOLATILE_SET.length +
+      ' categories; it is fixed at ' + VOLATILE_CATEGORY_COUNT + '. Adding ' +
+      'one is a WEAKENING of the parity gate and has to be justified in ' +
+      'docs/baseline-parity.md - naming the field, why seeding could not make ' +
+      'it deterministic instead, and what coverage is lost - and this ' +
+      'constant raised deliberately with that justification recorded.');
+  }
+
+  VOLATILE_SET.forEach(function(category) {
+    if (seen[category.id]) {
+      throw new ToolError('the volatile set declares the category ' +
+        JSON.stringify(category.id) + ' twice');
+    }
+
+    seen[category.id] = true;
+
+    ['title', 'why', 'seedingAlternative', 'coverageLost'].forEach(function(field) {
+      if (!category[field] || typeof category[field] !== 'string') {
+        throw new ToolError('the volatile set category ' +
+          JSON.stringify(category.id) + ' has no ' + field + '. Every ' +
+          'category carries its own justification, because the list is what a ' +
+          'reviewer reads instead of the comparators.');
+      }
+    });
+
+    // THE ORDERING INVARIANT, held here rather than by a comment on the
+    // array. `redactForRecording` applies the `redactBeforeWrite` rules and
+    // nothing else, while `normalizeText` applies every rule in declaration
+    // order, so the two agree on a redacted value only while no other rule
+    // can have rewritten the text before the redacting one sees it. A
+    // redacting rule declared after a plain one is therefore not a style
+    // question: it is a recording whose placeholder the comparison cannot
+    // reproduce, which surfaces as an unapproved difference on whichever
+    // machine happens to trip the earlier rule.
+    (function() {
+      var sawPlain = null;
+
+      (category.textPatterns || []).forEach(function(pattern) {
+        if (!pattern.redactBeforeWrite) {
+          sawPlain = pattern.name;
+          return;
+        }
+
+        if (sawPlain) {
+          throw new ToolError('the volatile set category ' +
+            JSON.stringify(category.id) + ' declares the write-time rule ' +
+            JSON.stringify(pattern.name) + ' after the plain rule ' +
+            JSON.stringify(sawPlain) + '. Every rule that redacts before ' +
+            'write must precede every rule that does not, so that ' +
+            'redactForRecording and normalizeText see the same input and ' +
+            'produce the same placeholder. Move it above the plain rules.');
+        }
+      });
+    }());
+  });
+}
+
+/**
+ * Exercises the framework-cookie exemption's fail-closed conditions.
+ *
+ * Called at startup beside the volatile set's own integrity check, and it
+ * THROWS. The reason is the same one that makes that check throw rather than
+ * report: this exemption removes real difference records, so a condition that
+ * stopped holding would silently widen it into cases nobody exempted, and that
+ * is a broken tool rather than a finding about the application. Each probe
+ * below is one of the conditions in `frameworkCookieSuppression`, driven
+ * through the function itself rather than restated.
+ *
+ * @returns {Array.<Object>} one record per probe, for the artifacts
+ * @throws {ToolError} if any condition no longer holds
+ */
+function assertFrameworkCookieSuppression() {
+  var setCookie = [{
+    name: 'session',
+    valueLength: 40,
+    valueDigest: 'x',
+    attributes: { httponly: true, samesite: 'Lax', path: '/' },
+    expiresInDays: 365
+  }];
+  var clear = [{
+    name: 'session',
+    valueLength: 0,
+    valueDigest: 'y',
+    attributes: { 'max-age': '0', path: '/' },
+    expiresInDays: null
+  }];
+  var fields = ['header.set-cookie', 'cookies.count', 'cookie[session].present'];
+
+  function records(list) {
+    return list.map(function(field) {
+      return { field: field, baseline: null, target: null };
+    });
+  }
+
+  var probes = [
+    {
+      id: 'fires-on-a-500-that-lost-its-cookie',
+      applies: true,
+      what: 'both sides answered 500, the baseline set one non-clear cookie ' +
+        'and the target set none, and exactly the three fields that absence ' +
+        'produces are present',
+      result: frameworkCookieSuppression({ status: 500, setCookies: setCookie },
+        { status: 500, setCookies: [] }, records(fields))
+    },
+    {
+      id: 'declines-when-the-status-is-not-500',
+      applies: false,
+      what: 'a 403 keeps its cookie difference, because the framework only ' +
+        'suppresses on a 500',
+      result: frameworkCookieSuppression({ status: 403, setCookies: setCookie },
+        { status: 403, setCookies: [] }, records(fields))
+    },
+    {
+      id: 'declines-when-only-one-side-is-a-500',
+      applies: false,
+      what: 'a status change is a difference and is never demoted by this rule',
+      result: frameworkCookieSuppression({ status: 500, setCookies: setCookie },
+        { status: 200, setCookies: [] }, records(fields))
+    },
+    {
+      id: 'declines-for-a-cookie-clear',
+      applies: false,
+      what: 'hapi 21 keeps ttl-0 clears on a 500, so a lost logout still fails',
+      result: frameworkCookieSuppression({ status: 500, setCookies: clear },
+        { status: 500, setCookies: [] }, records(fields))
+    },
+    {
+      id: 'declines-when-the-target-still-set-a-cookie',
+      applies: false,
+      what: 'the suppression is all-or-nothing, so a partial emission is ' +
+        'something else',
+      result: frameworkCookieSuppression({ status: 500, setCookies: setCookie },
+        { status: 500, setCookies: setCookie }, records(fields))
+    },
+    {
+      id: 'declines-when-another-cookie-field-also-differs',
+      applies: false,
+      what: 'an attribute difference in the same step means more changed ' +
+        'than the header\'s absence, and the whole demotion is declined',
+      result: frameworkCookieSuppression({ status: 500, setCookies: setCookie },
+        { status: 500, setCookies: [] },
+        records(fields.concat(['cookie[session].samesite'])))
+    },
+    {
+      id: 'declines-when-the-baseline-set-no-cookie',
+      applies: false,
+      what: 'with nothing suppressed there is nothing to exempt',
+      result: frameworkCookieSuppression({ status: 500, setCookies: [] },
+        { status: 500, setCookies: [] }, [])
+    }
+  ];
+
+  probes.forEach(function(probe) {
+    if (!!probe.result.applies !== probe.applies) {
+      throw new ToolError('the framework-cookie exemption probe ' +
+        JSON.stringify(probe.id) + ' ' +
+        (probe.applies ? 'no longer fires' : 'now fires') + ', and it must ' +
+        (probe.applies ? 'fire' : 'not fire') + ': ' + probe.what + '. This ' +
+        'exemption removes difference records, so a condition that stopped ' +
+        'holding widens it into cases nobody exempted.');
+    }
+  });
+
+  return probes.map(function(probe) {
+    return {
+      id: probe.id,
+      expectedToFire: probe.applies,
+      fired: !!probe.result.applies,
+      what: probe.what,
+      demoted: probe.result.demoted
+    };
+  });
+}
+
+// The archive-reader probe fixtures: three hand-built ZIP containers as byte
+// literals, so the reader is exercised on bytes this file controls rather than
+// on whatever a server happened to serve.
+//
+// A and B hold the SAME two entries and differ ONLY in their DOS modification
+// time and date fields. That pair is the whole argument for the fingerprint:
+// their raw digests differ and their fingerprints must not.
+//
+// C holds the same two entries with the container fields the QA measurement
+// recorded for the BASELINE tree - flags 0x0000, versionMadeBy 0x000a,
+// versionNeeded 10 on the deflated entry, directory attributes 0x41ed0010 and
+// file attributes 0x01a40000. It is the permanent negative control: the
+// registered course profile must REJECT it, on exactly the fields the register
+// says moved. A comparator that passed C would be the comparator this section
+// replaced.
+var ARCHIVE_PROBE_TARGET_A = 'UEsDBAoAAAgAACFDeFYAAAAAAAAAAAAAAAAHAAAAbGVzc' +
+  '29uL1BLAwQUAAAICAAhQ3hWxKYkiBEAAAAPAAAADwAAAGxlc3Nvbi9wcm9iZS5tZFNWKEgsyi' +
+  'ypVCgoyk9K5QIAUEsBAhQDCgAACAAAIUN4VgAAAAAAAAAAAAAAAAcAAAAAAAAAAAAQAO1FAAA' +
+  'AAGxlc3Nvbi9QSwECFAMUAAAICAAhQ3hWxKYkiBEAAAAPAAAADwAAAAAAAAAAAAAApIElAAAA' +
+  'bGVzc29uL3Byb2JlLm1kUEsFBgAAAAACAAIAcgAAAGMAAAAAAA==';
+var ARCHIVE_PROBE_TARGET_B = 'UEsDBAoAAAgAABERIiIAAAAAAAAAAAAAAAAHAAAAbGVzc' +
+  '29uL1BLAwQUAAAICAARESIixKYkiBEAAAAPAAAADwAAAGxlc3Nvbi9wcm9iZS5tZFNWKEgsyi' +
+  'ypVCgoyk9K5QIAUEsBAhQDCgAACAAAEREiIgAAAAAAAAAAAAAAAAcAAAAAAAAAAAAQAO1FAAA' +
+  'AAGxlc3Nvbi9QSwECFAMUAAAICAARESIixKYkiBEAAAAPAAAADwAAAAAAAAAAAAAApIElAAAA' +
+  'bGVzc29uL3Byb2JlLm1kUEsFBgAAAAACAAIAcgAAAGMAAAAAAA==';
+var ARCHIVE_PROBE_BASELINE_SHAPED = 'UEsDBAoAAAAAACFDeFYAAAAAAAAAAAAAAAAHAAA' +
+  'AbGVzc29uL1BLAwQKAAAACAAhQ3hWxKYkiBEAAAAPAAAADwAAAGxlc3Nvbi9wcm9iZS5tZFNW' +
+  'KEgsyiypVCgoyk9K5QIAUEsBAgoACgAAAAAAIUN4VgAAAAAAAAAAAAAAAAcAAAAAAAAAAAAQA' +
+  'O1BAAAAAGxlc3Nvbi9QSwECCgAKAAAACAAhQ3hWxKYkiBEAAAAPAAAADwAAAAAAAAAAAAAApA' +
+  'ElAAAAbGVzc29uL3Byb2JlLm1kUEsFBgAAAAACAAIAcgAAAGMAAAAAAA==';
+// D is A with ONE thing changed: the deflated entry's content. Same two entry
+// names, same compressed and uncompressed sizes, same 235 total bytes, the
+// same eleven writer-profile fields - and a different crc32 (declared AND
+// computed, so the container stays internally valid) and a different inflated
+// content digest.
+//
+// It is the permanent discriminator for the CONTENT half of the register, and
+// it is the QA verifier's own construction: while the fingerprint was compared
+// only against a recorded value, this container and A produced the same
+// verdict - zero differences - on a registered route. The pin is what
+// separates them, and the probe below requires that separation to hold.
+var ARCHIVE_PROBE_CONTENT_DRIFT = 'UEsDBAoAAAgAACFDeFYAAAAAAAAAAAAAAAAHAAAA' +
+  'bGVzc29uL1BLAwQUAAAICAAhQ3hWWTLYYREAAAAPAAAADwAAAGxlc3Nvbi9wcm9iZS5tZFNW' +
+  'KEgsyiypVEgpykwr4QIAUEsBAhQDCgAACAAAIUN4VgAAAAAAAAAAAAAAAAcAAAAAAAAAAAAQ' +
+  'AO1FAAAAAGxlc3Nvbi9QSwECFAMUAAAICAAhQ3hWWTLYYREAAAAPAAAADwAAAAAAAAAAAAAA' +
+  'pIElAAAAbGVzc29uL3Byb2JlLm1kUEsFBgAAAAACAAIAcgAAAGMAAAAAAA==';
+// A valid end-of-central-directory record declaring no entries at all.
+var ARCHIVE_PROBE_EMPTY = 'UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA==';
+// The fingerprint of A and B, pinned. It moves if the entry table gains or
+// loses a field, if the canonicalization changes, or if an mtime field ever
+// reaches the fingerprint - each of which is a change to what this file
+// compares and none of which should pass unnoticed.
+var ARCHIVE_PROBE_FINGERPRINT =
+  '531630bd8751bb0f6d8fe4680dc9dc9c364b3cf96bc83064ddaf7820dfcf2a47';
+// The fingerprint of D, the content-drift container, pinned for the same
+// reason: the probe below asserts that it differs from A's, and a value pinned
+// here is what makes "differs" mean "differs from this measured value" rather
+// than "differs from whatever the reader happens to produce today".
+var ARCHIVE_PROBE_CONTENT_DRIFT_FINGERPRINT =
+  '145309966c466a1d2d6cc3b22ae4e6a084bf3cd8eff0a7a4f1da182d77cb5fc2';
+// The three fields every registered writer must pin, so the content half of
+// the register cannot be left half-declared. Named here rather than spelled
+// out inside the probe, for the same reason ARCHIVE_PROFILE_FIELDS is.
+var ARCHIVE_PIN_FIELDS = Object.freeze([
+  'byteLength',
+  'entryCount',
+  'fingerprint'
+]);
+// The fields the baseline-shaped container must be REJECTED on, exactly.
+var ARCHIVE_PROBE_BASELINE_MISMATCHES = Object.freeze([
+  'centralVersionMadeBy',
+  'directoryExternalAttributes',
+  'fileExternalAttributes',
+  'localVersionNeededByMethod.deflated',
+  'utf8NameFlag',
+  'versionNeededByMethod.deflated'
+]);
+
+/**
+ * Exercises the archive reader and the frozen register at startup.
+ *
+ * Called beside the volatile set's own integrity check, and it THROWS for the
+ * same reason: the structural comparison is what stands behind the raw-digest
+ * exemption, so a reader that stopped reading, or a register that stopped being
+ * comparable, would turn every archive response into a silent pass - and a
+ * silent pass is indistinguishable, from outside this file, from the hole this
+ * section was written to close. That is a broken tool, not a finding about the
+ * application, and it says so before it drives a request.
+ *
+ * Eleven probes, each driven through the real functions rather than a
+ * restatement of them, and each with a distinct failure mode: that a known
+ * container reads as its known entries; that the fingerprint ignores the
+ * clock; that a malformed container is UNPARSED rather than empty; that a
+ * readable but empty container is not a pass; that an exempt type this reader
+ * does not open is reported uncovered rather than compared; that the
+ * registered target profile is satisfiable; that the BASELINE profile is
+ * rejected, on exactly the fields the register says moved; that an archive on
+ * an unregistered route fails; that the register declares every profile field
+ * the reader produces; that every registered writer declares a COMPLETE
+ * content pin, since a writer without one would have its contents compared
+ * against nothing; and that a container built to differ from a pinned shape
+ * ONLY in content is rejected by the pin on the fingerprint alone while its
+ * content-independent writer profile still passes - the discriminator the pin
+ * exists for, and the case that produced zero differences before it.
+ *
+ * @returns {Array.<Object>} one record per probe, for the artifacts
+ * @throws {ToolError} if any of them no longer holds
+ */
+function assertArchiveReader() {
+  var targetA = Buffer.from(ARCHIVE_PROBE_TARGET_A, 'base64');
+  var targetB = Buffer.from(ARCHIVE_PROBE_TARGET_B, 'base64');
+  var contentDrift = Buffer.from(ARCHIVE_PROBE_CONTENT_DRIFT, 'base64');
+  var baselineShaped = Buffer.from(ARCHIVE_PROBE_BASELINE_SHAPED, 'base64');
+  var empty = Buffer.from(ARCHIVE_PROBE_EMPTY, 'base64');
+  var readA = readArchiveContainer(targetA, 'application/zip');
+  var readB = readArchiveContainer(targetB, 'application/zip');
+  var readDrift = readArchiveContainer(contentDrift, 'application/zip');
+  var readBaseline = readArchiveContainer(baselineShaped, 'application/zip');
+  var readEmpty = readArchiveContainer(empty, 'application/zip');
+  var readMalformed = readArchiveContainer(
+    Buffer.from('PK\u0003\u0004 and then nothing that follows the format'),
+    'application/zip');
+  var readGzip = readArchiveContainer(Buffer.from([0x1f, 0x8b, 0x08]),
+    'application/gzip');
+  var courseWriter = ARCHIVE_CONTAINER_REGISTER.writers[0];
+  var baselineVerdict = compareArchiveProfile(readBaseline.writerProfile,
+    courseWriter.expected);
+  var targetVerdict = compareArchiveProfile(readA.writerProfile,
+    courseWriter.expected);
+  var emptyComparison = compareArchive(null, { archive: readEmpty }, {
+    contentType: 'application/zip',
+    routeKey: courseWriter.routes[0]
+  });
+  var gzipComparison = compareArchive(null, { archive: readGzip }, {
+    contentType: 'application/gzip',
+    routeKey: null
+  });
+  var unregisteredComparison = compareArchive(null, { archive: readA }, {
+    contentType: 'application/zip',
+    routeKey: 'GET /a-route-nobody-registered'
+  });
+  var registerFields = [];
+  var registerPins = [];
+  // The probe pin: A's own measured shape, so the content comparison is
+  // exercised on bytes this file owns and NOT against the register's pins,
+  // which are measurements of the application's archives. Coupling this probe
+  // to those would mean a legitimate re-measurement of a route's pin could
+  // only be landed by regenerating a byte literal here, and a startup probe
+  // that fails on a legitimate change is a probe that gets deleted.
+  var probePin = Object.freeze({
+    fingerprint: ARCHIVE_PROBE_FINGERPRINT,
+    entryCount: 2,
+    byteLength: targetA.length
+  });
+  var pinnedShapeVerdict = compareArchivePin(readA, probePin);
+  var contentDriftVerdict = compareArchivePin(readDrift, probePin);
+  var contentDriftProfile = compareArchiveProfile(readDrift.writerProfile,
+    ARCHIVE_CONTAINER_REGISTER.writers[0].expected);
+  var probes;
+  var failures = [];
+
+  ARCHIVE_CONTAINER_REGISTER.writers.forEach(function(writer) {
+    var declared = Object.keys(writer.expected).sort().join(',');
+    var pin = writer.pinned || null;
+    var pinDeclared = pin
+      ? Object.keys(pin).filter(function(key) {
+        return ARCHIVE_PIN_FIELDS.indexOf(key) >= 0;
+      }).sort().join(',')
+      : '';
+
+    registerFields.push({
+      writer: writer.id,
+      declared: declared,
+      ok: declared === ARCHIVE_PROFILE_FIELDS.slice().sort().join(',')
+    });
+
+    registerPins.push({
+      writer: writer.id,
+      declared: pinDeclared,
+      fingerprint: pin ? pin.fingerprint : null,
+      entryCount: pin ? pin.entryCount : null,
+      byteLength: pin ? pin.byteLength : null,
+      // Each field is checked for the SHAPE that makes it comparable, not
+      // merely for being present: a fingerprint that is not a sha256 literal,
+      // or a count that is not a positive integer, is a pin that cannot fail
+      // a comparison honestly.
+      ok: !!pin && pinDeclared === ARCHIVE_PIN_FIELDS.join(',') &&
+        /^[0-9a-f]{64}$/.test(String(pin.fingerprint)) &&
+        typeof pin.entryCount === 'number' && pin.entryCount > 0 &&
+        pin.entryCount === Math.floor(pin.entryCount) &&
+        typeof pin.byteLength === 'number' && pin.byteLength > 0 &&
+        pin.byteLength === Math.floor(pin.byteLength)
+    });
+  });
+
+  probes = [
+    {
+      id: 'known-container-reads-as-its-known-entries',
+      what: 'a hand-built two-entry container reads as those two entries, ' +
+        'with their names, methods, declared crc32 and inflated content ' +
+        'digests, and the pinned fingerprint',
+      ok: readA.parsed && readA.entryCount === 2 &&
+        readA.entries[0].name === 'lesson/' &&
+        readA.entries[0].directory === true &&
+        readA.entries[0].method === 'stored' &&
+        readA.entries[1].name === 'lesson/probe.md' &&
+        readA.entries[1].method === 'deflated' &&
+        readA.entries[1].crc32Declared === '0x8824a6c4' &&
+        readA.entries[1].contentDigest ===
+          'c4d19b19eeef2578791313d749bb87534c0b9a377a73aab411d4b7eb7f3568dd' &&
+        readA.entries[1].crc32DeclaredMatchesContent === true &&
+        readA.fingerprint === ARCHIVE_PROBE_FINGERPRINT,
+      detail: 'parsed=' + readA.parsed + ' entries=' + readA.entryCount +
+        ' fingerprint=' + readA.fingerprint
+    },
+    {
+      id: 'fingerprint-ignores-the-clock',
+      what: 'two containers holding the same entries and differing ONLY in ' +
+        'their DOS modification time fingerprint identically, while their raw ' +
+        'digests differ - which is the whole reason the raw digest is exempt ' +
+        'and the fingerprint is not',
+      ok: sha256Hex(targetA) !== sha256Hex(targetB) &&
+        readA.fingerprint === readB.fingerprint,
+      detail: 'raw ' + sha256Hex(targetA).slice(0, 16) + ' vs ' +
+        sha256Hex(targetB).slice(0, 16) + ', fingerprint ' +
+        readA.fingerprint.slice(0, 16) + ' vs ' + readB.fingerprint.slice(0, 16)
+    },
+    {
+      id: 'malformed-container-is-unparsed-not-empty',
+      what: 'bytes that are not a ZIP are reported as UNPARSED with a reason ' +
+        'and a null entry count - never as a container that held no entries, ' +
+        'which would make every comparison built on this reader vacuous',
+      ok: readMalformed.parsed === false && readMalformed.entryCount === null &&
+        !!readMalformed.unparsedReason && readMalformed.fingerprint === null,
+      detail: 'parsed=' + readMalformed.parsed + ' entryCount=' +
+        readMalformed.entryCount + ' reason=' + readMalformed.unparsedReason
+    },
+    {
+      id: 'readable-but-empty-container-is-a-difference',
+      what: 'a container that reads cleanly and declares no entries is a ' +
+        'DIFFERENCE rather than a pass: without entries every profile field ' +
+        'is undetermined, so a comparison would compare nothing',
+      ok: readEmpty.parsed === true && readEmpty.entryCount === 0 &&
+        emptyComparison.comparison.state === 'no-entries' &&
+        emptyComparison.differences.length === 1 &&
+        emptyComparison.differences[0].field === 'body.archive.parsed',
+      detail: 'state=' + emptyComparison.comparison.state + ' differences=' +
+        emptyComparison.differences.length
+    },
+    {
+      id: 'an-exempt-type-this-reader-does-not-open-is-reported-uncovered',
+      what: 'a gzip body is not silently treated as a compared container: the ' +
+        'reader says it opens ZIP only, and the comparison records an ' +
+        'observation that the digest exemption is uncovered for that type ' +
+        'rather than a difference nobody can act on',
+      ok: readGzip.parsed === false &&
+        gzipComparison.comparison.state === 'not-a-zip' &&
+        gzipComparison.differences.length === 0 &&
+        gzipComparison.observations.length === 1,
+      detail: 'state=' + gzipComparison.comparison.state + ' differences=' +
+        gzipComparison.differences.length + ' observations=' +
+        gzipComparison.observations.length
+    },
+    {
+      id: 'the-registered-target-profile-is-satisfiable',
+      what: 'the container shaped like this tree\'s course archive MATCHES ' +
+        'the frozen expectation registered for that route, so the ' +
+        'expectation is one a passing container can meet',
+      ok: targetVerdict.ok && !targetVerdict.mismatches.length,
+      detail: 'mismatches=' + JSON.stringify(targetVerdict.mismatches)
+    },
+    {
+      id: 'the-baseline-profile-is-rejected-on-exactly-the-registered-fields',
+      what: 'the container shaped like the BASELINE tree\'s course archive is ' +
+        'REJECTED by the frozen expectation, on exactly the fields the ' +
+        'register says moved. This is the negative control: it proves the ' +
+        'comparison can fail, and that it would have caught the change QA ' +
+        'measured instead of recording it as an observation',
+      ok: !baselineVerdict.ok && baselineVerdict.mismatches.map(function(entry) {
+        return entry.field;
+      }).sort().join(',') === ARCHIVE_PROBE_BASELINE_MISMATCHES.join(','),
+      detail: 'rejected on ' + baselineVerdict.mismatches.map(function(entry) {
+        return entry.field;
+      }).sort().join(', ')
+    },
+    {
+      id: 'an-archive-on-an-unregistered-route-is-a-difference',
+      what: 'a well-formed container served on a route the register does not ' +
+        'name fails, because an archive route nobody registered is an ' +
+        'archive nobody pinned an expectation for',
+      ok: unregisteredComparison.differences.length === 1 &&
+        unregisteredComparison.differences[0].field ===
+          'body.archive.writerProfile.registered',
+      detail: 'differences=' + unregisteredComparison.differences.map(
+        function(record) { return record.field; }).join(', ')
+    },
+    {
+      id: 'the-register-declares-every-profile-field-the-reader-produces',
+      what: 'each registered writer declares an expectation for every field ' +
+        'in ARCHIVE_PROFILE_FIELDS, so a field added to the reader cannot ' +
+        'become an uncompared one',
+      ok: registerFields.every(function(record) { return record.ok; }),
+      detail: JSON.stringify(registerFields)
+    },
+    {
+      id: 'every-registered-writer-declares-a-complete-content-pin',
+      what: 'each registered writer declares a `pinned` block carrying all ' +
+        'three of ARCHIVE_PIN_FIELDS - a sha256 entry-table fingerprint, a ' +
+        'positive integer entry count and a positive integer byte length. ' +
+        'The writer profile is content-INDEPENDENT, so a writer registered ' +
+        'without a pin would have its container\'s CONTENTS compared against ' +
+        'nothing while every profile field passed',
+      ok: registerPins.length > 0 && registerPins.every(function(record) {
+        return record.ok;
+      }),
+      detail: JSON.stringify(registerPins)
+    },
+    {
+      id: 'a-container-differing-only-in-content-is-rejected-by-the-pin',
+      what: 'two containers equal in byte length, entry names, entry sizes ' +
+        'and all eleven writer-profile fields, differing ONLY in their ' +
+        'inflated content and therefore in their crc32, are separated by the ' +
+        'pin and by nothing else: the pinned shape matches its pin, the ' +
+        'drifted one is rejected on the fingerprint ALONE, and the writer ' +
+        'profile passes the drifted container. This is the discriminator the ' +
+        'content pin exists for - before it, both produced zero differences ' +
+        'on a registered route',
+      ok: readDrift.parsed && readDrift.entryCount === readA.entryCount &&
+        readDrift.byteLength === readA.byteLength &&
+        readDrift.entries[1].name === readA.entries[1].name &&
+        readDrift.entries[1].compressedSize ===
+          readA.entries[1].compressedSize &&
+        readDrift.entries[1].uncompressedSizeDeclared ===
+          readA.entries[1].uncompressedSizeDeclared &&
+        readDrift.entries[1].crc32Declared !== readA.entries[1].crc32Declared &&
+        readDrift.entries[1].crc32DeclaredMatchesContent === true &&
+        readDrift.entries[1].contentDigest !== readA.entries[1].contentDigest &&
+        readDrift.fingerprint === ARCHIVE_PROBE_CONTENT_DRIFT_FINGERPRINT &&
+        readDrift.fingerprint !== readA.fingerprint &&
+        // The profile half is blind to this, and must be: that is what makes
+        // the pin the only thing between content drift and a passing gate.
+        contentDriftProfile.ok &&
+        // The pinned shape passes its pin, so the comparison is satisfiable.
+        pinnedShapeVerdict.ok &&
+        pinnedShapeVerdict.compared.slice().sort().join(',') ===
+          ARCHIVE_PIN_FIELDS.join(',') &&
+        // And the drift fails it on the fingerprint alone - not on the count
+        // and not on the length, which is what makes the failure legible.
+        !contentDriftVerdict.ok &&
+        contentDriftVerdict.mismatches.length === 1 &&
+        contentDriftVerdict.mismatches[0].field === 'fingerprint',
+      detail: 'pinned-shape ok=' + pinnedShapeVerdict.ok + ' compared=' +
+        pinnedShapeVerdict.compared.join('/') + '; drift ' +
+        readDrift.byteLength + ' bytes, ' + readDrift.entryCount +
+        ' entries, crc ' + readDrift.entries[1].crc32Declared + ' vs ' +
+        readA.entries[1].crc32Declared + ', profile ok=' +
+        contentDriftProfile.ok + ', rejected on ' +
+        contentDriftVerdict.mismatches.map(function(entry) {
+          return entry.field;
+        }).join(', ')
+    }
+  ];
+
+  probes.forEach(function(probe) {
+    if (!probe.ok) {
+      failures.push(probe.id + ': ' + probe.what + '. MEASURED: ' +
+        probe.detail);
+    }
+  });
+
+  if (failures.length) {
+    throw new ToolError('the archive-container reader or its frozen register ' +
+      'does not behave as this file declares, so the structural comparison ' +
+      'that stands behind the raw-digest exemption cannot be relied on:\n  - ' +
+      failures.join('\n  - '));
+  }
+
+  return probes.map(function(probe) {
+    return {
+      id: probe.id,
+      what: probe.what,
+      ok: probe.ok,
+      measured: probe.detail
+    };
+  });
+}
+
+/**
+ * Runs every declared normalization probe and returns their results.
+ *
+ * Called once at startup, beside the set's own integrity check, and it THROWS
+ * on a probe that does not hold. The reason it throws rather than reports: a
+ * normalization rule that stopped firing turns every rendered page into a
+ * difference and every asset-URL comparison into noise, and a rule that fires
+ * too widely stops comparing the thing it sits inside. Neither is a finding
+ * about the application, so neither may be reported as one - the tool is broken
+ * and says so before it drives a request.
+ *
+ * The results are returned so `describeVolatileSet` can emit them: a reviewer
+ * reading the artifact should be able to see that the cache-prefix rule fires,
+ * rather than having to read this file to find out whether it exists.
+ *
+ * @returns {Array.<Object>} one record per probe, each with its measured output
+ * @throws {ToolError} If any declared rule does not behave as declared.
+ */
+function assertNormalizationRules() {
+  var results = [];
+  var byId = Object.create(null);
+  var failures = [];
+
+  NORMALIZATION_PROBES.forEach(function(probe) {
+    var outcome = normalizeText(probe.input);
+    var record = {
+      id: probe.id,
+      category: probe.category,
+      rule: probe.rule,
+      what: probe.what,
+      input: probe.input,
+      expected: probe.expected,
+      observed: outcome.value,
+      rulesApplied: outcome.applied.slice(),
+      normalized: outcome.value !== probe.input,
+      ok: true
+    };
+
+    results.push(record);
+    byId[probe.id] = record;
+
+    if (!probe.input) {
+      record.ok = false;
+      failures.push(probe.id + ' has no input to probe with. Its reference ' +
+        'value comes from test/parity/seed.js, so the seeder no longer ' +
+        'exports what this probe was written against and the rule it covers ' +
+        'is unverified.');
+      return;
+    }
+
+    if (record.observed !== probe.expected) {
+      record.ok = false;
+      failures.push(probe.id + ': ' + probe.what + '. Normalizing ' +
+        JSON.stringify(probe.input) + ' must produce ' +
+        JSON.stringify(probe.expected) + ' and produced ' +
+        JSON.stringify(record.observed) + '.');
+      return;
+    }
+
+    // THE TWO PATHS MUST AGREE, per value, for every rule that redacts before
+    // write. `redactForRecording` is what capture.js writes a recording
+    // through and `normalizeText` is what the comparison reads both sides
+    // through, so a value the two treat differently is a baseline that can
+    // never match a live response - and the failure appears as an unapproved
+    // difference on a route rather than as anything a reader would recognize
+    // as a normalization fault. The ordering invariant in
+    // `assertVolatileSetIntegrity` makes that impossible structurally; this
+    // check proves it on the values themselves, which is the form that would
+    // have caught the twelve upload-path differences at startup instead of
+    // in a gate run on another machine.
+    if (redactsBeforeWrite(probe.rule)) {
+      record.writeTime = redactForRecording(probe.input).value;
+      record.writeTimeAgrees = record.writeTime === record.observed;
+
+      if (!record.writeTimeAgrees) {
+        record.ok = false;
+        failures.push(probe.id + ': the rule ' + JSON.stringify(probe.rule) +
+          ' redacts before write, so redactForRecording and normalizeText ' +
+          'must produce the same value for ' + JSON.stringify(probe.input) +
+          '. Write time produced ' + JSON.stringify(record.writeTime) +
+          ' and compare time produced ' + JSON.stringify(record.observed) +
+          '. A rule declared after a plain rule is the usual cause.');
+        return;
+      }
+    }
+
+    if (probe.mustNormalize && !record.normalized) {
+      record.ok = false;
+      failures.push(probe.id + ' expected the ' + JSON.stringify(probe.rule) +
+        ' rule of the ' + probe.category + ' category to fire and nothing ' +
+        'changed, so this value would be compared as though it were stable.');
+      return;
+    }
+
+    if (!probe.mustNormalize && record.normalized) {
+      record.ok = false;
+      failures.push(probe.id + ' expected no rule to fire on ' +
+        JSON.stringify(probe.input) + ' and ' + record.rulesApplied.join(', ') +
+        ' did, which means this value is no longer compared.');
+    }
+  });
+
+  // The cross-probe assertions, run after every probe has a measured value.
+  //
+  // `mustMatch` is the mirror of `mustDifferFrom` and exists for one shape of
+  // question: two inputs that a rule has to collapse to the SAME value. Stating
+  // each one's expected output separately would already assert it, but not
+  // VISIBLY - a later revision that narrowed the rule and updated both expected
+  // strings together would pass while the property the pair exists to pin was
+  // gone. Declared as a relation, the pair cannot be edited apart.
+  NORMALIZATION_PROBES.forEach(function(probe) {
+    var mine;
+    var other;
+
+    if (!probe.mustMatch) {
+      return;
+    }
+
+    mine = byId[probe.id];
+    other = byId[probe.mustMatch];
+
+    if (!other) {
+      mine.ok = false;
+      failures.push(probe.id + ' compares itself against the probe ' +
+        JSON.stringify(probe.mustMatch) + ', which is not declared');
+      return;
+    }
+
+    if (mine.observed !== other.observed) {
+      mine.ok = false;
+      failures.push(probe.id + ': ' + probe.what + '. It normalized to ' +
+        JSON.stringify(mine.observed) + ' while ' + probe.mustMatch +
+        ' normalized to ' + JSON.stringify(other.observed) + ', so the two ' +
+        'no longer compare equal and every response carrying the second form ' +
+        'is now a difference.');
+    }
+  });
+
+  NORMALIZATION_PROBES.forEach(function(probe) {
+    var mine;
+    var other;
+
+    if (!probe.mustDifferFrom) {
+      return;
+    }
+
+    mine = byId[probe.id];
+    other = byId[probe.mustDifferFrom];
+
+    if (!other) {
+      mine.ok = false;
+      failures.push(probe.id + ' compares itself against the probe ' +
+        JSON.stringify(probe.mustDifferFrom) + ', which is not declared');
+      return;
+    }
+
+    if (mine.observed === other.observed) {
+      mine.ok = false;
+      failures.push(probe.id + ': ' + probe.what + '. It normalized to the ' +
+        'same value as ' + probe.mustDifferFrom + ' (' +
+        JSON.stringify(mine.observed) + '), so the rule is swallowing more ' +
+        'than the volatile part and the surrounding value is no longer ' +
+        'compared.');
+    }
+  });
+
+  if (failures.length) {
+    throw new ToolError('the normalization rules do not behave as the ' +
+      'volatile set declares, so no comparison this tool made would mean ' +
+      'anything:\n  - ' + failures.join('\n  - '));
+  }
+
+  return results;
+}
+
+
+/**
+ * The comparison contract for binary and stream bodies, as it is APPLIED.
+ *
+ * Emitted into the result and rendered into the report because the halves of it
+ * are not the same, and a document that states only the first half overstates
+ * the gate. The length is compared exactly for every binary body. The digest is
+ * compared exactly for every binary body EXCEPT the enumerated archive
+ * container types, where the RAW digest is recorded as an observation: those
+ * containers embed each entry's modification time in their own headers, so the
+ * digest is a clock read while the length - the timestamp fields being
+ * fixed-width - is not. Measured: two captures of the identical tree produced
+ * two digests for the same 182-byte zip, and the committed corpus holds the
+ * same 538-byte course archive twice with two different digests.
+ *
+ * WHAT THIS DESCRIPTION MUST NOT SAY is that the container is uncompared,
+ * because it no longer is and once was. For each of those six types the
+ * container is opened in the same step and compared structurally - the writer
+ * profile against the frozen expectation in ARCHIVE_CONTAINER_REGISTER, and
+ * the entry-table fingerprint against the recording where the recording
+ * carries one and against that register's PINNED measurement where it does
+ * not - and both produce real differences. The pin is what makes the second
+ * half able to fail on the committed corpus, which carries no recorded
+ * fingerprint: without it, content drift on a registered route was measured
+ * to produce zero differences, because the writer profile is
+ * content-independent by design. The storage and worker harnesses still
+ * assert the object key and the download url, which an HTTP response does not
+ * carry; they are no longer what the archive's structure rests on.
+ *
+ * @returns {Object}
+ */
+function describeBinaryBodyContract() {
+  return {
+    lengthCompared: 'every binary or stream body, exactly',
+    digestCompared: 'every binary or stream body except the enumerated ' +
+      'archive container types, exactly',
+    digestObservationOnly: ARCHIVE_DIGEST_EXEMPT.slice(),
+    digestObservationOnlyReason: 'these containers embed each entry\'s ' +
+      'modification time, so the RAW content digest is a clock read while the ' +
+      'byte length is not - the timestamp fields are fixed-width. Measured: ' +
+      'two captures of the identical tree produced two digests for the same ' +
+      '182-byte zip and the same length both times, and the committed corpus ' +
+      'records the same 538-byte course archive twice with two different ' +
+      'digests. Restoring raw-digest comparison would therefore produce a ' +
+      'gate that can never pass, which is why the container is compared ' +
+      'structurally instead.',
+    digestObservationOnlyDeclaredBy: 'the timestamps category of the volatile set',
+    // The half that replaced the hole. Emitted in full, register included, so
+    // the artifact carries the frozen expectation and the registered
+    // before-and-after rather than a pointer to a document.
+    archiveStructureCompared: 'For every one of those content types this file ' +
+      'OPENS the container and compares it in the same step. Two comparisons, ' +
+      'both of which produce real differences and exit non-zero: ' +
+      '`body.archive.writerProfile` against the frozen expectation registered ' +
+      'for the route, which is what fails on a writer change even when the ' +
+      'entries are identical; and `body.archive.fingerprint` - sha256 over ' +
+      'the canonical ordered entry table with the mtime fields excluded and ' +
+      'each entry\'s content taken as the sha256 of its INFLATED bytes - ' +
+      'compared exactly against the recording where the recording carries ' +
+      'one, and against the `pinned.fingerprint` registered for the route ' +
+      'where it does not. A container that cannot be read, that holds no ' +
+      'entries, that is served on a route the register does not name, or ' +
+      'whose entry count or byte length moved from the registered pin is a ' +
+      'difference as well - and so is an archive on a registered route whose ' +
+      'fingerprint ends up compared against neither a recording nor a pin.',
+    archiveStructureNotCompared: 'What remains genuinely uncompared, stated ' +
+      'as narrowly as it is true. A recording that carries no ' +
+      '`body.archive.fingerprint` - the committed corpus records a binary ' +
+      'body as a length and a digest and predates the field - is no longer a ' +
+      'gap in what is COMPARED, because the register\'s pinned measurement ' +
+      'takes that side of the comparison and a mismatch against it is a real ' +
+      'difference that fails the run. What is still open there is the ' +
+      'PROVENANCE of the expected value: it is a measurement of this tree ' +
+      'recorded in this file rather than a value a baseline capture produced, ' +
+      'and every artifact says which of the two decided each container ' +
+      '(`fingerprintComparedAgainst`) alongside what the corpus holds ' +
+      '(`recordingFingerprintState`). A corpus captured with the archive ' +
+      'block present is compared against the recording instead and the pin ' +
+      'stands aside. A registered writer that declared no pin would leave the ' +
+      'contents compared against nothing, which the startup probe ' +
+      '`every-registered-writer-declares-a-complete-content-pin` refuses and ' +
+      'the archive-containers check fails. An exempt content type this reader ' +
+      'does not open - gzip, tar, the compressed types - is genuinely ' +
+      'uncovered and is reported as such rather than presented as compared.',
+    archiveRegister: ARCHIVE_CONTAINER_REGISTER,
+    entryLevelAssertedBy: Object.freeze([
+      'test/parity/replay.js (this file: the writer profile and the entry-table ' +
+        'fingerprint, per response)',
+      'test/parity/storage.js',
+      'test/parity/worker.js'
+    ]),
+    coverageLost: 'For those six content types: that two archives with the ' +
+      'same length and the same structure hold the same BYTES - which is a ' +
+      'statement about two clock reads. Everything the container declares is ' +
+      'compared: every entry name, order, compression method, general-purpose ' +
+      'flags, versionNeeded, versionMadeBy, internal and external attributes, ' +
+      'declared crc32 and size, and the digest of each entry\'s inflated ' +
+      'content. A changed entry name, a changed entry body, a changed layout ' +
+      'or a changed writer is a difference here. What is genuinely uncovered ' +
+      'is a non-ZIP exempt container, where the reader reports that it opens ' +
+      'ZIP only; no route in the corpus serves one. For every other binary ' +
+      'type - images, PDFs, streamed files - both the length and the digest ' +
+      'are compared exactly and a single changed byte fails.'
+  };
+}
+
+/**
+ * Collects one field across every category of the volatile set.
+ *
+ * The single accessor every derived list below goes through, so that a rule can
+ * only take effect by being declared in the set.
+ *
+ * @param {string} field
+ * @returns {Array.<*>}
+ */
+function volatileField(field) {
+  var out = [];
+
+  VOLATILE_SET.forEach(function(category) {
+    (category[field] || []).forEach(function(value) {
+      if (out.indexOf(value) === -1) {
+        out.push(value);
+      }
+    });
+  });
+
+  return out;
+}
+
+/**
+ * Which category declares a given header, for the report.
+ *
+ * @param {string} name a lowercased header name
+ * @returns {(string|null)} the category id
+ */
+function categoryForHeader(name) {
+  var found = null;
+
+  VOLATILE_SET.forEach(function(category) {
+    if (found) {
+      return;
+    }
+
+    if ((category.headers || []).indexOf(name) >= 0 ||
+        (category.presenceOnlyHeaders || []).indexOf(name) >= 0) {
+      found = category.id;
+    }
+  });
+
+  return found;
+}
+
+// Derived once, at load, so the comparators cannot drift from the set and so
+// the lists appear in the result document exactly as they are applied.
+var VOLATILE_HEADERS        = Object.freeze(volatileField('headers'));
+var ARCHIVE_DIGEST_EXEMPT   = Object.freeze(volatileField('binaryDigestExemptTypes'));
+var PRESENCE_ONLY_HEADERS   = Object.freeze(volatileField('presenceOnlyHeaders'));
+var VOLATILE_COOKIE_FIELDS  = Object.freeze(volatileField('cookieFields'));
+var VOLATILE_RESPONSE_FIELDS = Object.freeze(volatileField('responseFields'));
+
+// ---------------------------------------------------------------------------
+// THE HARNESS ORIGIN, RECONCILED - AND WHY IT IS NOT IN THE VOLATILE SET
+// ---------------------------------------------------------------------------
+//
+// THE DEFECT. The application builds its own absolute URLs from
+// `config.app.url` - the `Location` of every redirect, the `url` a course copy
+// returns, the `referer` a view record stores - and the harness is what decides
+// that configuration: `./server` is handed a host and a `--port`. So a corpus
+// captured with the launcher on one port records `http://127.0.0.1:3010/signup`
+// and a replay on another port observes `http://127.0.0.1:3284/signup`, and
+// `Location` being compared exactly means the two differ on every redirecting
+// route. MEASURED on the committed corpus: 35 scenarios - 32 `header.location`,
+// 2 `body.json.trinket.lastView.referer` and 1 `body.json.url` - differed in
+// the port and in nothing else, and the committed `verify:corpus` script takes
+// its port from `PARITY_PORT`. The gate was therefore replayable at exactly one
+// port and reported 35 behaviour differences at every other, which is both a
+// false positive and, on a host running more than one clone, an unavoidable one.
+//
+// WHY THIS IS NOT A SEVENTH VOLATILE CATEGORY. The volatile set is closed at the
+// six categories AAP §0.9.3 enumerates and each of its rules gives up a
+// comparison: an ObjectId, a timestamp, a cookie value are values the
+// APPLICATION produced that the gate agrees not to check. This is the opposite
+// case. The origin is not a value the application chose - it is the address the
+// harness told both trees to answer on - and the two sides are supposed to be
+// driven at ONE origin. Reconciling it gives up no comparison at all: the
+// scheme, the host, the path, the query and the fragment are all still compared
+// exactly, so `/signup` -> `/login`, `http` -> `https` and
+// `127.0.0.1` -> `cdn.example` are every one of them still differences. What is
+// replaced is a prefix this file's own `--port` decided.
+//
+// THE RULE IS DELIBERATELY NARROW, AND ITS BREADTH IS ASSERTED RATHER THAN
+// TRUSTED.
+//   * Only the LIVE application's own scheme and host are reconciled. An origin
+//     on any other host - `https://accounts.google.com`, a configured CDN, the
+//     protocol-relative `//fonts.googleapis.com` the templates use - is not
+//     matched at all and is compared exactly.
+//   * Every port it replaces is COUNTED, and `harnessOriginAccounting` reports
+//     them. A pass in which the reconciled occurrences carry more than one port
+//     besides the live one has seen the application name two different ports for
+//     itself, which is a behaviour difference rather than a harness artifact:
+//     `accountHarnessOrigin` fails the pass on it instead of absorbing it.
+//   * It is applied at COMPARE time only. Nothing is written back into a corpus,
+//     and `bodyNormalization` already accounts a body the rule touched, so the
+//     recorded byte count and digest stop being exact fields for exactly those
+//     responses - the same accounting every volatile text rule gets.
+//   * `assertHarnessOriginReconciliation` proves, before a request is driven,
+//     that it rewrites the origin and only the origin, that it is idempotent on
+//     its own placeholder, and that it leaves a foreign origin alone.
+//
+// The state is installed once per pass, from the origin `./server` actually
+// answered on, and released when the pass ends. It is module state because
+// `normalizeText` is the single funnel every comparator reaches through and
+// threading a context into eight call sites would put the same value in eight
+// places; the tool is one run per process - it provisions a mongod and a server
+// per pass and drives them serially - so there is no second run to interleave
+// with, and `installHarnessOrigin` refuses to overwrite a live install rather
+// than letting two passes share one.
+var HARNESS_ORIGIN_TOKEN = '<app-origin>';
+
+// The rule name, spelled once. It is reported in `applied` lists beside the
+// volatile rule names, with the `harness-origin:` prefix that says it is not
+// one of them.
+var HARNESS_ORIGIN_RULE = 'harness-origin:application self-origin';
+
+// scheme://host[:port]. The host alternation covers a name, an IPv4 literal and
+// a bracketed IPv6 literal; the port is optional so a default-port origin is
+// reconciled too. Not global: `reconcileHarnessOrigin` builds its own anchored
+// expression from the live origin, and this one exists for the accounting scan
+// and for the probes.
+var HARNESS_ORIGIN_EXPRESSION =
+  /https?:\/\/(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._-]+)(?::\d{1,5})?/g;
+
+// The SAME value in its other spelling, and the reason this exists.
+//
+// The rule above reconciles `scheme://host[:port]`, and its own note explains
+// why: the recorded side carries the capture run's port and the live side
+// carries this run's, so an anchored expression with an optional port makes
+// both comparable. What it does not cover is the bare AUTHORITY spelling
+// `host:port`, with no scheme in front of it - and the application emits
+// exactly that, into an inline script on every rendered page:
+//
+//     trinket = { config : { apphostname : '127.0.0.1:3010', ... } }
+//
+// Measured: the committed corpus carries `127.0.0.1:3010` 69 times, 42 of them
+// inside a scheme-ful URL the rule above already reconciles and 27 of them
+// bare. Replaying at any port other than 3010 therefore moved
+// `html.inlineScriptDigests[0]` on 54 scenarios - two thirds of every page in
+// the corpus - and reported each as an unapproved difference, while ALSO
+// failing two of the five auth-scheme outcomes for the same reason. None of
+// that was a difference in the application: the same tree at the capture port
+// compares clean.
+//
+// So this is the existing reconciliation applied to the same value in its
+// second spelling, not a new allowance. It is anchored on this run's own host,
+// its port group is required (a bare host with no port is not an authority and
+// is left alone), and the lookbehind keeps it away from anything that already
+// carries a scheme - which is what preserves the `foreign-scheme-untouched`
+// property, since `https://host:port` must remain a difference against an
+// `http` recording. The token is DISTINCT from the origin token because the
+// values are: one stands for an origin, the other for an authority, and
+// collapsing them would let `//<app-origin>` and `<app-authority>` compare
+// equal.
+var HARNESS_AUTHORITY_TOKEN = '<app-authority>';
+
+// {scheme, host, port, origin, expression, ports:{}, occurrences} or null.
+var harnessOrigin = null;
+
+/**
+ * Installs the live application origin for the current pass.
+ *
+ * @param {(string|null)} baseUrl The origin ./server answered on.
+ * @returns {boolean} Whether an origin was installed.
+ * @throws {ToolError} If one is already installed, or the value is unusable.
+ */
+function installHarnessOrigin(baseUrl) {
+  var parsed;
+  var host;
+
+  if (harnessOrigin) {
+    throw new ToolError('a harness origin is already installed (' +
+      harnessOrigin.origin + '). Two passes cannot share one, so this is a ' +
+      'fault in this file rather than in a corpus: release the previous ' +
+      'pass\'s origin before installing the next.');
+  }
+
+  if (typeof baseUrl !== 'string' || !baseUrl) {
+    return false;
+  }
+
+  try {
+    parsed = new URL(baseUrl);
+  }
+  catch (err) {
+    throw new ToolError('the application origin ' + JSON.stringify(baseUrl) +
+      ' is not a URL, so the harness origin cannot be reconciled: ' +
+      reasonOf(err));
+  }
+
+  host = parsed.hostname;
+
+  if (!parsed.protocol || !host) {
+    throw new ToolError('the application origin ' + JSON.stringify(baseUrl) +
+      ' names no scheme or no host, so there is nothing to reconcile against.');
+  }
+
+  harnessOrigin = {
+    scheme: parsed.protocol.replace(/:$/, ''),
+    // As written in a URL: an IPv6 literal keeps its brackets, which is how
+    // both the recording and the live response spell it.
+    host: parsed.hostname.indexOf(':') >= 0 ? '[' + host + ']' : host,
+    port: parsed.port || null,
+    origin: parsed.origin,
+    // Anchored on this run's own scheme and host, so no other origin can match.
+    // The port group is optional and captured, which is what lets the
+    // accounting say which ports were reconciled.
+    expression: new RegExp(
+      escapeForRegExp(parsed.protocol.replace(/:$/, '')) + ':\\/\\/' +
+      escapeForRegExp(parsed.hostname.indexOf(':') >= 0 ? '[' + host + ']' : host) +
+      '(?::(\\d{1,5}))?(?![0-9A-Za-z.-])', 'g'),
+    // The bare-authority companion, anchored on the same host. The port is
+    // REQUIRED here and the lookbehind excludes anything preceded by `//`, so
+    // this expression can only see an authority that stands on its own - never
+    // the host part of a URL, whatever its scheme.
+    authorityExpression: new RegExp(
+      '(?<!\\/\\/)' +
+      escapeForRegExp(parsed.hostname.indexOf(':') >= 0 ? '[' + host + ']' : host) +
+      ':(\\d{1,5})(?![0-9A-Za-z.-])', 'g'),
+    ports: Object.create(null),
+    occurrences: 0,
+    authorityOccurrences: 0
+  };
+
+  return true;
+}
+
+/**
+ * Releases the installed origin. Idempotent, so a `finally` can call it.
+ *
+ * @returns {Object} the accounting for the pass that just ended
+ */
+function releaseHarnessOrigin() {
+  var accounting = harnessOriginAccounting();
+
+  harnessOrigin = null;
+
+  return accounting;
+}
+
+/**
+ * Escapes a literal for embedding in a regular expression.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+function escapeForRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Replaces the live application's own origin with the harness token.
+ *
+ * @param {*} value
+ * @returns {Object} {value, applied: Array.<string>}
+ */
+function reconcileHarnessOrigin(value) {
+  var applied = [];
+  var text;
+
+  if (!harnessOrigin || typeof value !== 'string' || !value) {
+    return { value: value, applied: applied };
+  }
+
+  text = value.replace(harnessOrigin.expression, function(match, port) {
+    var key = port ? String(port) : '(default)';
+
+    harnessOrigin.ports[key] = (harnessOrigin.ports[key] || 0) + 1;
+    harnessOrigin.occurrences += 1;
+
+    return HARNESS_ORIGIN_TOKEN;
+  });
+
+  // Second, and only over what the first pass left: every scheme-ful origin is
+  // already a token by now, so what remains for this expression is the bare
+  // authority spelling and nothing else. Both spellings are ONE rule, reported
+  // under one name - they reconcile one value - and the port accounting is
+  // shared, so a report still says which ports were reconciled and how often.
+  text = text.replace(harnessOrigin.authorityExpression, function(match, port) {
+    var key = port ? String(port) : '(default)';
+
+    harnessOrigin.ports[key] = (harnessOrigin.ports[key] || 0) + 1;
+    harnessOrigin.occurrences += 1;
+    harnessOrigin.authorityOccurrences += 1;
+
+    return HARNESS_AUTHORITY_TOKEN;
+  });
+
+  if (text !== value) {
+    applied.push(HARNESS_ORIGIN_RULE);
+  }
+
+  return { value: text, applied: applied };
+}
+
+/**
+ * What the reconciliation did, for the pass document and the report.
+ *
+ * @returns {Object}
+ */
+function harnessOriginAccounting() {
+  var ports;
+  var live;
+  var foreign;
+
+  if (!harnessOrigin) {
+    return {
+      installed: false,
+      origin: null,
+      token: HARNESS_ORIGIN_TOKEN,
+      rule: HARNESS_ORIGIN_RULE,
+      occurrences: 0,
+      livePort: null,
+      ports: [],
+      otherPorts: [],
+      note: 'no application origin was installed for this pass, so nothing ' +
+        'was reconciled and every absolute URL was compared exactly'
+    };
+  }
+
+  ports = Object.keys(harnessOrigin.ports).sort();
+  live = harnessOrigin.port || '(default)';
+  // The PORT-LESS form is excluded from the ambiguity test, and that is a
+  // measurement rather than a convenience. `http://127.0.0.1/proxy` and
+  // `http://127.0.0.1/u/{user}/classes/{course}` are in the committed corpus:
+  // the application composes them from a configuration that carries no port,
+  // so they are spelled identically on both sides and have never contributed a
+  // difference. A harness artifact, by contrast, always carries a port - the
+  // launcher binds one - so counting the port-less form as a second "other
+  // port" would fail the check on every run while measuring nothing. It is
+  // reported separately instead, so it is visible rather than dropped.
+  foreign = ports.filter(function(port) {
+    return port !== live && port !== '(default)';
+  });
+
+  return {
+    installed: true,
+    origin: harnessOrigin.origin,
+    token: HARNESS_ORIGIN_TOKEN,
+    rule: HARNESS_ORIGIN_RULE,
+    occurrences: harnessOrigin.occurrences,
+    livePort: live,
+    ports: ports.map(function(port) {
+      return { port: port, occurrences: harnessOrigin.ports[port] };
+    }),
+    otherPorts: foreign,
+    portlessOccurrences: harnessOrigin.ports['(default)'] || 0,
+    authorityToken: HARNESS_AUTHORITY_TOKEN,
+    authorityOccurrences: harnessOrigin.authorityOccurrences,
+    note: 'the scheme ' + harnessOrigin.scheme + ' and host ' +
+      harnessOrigin.host + ' are this pass\'s own address, so an occurrence ' +
+      'of them was replaced with ' + HARNESS_ORIGIN_TOKEN +
+      ' on both sides before comparison, and the same host in the bare ' +
+      'authority spelling `host:port` - which the application writes into an ' +
+      'inline script on every page - was replaced with ' +
+      HARNESS_AUTHORITY_TOKEN + ' the same way, ' +
+      harnessOrigin.authorityOccurrences + ' time(s) in this pass. ' +
+      'Everything after the origin - path, ' +
+      'query and fragment - and every origin on any other scheme or host was ' +
+      'compared exactly.'
+  };
+}
+
+// The probes for the harness-origin reconciliation, each one a measurement of
+// a property the rule is relied on for. They are declared as data for the same
+// reason the normalization probes are: the rule and the evidence that it
+// behaves as described cannot then drift apart, and the evidence lands in the
+// result document where a reviewer can read it without re-running the tool.
+//
+// The origin every probe is measured against is a FIXTURE origin, chosen so
+// that no host in the corpus can collide with it.
+var HARNESS_ORIGIN_PROBE_ORIGIN = 'http://127.0.0.1:39999';
+
+var HARNESS_ORIGIN_PROBES = Object.freeze([
+  Object.freeze({
+    id: 'live-origin-replaced',
+    what: 'the live origin itself is replaced by the token',
+    input: 'http://127.0.0.1:39999/signup',
+    expected: HARNESS_ORIGIN_TOKEN + '/signup',
+    fires: true
+  }),
+  Object.freeze({
+    id: 'other-port-replaced',
+    what: 'the same scheme and host on ANOTHER port is replaced too - this is ' +
+      'the recorded side of the comparison, captured on the capture run\'s port',
+    input: 'http://127.0.0.1:3010/signup',
+    expected: HARNESS_ORIGIN_TOKEN + '/signup',
+    fires: true
+  }),
+  Object.freeze({
+    id: 'default-port-replaced',
+    what: 'the same scheme and host with no port at all is replaced',
+    input: 'http://127.0.0.1/signup',
+    expected: HARNESS_ORIGIN_TOKEN + '/signup',
+    fires: true
+  }),
+  Object.freeze({
+    id: 'path-preserved',
+    what: 'only the origin is replaced: the path, query and fragment survive ' +
+      'the rewrite byte for byte',
+    input: 'http://127.0.0.1:3010/a/b?c=d%20e&f=1#g',
+    expected: HARNESS_ORIGIN_TOKEN + '/a/b?c=d%20e&f=1#g',
+    fires: true
+  }),
+  Object.freeze({
+    id: 'foreign-host-untouched',
+    what: 'an origin on a different host is NOT matched, so a redirect that ' +
+      'moved to another host is still a difference',
+    input: 'https://accounts.google.com/o/oauth2/auth?client_id=x',
+    expected: 'https://accounts.google.com/o/oauth2/auth?client_id=x',
+    fires: false
+  }),
+  Object.freeze({
+    id: 'foreign-scheme-untouched',
+    what: 'the same host on a different scheme is NOT matched, so http -> ' +
+      'https is still a difference',
+    input: 'https://127.0.0.1:39999/signup',
+    expected: 'https://127.0.0.1:39999/signup',
+    fires: false
+  }),
+  Object.freeze({
+    id: 'host-prefix-untouched',
+    what: 'a host that merely STARTS with the live host is not matched, which ' +
+      'is what the trailing boundary in the expression is for',
+    input: 'http://127.0.0.1.example.com/signup',
+    expected: 'http://127.0.0.1.example.com/signup',
+    fires: false
+  }),
+  Object.freeze({
+    id: 'protocol-relative-untouched',
+    what: 'the protocol-relative asset URLs the templates use carry no ' +
+      'scheme and are not matched',
+    input: '<link href="//fonts.googleapis.com/css?family=Lato">',
+    expected: '<link href="//fonts.googleapis.com/css?family=Lato">',
+    fires: false
+  }),
+  Object.freeze({
+    id: 'token-is-idempotent',
+    what: 'the placeholder does not itself match the rule, so normalizing an ' +
+      'already-reconciled value is a no-op',
+    input: HARNESS_ORIGIN_TOKEN + '/signup',
+    expected: HARNESS_ORIGIN_TOKEN + '/signup',
+    fires: false
+  }),
+  Object.freeze({
+    id: 'bare-authority-replaced',
+    what: 'the bare authority spelling `host:port` is replaced too - this is ' +
+      'the form the application writes into `trinket.config.apphostname` on ' +
+      'every rendered page, and leaving it literal made two thirds of the ' +
+      'corpus port-dependent',
+    input: 'apphostname : \'127.0.0.1:39999\',',
+    expected: 'apphostname : \'' + HARNESS_AUTHORITY_TOKEN + '\',',
+    fires: true
+  }),
+  Object.freeze({
+    id: 'bare-authority-other-port-replaced',
+    what: 'the same host in the bare spelling on ANOTHER port is replaced as ' +
+      'well, which is the recorded side of that same inline script',
+    input: 'apphostname : \'127.0.0.1:3010\',',
+    expected: 'apphostname : \'' + HARNESS_AUTHORITY_TOKEN + '\',',
+    fires: true
+  }),
+  Object.freeze({
+    id: 'bare-authority-needs-a-port',
+    what: 'a bare host with NO port is not an authority and is left alone, so ' +
+      'a hostname appearing in prose or in a configuration value is still ' +
+      'compared exactly',
+    input: 'the host is 127.0.0.1 and nothing follows it',
+    expected: 'the host is 127.0.0.1 and nothing follows it',
+    fires: false
+  }),
+  Object.freeze({
+    id: 'bare-authority-does-not-reach-into-a-url',
+    what: 'the authority inside a FOREIGN-scheme URL is not matched by the ' +
+      'bare rule, so https -> http remains a difference rather than being ' +
+      'reconciled through the back door',
+    input: 'https://127.0.0.1:39999/signup',
+    expected: 'https://127.0.0.1:39999/signup',
+    fires: false
+  }),
+  Object.freeze({
+    id: 'authority-token-is-idempotent',
+    what: 'the authority placeholder does not itself match either half of the ' +
+      'rule',
+    input: HARNESS_AUTHORITY_TOKEN + '/signup',
+    expected: HARNESS_AUTHORITY_TOKEN + '/signup',
+    fires: false
+  }),
+  Object.freeze({
+    id: 'every-occurrence-replaced',
+    what: 'the rule is global: a body carrying the origin more than once has ' +
+      'every occurrence replaced',
+    input: 'a http://127.0.0.1:3010/x b http://127.0.0.1:39999/y c',
+    expected: 'a ' + HARNESS_ORIGIN_TOKEN + '/x b ' + HARNESS_ORIGIN_TOKEN +
+      '/y c',
+    fires: true
+  })
+]);
+
+/**
+ * Proves the harness-origin reconciliation before anything is driven.
+ *
+ * It removes real difference records - the 35 the committed corpus produced at
+ * any port but its capture port - so it is measured rather than trusted, on
+ * exactly the pattern `assertNormalizationRules` uses for the volatile set. A
+ * rule that silently over-reached would delete genuine redirect and asset
+ * differences, so the probes assert BOTH halves: that it fires on the origin,
+ * and that it does not fire on a foreign origin, a foreign scheme, a host that
+ * merely shares the prefix, a protocol-relative URL or its own placeholder.
+ *
+ * It installs and releases the fixture origin itself, so the state a pass sets
+ * is untouched, and it refuses to run while a pass origin is installed rather
+ * than measuring against the wrong one.
+ *
+ * @returns {Array.<Object>} one record per probe, for the result document
+ * @throws {ToolError} If any probe does not behave as declared.
+ */
+function assertHarnessOriginReconciliation() {
+  var results = [];
+  var failures = [];
+  var before;
+
+  if (harnessOrigin) {
+    throw new ToolError('assertHarnessOriginReconciliation ran while a pass ' +
+      'origin (' + harnessOrigin.origin + ') was installed. The probes ' +
+      'measure a fixture origin and would report on the wrong one, so this is ' +
+      'a fault in this file: run them before the first pass starts.');
+  }
+
+  // The no-op half, measured with nothing installed: until a pass installs an
+  // origin the rule must not touch anything at all.
+  before = normalizeText('http://127.0.0.1:3010/signup');
+
+  if (before.value !== 'http://127.0.0.1:3010/signup' ||
+      before.applied.indexOf(HARNESS_ORIGIN_RULE) >= 0) {
+    failures.push('uninstalled-is-a-no-op: with no origin installed the rule ' +
+      'rewrote ' + JSON.stringify('http://127.0.0.1:3010/signup') + ' to ' +
+      JSON.stringify(before.value) + ' and applied ' +
+      JSON.stringify(before.applied) + '. A replay that has not started a ' +
+      'server must compare absolute URLs exactly.');
+  }
+
+  installHarnessOrigin(HARNESS_ORIGIN_PROBE_ORIGIN);
+
+  try {
+    HARNESS_ORIGIN_PROBES.forEach(function(probe) {
+      var outcome = reconcileHarnessOrigin(probe.input);
+      var fired = outcome.applied.indexOf(HARNESS_ORIGIN_RULE) >= 0;
+      var record = {
+        id: probe.id,
+        what: probe.what,
+        input: probe.input,
+        expected: probe.expected,
+        observed: outcome.value,
+        fired: fired,
+        expectedToFire: probe.fires,
+        ok: true
+      };
+
+      results.push(record);
+
+      if (outcome.value !== probe.expected) {
+        record.ok = false;
+        failures.push(probe.id + ': ' + probe.what + ' - expected ' +
+          JSON.stringify(probe.expected) + ', observed ' +
+          JSON.stringify(outcome.value));
+      }
+
+      if (fired !== probe.fires) {
+        record.ok = false;
+        failures.push(probe.id + ': the rule ' + (fired ? 'FIRED' : 'did not ' +
+          'fire') + ' and it must ' + (probe.fires ? '' : 'not ') +
+          'fire here. ' + probe.what);
+      }
+    });
+  }
+  finally {
+    releaseHarnessOrigin();
+  }
+
+  if (failures.length) {
+    throw new ToolError('the harness-origin reconciliation does not behave as ' +
+      'it is described, and it removes real difference records, so no ' +
+      'comparison this tool made would mean anything:\n  - ' +
+      failures.join('\n  - '));
+  }
+
+  return results;
+}
+
+/**
+ * Applies every text pattern in the volatile set, in declaration order.
+ *
+ * The one text normalizer in this file. Every comparator that touches a string
+ * - Location, a header value, rendered HTML, a JSON scalar - routes through
+ * here, so what is normalized is exactly what the set declares and nothing
+ * else. It also reports WHETHER it changed anything, which is what lets the
+ * comparators keep `content-length` and the recorded body digest as exact
+ * fields whenever no normalization was needed.
+ *
+ * @param {*} value
+ * @returns {Object} {value, applied: Array.<string>}
+ */
+function normalizeText(value) {
+  var text;
+  var applied = [];
+  var reconciled;
+
+  if (typeof value !== 'string') {
+    return { value: value, applied: applied };
+  }
+
+  text = value;
+
+  VOLATILE_SET.forEach(function(category) {
+    (category.textPatterns || []).forEach(function(pattern) {
+      var before = text;
+
+      // The expressions are declared global; `replace` on a global expression
+      // does not depend on lastIndex, so the shared literal is safe here. It is
+      // never used with `test` or `exec`, which would.
+      text = text.replace(pattern.expression, pattern.replace);
+
+      if (text !== before) {
+        applied.push(category.id + ':' + pattern.name);
+      }
+    });
+  });
+
+  // LAST, and outside the set. The harness origin is not a volatile value and
+  // is not one of the six categories - see THE HARNESS ORIGIN, RECONCILED for
+  // why it is a distinct mechanism - but it has to reach the same eight
+  // comparator call sites, and it runs after the volatile rules so that a
+  // placeholder one of them wrote can never contain an origin this one then
+  // rewrites. It is a no-op until a pass installs an origin, which is what
+  // leaves the startup probes measuring the volatile rules alone.
+  reconciled = reconcileHarnessOrigin(text);
+  text = reconciled.value;
+  applied = applied.concat(reconciled.applied);
+
+  return { value: text, applied: applied };
+}
+
+/**
+ * The normalized form of a string, discarding the applied list.
+ *
+ * @param {*} value
+ * @returns {*}
+ */
+function normalized(value) {
+  return normalizeText(value).value;
+}
+
+/**
+ * The write-time subset of the volatile set, applied to a value being RECORDED.
+ *
+ * Two different questions produce one answer here. The comparison question is
+ * "may this value differ between two runs without being a behaviour change",
+ * and the volatile set answers it for six categories. The artifact question is
+ * "may this value be committed", and for three of those rules the answer is no:
+ * a bcrypt hash and a signed share token are credential-format values
+ * (CWE-540/CWE-312) and the per-request upload path is an absolute path on the
+ * machine that captured the corpus (CWE-200). All three were being written into
+ * a tracked, world-readable JSON artifact.
+ *
+ * So capture.js calls this before it writes a recorded body or header, and what
+ * lands in the corpus is the placeholder the comparison would have produced
+ * anyway. That is the property that makes the redaction free: this file
+ * normalizes the LIVE target through the same rules, so a redacted baseline and
+ * a live response still compare - and because no placeholder matches the
+ * pattern that produced it, normalizing an already-redacted recording is a
+ * no-op, which the `-placeholder-is-idempotent` probes assert.
+ *
+ * The subset is declared on the rules themselves rather than listed here, so a
+ * rule cannot be redacted at write time without saying so where it is defined.
+ * It is deliberately NARROW: the short-code and username-suffix rules are
+ * volatile but are neither credentials nor host disclosure, so their recorded
+ * values stay in the artifact where a reviewer can see what the baseline
+ * actually returned.
+ *
+ * @param {*} value
+ * @returns {Object} {value, applied: Array.<string>}
+ */
+function redactForRecording(value) {
+  var text;
+  var applied = [];
+
+  if (typeof value !== 'string') {
+    return { value: value, applied: applied };
+  }
+
+  text = value;
+
+  VOLATILE_SET.forEach(function(category) {
+    (category.textPatterns || []).forEach(function(pattern) {
+      var before;
+
+      if (!pattern.redactBeforeWrite) {
+        return;
+      }
+
+      before = text;
+      text = text.replace(pattern.expression, pattern.replace);
+
+      if (text !== before) {
+        applied.push(category.id + ':' + pattern.name);
+      }
+    });
+  });
+
+  return { value: text, applied: applied };
+}
+
+/**
+ * Whether the named rule is one of the rules that redacts before write.
+ *
+ * Read by `assertNormalizationRules`, which holds those rules to the stronger
+ * requirement that write time and compare time produce the same value.
+ *
+ * @param {string} name
+ * @returns {boolean}
+ */
+function redactsBeforeWrite(name) {
+  var found = false;
+
+  VOLATILE_SET.forEach(function(category) {
+    (category.textPatterns || []).forEach(function(pattern) {
+      if (pattern.name === name && pattern.redactBeforeWrite) {
+        found = true;
+      }
+    });
+  });
+
+  return found;
+}
+
+/**
+ * Which rules redact at write time, by name, for a recorder's own record.
+ *
+ * @returns {Array.<Object>} {category, name, placeholder}
+ */
+function recordingRedactions() {
+  var out = [];
+
+  VOLATILE_SET.forEach(function(category) {
+    (category.textPatterns || []).forEach(function(pattern) {
+      if (!pattern.redactBeforeWrite) {
+        return;
+      }
+
+      out.push({
+        category: category.id,
+        name: pattern.name,
+        // Derived by running the rule rather than restated, so this list
+        // cannot name a placeholder the rule does not produce.
+        placeholder: String('x').replace(/x/, pattern.replace)
+      });
+    });
+  });
+
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// The command line
+// ---------------------------------------------------------------------------
+
+var PASS_NON_SECURE = 'non-secure';
+var PASS_SECURE     = 'secure';
+var PASS_BOTH       = 'both';
+
+var USAGE = [
+  'Usage: node test/parity/replay.js [options]',
+  '',
+  'Replays the committed baseline corpus against the application in the',
+  'worktree given by --app and compares every recorded response field by',
+  'field. Exits 0 only when every scenario matched, every route in the route',
+  'manifest was represented, and every scenario could be driven.',
+  '',
+  'Options:',
+  '  --app <dir>            Worktree under test; the application runs there as',
+  '                         a child process. Defaults to the current directory.',
+  '  --corpus <path>        Baseline corpus. Default ' + DEFAULT_CORPUS + '.',
+  '                         Its provenance sidecar <corpus>' + PROVENANCE_SUFFIX,
+  '                         is REQUIRED and is validated before anything is',
+  '                         driven: a corpus that does not say which tree it',
+  '                         recorded cannot be a baseline, and one captured',
+  '                         from the tree under test would compare cleanly',
+  '                         against it and prove nothing.',
+  '  --annotations <path>   Join `expectedDeviation` and `unreachableReason`',
+  '                         back on by scenario id. A CAPTURED corpus does not',
+  '                         carry them - capture.js\'s scenario builder emits',
+  '                         neither - so a replay of one needs this to tell an',
+  '                         approved change from a regression. There is no',
+  '                         default: a marker has to be asked for by name.',
+  '  --secure-corpus <path> Baseline corpus for the secure cookie pass, with',
+  '                         its own provenance sidecar. With one, that pass',
+  '                         compares exactly; without one it asserts the',
+  '                         documented differential DERIVED from the',
+  '                         non-secure pass, says so in both artifacts, and',
+  '                         the run is not gate-qualifying - the secure cookie',
+  '                         contract has to be measured, not computed.',
+  '                         Read from',
+  '                         ' + DEFAULT_SECURE_CORPUS,
+  '                         when the tree carries one, so `--pass both` needs',
+  '                         no second command line.',
+  '  --no-secure-corpus     Decline that default and derive the secure pass.',
+  '  --authorized-differences <path>',
+  '                         The authorized rendered-output difference register.',
+  '                         Read from',
+  '                         ' + DEFAULT_AUTHORIZED_DIFFERENCES,
+  '                         when the tree carries one. It is a CLOSED allowlist',
+  '                         keyed by pass, scenario, step and comparison field,',
+  '                         pinning both values and naming the finding that',
+  '                         authorized each; it is bound by digest to the',
+  '                         corpora it was generated against; a record that',
+  '                         does not materialize FAILS the run; and anything',
+  '                         not in it fails exactly as before. It is NOT the',
+  '                         approved-deviation register, which stays closed at',
+  '                         the two deviations AAP 0.7 decided.',
+  '  --no-authorized-differences',
+  '                         Decline that default. Every difference is then',
+  '                         unauthorized, which is what this tool did before',
+  '                         the register existed.',
+  '  --authorize            Generate the register from THIS run instead of',
+  '                         reading one, writing it to the path above. It',
+  '                         refuses to file a difference no entry in',
+  '                         RENDERED_CHANGE_AUTHORITIES covers and exits',
+  '                         non-zero naming every one it could not attribute,',
+  '                         and it files nothing at all for a scenario carrying',
+  '                         an approved-deviation marker. A generation run is a',
+  '                         DIAGNOSTIC and never the gate.',
+  '  --manifest <path>      Route manifest for the coverage gate. Read from',
+  '                         ' + COMMITTED_MANIFEST,
+  '                         when it is there; otherwise generated by spawning',
+  '                         manifest.js into ' + ARTIFACT_DIR_ENV + ' or a fresh',
+  '                         temporary directory - never into the worktree',
+  '                         unless this flag named a path inside it.',
+  '  --out <path>           Machine-readable result. REQUIRED unless',
+  '                         ' + ARTIFACT_DIR_ENV + ' names a directory, in which',
+  '                         case it is <dir>/' + ARTIFACT_NAMES.result + '.',
+  '                         There is no repository default, so no run leaves',
+  '                         artifacts in tracked source unless it was asked to.',
+  '                         Provenance is written to <path>.provenance.json.',
+  '  --report <path>        Human report. Same rule as --out; from',
+  '                         ' + ARTIFACT_DIR_ENV + ' it is',
+  '                         <dir>/' + ARTIFACT_NAMES.report + '.',
+  '  --only <pattern>       Replay a subset. Repeatable. A value wrapped in',
+  '                         slashes is a regular expression, anything else a',
+  '                         case-insensitive substring, matched against the',
+  '                         scenario id, its group and its route key. A',
+  '                         narrowed run is a DIAGNOSTIC: it is labelled',
+  '                         gateQualifying: false and cannot stand as the gate.',
+  '  --pass <which>         ' + PASS_BOTH + ' (default), ' + PASS_NON_SECURE +
+    ', or ' + PASS_SECURE + '.',
+  '                         Anything other than ' + PASS_BOTH + ' is also a',
+  '                         narrowed run.',
+  '  --timeout <ms>         Per-request budget for a step that recorded none.',
+  '                         Default ' + DEFAULT_TIMEOUT_MS + '.',
+  '  --overlay [path]       NODE_CONFIG overlay for the launcher. Defaults to',
+  '                         test/parity/server-overlay.json.',
+  '  --no-overlay           Start with no overlay file. Note that the test',
+  '                         configuration sets app.start false, so this',
+  '                         normally produces no listening socket.',
+  '  --host <host>          Bind host, and app.url.hostname with it.',
+  '  --port <n>             Bind port, and app.url.port with it. Absolute',
+  '                         Location headers embed the port, so a corpus is',
+  '                         only comparable against the port it was captured',
+  '                         on.',
+  '  --database <name>      Pin the MongoDB database name.',
+  '  --mongo-uri <uri>      Use an already-running mongod at this address.',
+  '  --no-mongo             Provision nothing; the inherited NODE_CONFIG or',
+  '                         --config must carry the address.',
+  '  --provision-mongo      Always provision, even when one was inherited.',
+  '  --run-dir <dir>        Per-run directory for the launcher. A fresh',
+  '                         directory under the system temp by default.',
+  '  --node-flags <flags>   Node flags for the application child. Repeatable,',
+  '                         and one value may be space-separated:',
+  '                         --node-flags "--pending-deprecation --trace-deprecation".',
+  '                         Those two are added whether or not you pass them:',
+  '                         AAP 0.9.3 measures the zero-warning gate under',
+  '                         them, and a pending deprecation is silent without',
+  '                         them. A suppressor you pass deliberately',
+  '                         (--no-warnings, --no-deprecation) is reported and',
+  '                         FAILS the warning check rather than being honoured',
+  '                         quietly.',
+  '  --worker-evidence <p>  The artifact test/parity/worker.js wrote (its',
+  '                         --out). AAP 0.9.3 measures the warning gate over',
+  '                         the server, the full route surface AND the worker;',
+  '                         this tool cannot drive the worker, so without this',
+  '                         the run is labelled gateQualifying: false.',
+  '  --ready-timeout <ms>   Readiness budget. Default ' + DEFAULT_READY_TIMEOUT_MS + '.',
+  '  --config <json>        An explicit top NODE_CONFIG layer for the child.',
+  '  --baseline-head <sha>  The commit the corpus is expected to have been',
+  '                         captured from. Defaults to the R-f baseline',
+  '                         reference ' + BASELINE_COMMIT.slice(0, 7) +
+    ' (AAP §0.10.3). `any` declines',
+  '                         the check. Ignored under --self-check, where the',
+  '                         corpus comes from the tree under test by',
+  '                         declaration.',
+  '  --self-check           Declare that --app names the very tree the corpus',
+  '                         was captured from. STRICTER, not weaker: every',
+  '                         difference fails, and an approved deviation that',
+  '                         materializes fails too, because against that tree',
+  '                         it must not. This is the self-consistency rehearsal',
+  '                         - a corpus that does not replay cleanly against its',
+  '                         own tree is nondeterministic, and the fix is the',
+  '                         seeding, never the comparison.',
+  '  --allow-unreviewed-corpus',
+  '                         Replay a corpus whose provenance does not establish',
+  '                         a capture of the base commit - one captured with',
+  '                         capture.js --allow-nonbaseline, or from the',
+  '                         migrated tree. NOT a way past a corrupt block: the',
+  '                         schema, the artifact name, a named generator and',
+  '                         the payload digest are still required, and so is',
+  '                         any sidecar beside the artifact agreeing with it.',
+  '                         It is also the ONLY mode that tolerates a generator',
+  '                         this repository does not contain, and only when the',
+  '                         block itself says the source was uncommitted: those',
+  '                         checks are then recorded as WAIVED, with their',
+  '                         reason, rather than as passed. The run is labelled',
+  '                         gateQualifying: false, because a comparison against',
+  '                         a reference nobody has tied to the base commit, or',
+  '                         produced by a generator nobody can retrieve, is a',
+  '                         diagnostic.',
+  '  --attest               Write the target comparison into each replayed',
+  '                         corpus\'s committed provenance sidecar, under',
+  '                         `targetReplay`: a `replayVerdict` per scenario and',
+  '                         a `targetResponse` per step, holding the status,',
+  '                         the content type, the Location, the four',
+  '                         error-page headers, the Content-Disposition, every',
+  '                         Set-Cookie attribute and the body as a length and',
+  '                         two digests. REFUSED unless the run both passed',
+  '                         and qualified as the gate, because a sidecar',
+  '                         recording a narrowed or failing replay as the',
+  '                         parity evidence is worse than one recording',
+  '                         nothing. This is the only thing this tool writes',
+  '                         outside --out and --report, and it is off by',
+  '                         default so a verification run never modifies',
+  '                         tracked files.',
+  '  --diagnostic           Declare that this run is NOT the gate, which is',
+  '                         the only way a non-qualifying run exits 0. Without',
+  '                         it every run is held to the ten requirements',
+  '                         below, and a run that misses one is reported',
+  '                         ' + VERDICT_NOT_THE_GATE + ' and exits ' + EXIT_ERROR + '.',
+  '                         It weakens nothing about the comparison: a',
+  '                         difference still fails a diagnostic run.',
+  '  --print-report         Also write the full report to stdout.',
+  '  -h, --help             Print this on stderr and exit 0.',
+  '',
+  'There is deliberately no --force, no threshold and no pass-with-warnings',
+  'mode. A difference is a failure unless the scenario carries an approved',
+  'deviation marker, and the exit code is the whole verdict.',
+  '',
+  'A GATE-QUALIFYING run is one AAP §0.9.3 would accept as the parity gate,',
+  'and it needs all ten of: the whole corpus (no --only); both cookie passes;',
+  'a secure baseline whose provenance ATTESTS a secure capture, rather than a',
+  'derived differential; --node-flags carrying ' + REQUIRED_NODE_FLAGS.join(' and ') + ';',
+  'warning evidence from every pass; a route manifest that IS the registered',
+  'surface, key for key in both directions; a real baseline rather than',
+  '--self-check; a corpus authenticated by digest as ' + CAPTURE_GENERATOR + "'s",
+  'recording of the frozen R-f baseline ' + BASELINE_COMMIT.slice(0, 7) + '; a known commit for the',
+  'tree under test; and all ' + AUTH_OUTCOME_IDS.length + ' auth-scheme outcomes DRIVEN, not explained by a',
+  'stated reason. Every requirement is reported by name in both artifacts, met',
+  'or unmet - AND a requirement that is unmet DECIDES THE EXIT CODE: the run is',
+  'reported ' + VERDICT_NOT_THE_GATE + ' and exits ' + EXIT_ERROR + ' unless it was asked for with',
+  '--diagnostic. A run that could not measure the gate is not a run that',
+  'passed it, and the exit code is the whole verdict - so the only way to get',
+  '0 out of a narrowed run is to say, on the command line, that it is not the',
+  'gate.',
+  '',
+  'Option rules: only --only and --node-flags may be repeated; any other option',
+  'given twice is a usage error rather than a last-one-wins. A value beginning',
+  'with "-" is a usage error too, so a missing value cannot swallow the next',
+  'option; write --flag=-value when a value really begins with a dash, and note',
+  'that --node-flags takes dash-leading values by design.',
+  '',
+  'Exit codes: ' + EXIT_OK + ' every comparison matched; ' + EXIT_DIFFERENCE +
+    ' a difference, an unrepresented route or an',
+  'undriven scenario; ' + EXIT_ERROR + ' the replay could not be performed at all.',
+  '',
+  'Examples:',
+  '  node test/parity/replay.js --app . --port 3010',
+  '  node test/parity/replay.js --app . --annotations test/parity/corpus.json',
+  '  node test/parity/replay.js --app . --only /quirk\\./ --pass non-secure',
+  '',
+  'Every diagnostic goes to stderr. Both artifacts go to files.'
+].join('\n');
+
+/**
+ * The option defaults, as a fresh object.
+ *
+ * Returned rather than shared, for the reason ./server's own defaults are: a
+ * shared object would accumulate one caller's choices into the next caller's
+ * baseline.
+ *
+ * @returns {Object}
+ */
+function defaultOptions() {
+  return {
+    appRoot        : process.cwd(),
+    corpus         : DEFAULT_CORPUS,
+    annotations    : null,
+    // `undefined` means "the committed secure recording if the tree carries
+    // one"; a path names another; null is --no-secure-corpus, which declines
+    // it and accepts the derived secure pass the gate then refuses to qualify.
+    secureCorpus   : undefined,
+    // Same three states, over DEFAULT_AUTHORIZED_DIFFERENCES.
+    authorizedDifferences: undefined,
+    // Writes the register from this run instead of reading one. A generation
+    // run is not a gate run: it exits non-zero on anything it cannot attribute.
+    authorize      : false,
+    manifestPath   : COMMITTED_MANIFEST,
+    manifestExplicit: false,
+    // Null rather than a repository path: `replay` resolves these through
+    // resolveArtifactPath, which requires the flag or ARTIFACT_DIR_ENV.
+    out            : null,
+    report         : null,
+    only           : [],
+    pass           : PASS_BOTH,
+    timeoutMs      : DEFAULT_TIMEOUT_MS,
+    // `undefined` means "the launcher's own default"; null means --no-overlay.
+    overlay        : undefined,
+    host           : null,
+    port           : null,
+    database       : null,
+    mongoUri       : null,
+    provisionMongo : undefined,
+    runDir         : null,
+    nodeFlags      : [],
+    // The worker's own warning evidence. The zero-warning gate is measured over
+    // the listening server, the full route surface AND the standalone worker;
+    // this file can drive the first two and cannot drive the third, so
+    // the worker's artifact is read rather than re-measured. Absent, the run
+    // still replays and still reports - it simply cannot QUALIFY as the gate,
+    // because a third of the required exercise would be unaccounted.
+    workerEvidence : null,
+    readyTimeoutMs : DEFAULT_READY_TIMEOUT_MS,
+    config         : null,
+    selfCheck      : false,
+    // The one way past the corpus provenance requirement, and it costs the
+    // gate: a run that takes it is a diagnostic and is labelled as one.
+    allowUnreviewedCorpus: false,
+    // null means "the frozen baseline reference"; a sha names another baseline
+    // deliberately, and 'any' declines the check.
+    baselineHead   : null,
+    // Writes the target comparison into each replayed corpus's committed
+    // provenance sidecar. Off by default: a verification command must not
+    // modify tracked files, and the delivered evidence is produced
+    // deliberately once rather than as a side effect of every gate run.
+    attest         : false,
+    // Declares the run a DIAGNOSTIC, which is the only way a non-qualifying
+    // run may exit 0. Every run is the canonical gate unless it says it is
+    // not: a narrowed replay is a legitimate thing to run, but a run that
+    // silently reported PASS while missing a gate requirement is how a gate
+    // command came to exit 0 without having measured the gate.
+    diagnostic     : false,
+    printReport    : false,
+    help           : false
+  };
+}
+
+/**
+ * Parses `--flag value` and `--flag=value` into the shape `replay` accepts.
+ *
+ * Exported so its failure modes are testable without spawning anything, and
+ * deliberately the same shape a programmatic caller passes.
+ *
+ * @param {Array.<string>} argv Arguments after `node script`.
+ * @returns {Object} Options for `replay`.
+ * @throws {ToolError} On an unknown flag, a missing value or a bad number.
+ */
+function parseArguments(argv) {
+  var options = defaultOptions();
+  var index = 0;
+  var seen = {};
+  var token;
+  var eq;
+  var name;
+  var inlineValue;
+  var hasInline;
+
+  // Reads the value for `flag`, from `--flag=value` when one was attached and
+  // from the next token otherwise.
+  //
+  // A DASH-LEADING NEXT TOKEN IS A USAGE ERROR, not a value. `--corpus --out x`
+  // would otherwise consume `--out` as the corpus path and then treat `x` as an
+  // unknown option - or worse, silently replay a file named "--out". The `=` form is
+  // the escape hatch for a value that genuinely begins with a dash, and
+  // `allowDashes` is the declared exception for --node-flags, whose whole
+  // purpose is to carry `--pending-deprecation` into the child.
+  function next(flag, allowDashes) {
+    var value;
+
+    if (hasInline) {
+      return inlineValue;
+    }
+
+    index++;
+
+    if (index >= argv.length) {
+      throw usageError(flag + ' requires a value');
+    }
+
+    value = String(argv[index]);
+
+    if (!allowDashes && value.charAt(0) === '-' && value !== '-') {
+      throw usageError(flag + ' requires a value, and ' +
+        JSON.stringify(value) + ' is an option. Write ' + flag + '=' +
+        JSON.stringify(value) + ' if the value really begins with a dash.');
+    }
+
+    return value;
+  }
+
+  // A REPEATED OPTION IS A USAGE ERROR. Two `--corpus` paths or two `--pass`
+  // selections mean the command line says two things, and quietly acting on the
+  // last one produces a run that is not the run that was asked for - reported
+  // under a name that claims it was. The two exceptions accumulate by design.
+  function once(flag) {
+    if (REPEATABLE_OPTIONS.indexOf(flag) > -1) {
+      return flag;
+    }
+
+    if (seen[flag]) {
+      throw usageError(flag + ' was given more than once. Every option except ' +
+        REPEATABLE_OPTIONS.join(' and ') + ' takes effect once; two values ' +
+        'would mean this run silently discarded one of them.');
+    }
+
+    seen[flag] = true;
+
+    return flag;
+  }
+
+  for (; index < argv.length; index++) {
+    token = String(argv[index]);
+    eq = token.indexOf('=');
+    hasInline = token.slice(0, 2) === '--' && eq > 2;
+    name = hasInline ? token.slice(0, eq) : token;
+    inlineValue = hasInline ? token.slice(eq + 1) : null;
+
+    once(name);
+
+    switch (name) {
+      case '--app':
+        options.appRoot = next(name);
+        break;
+      case '--corpus':
+        options.corpus = next(name);
+        break;
+      case '--annotations':
+        options.annotations = next(name);
+        break;
+      case '--secure-corpus':
+        options.secureCorpus = next(name);
+        break;
+      case '--no-secure-corpus':
+        options.secureCorpus = null;
+        break;
+      case '--authorized-differences':
+        options.authorizedDifferences = next(name);
+        break;
+      case '--no-authorized-differences':
+        options.authorizedDifferences = null;
+        break;
+      case '--authorize':
+        options.authorize = true;
+        break;
+      case '--manifest':
+        options.manifestPath = next(name);
+        options.manifestExplicit = true;
+        break;
+      case '--out':
+        options.out = next(name);
+        break;
+      case '--report':
+        options.report = next(name);
+        break;
+      case '--only':
+        options.only.push(next(name));
+        break;
+      case '--pass':
+        options.pass = parsePass(next(name));
+        break;
+      case '--timeout':
+        options.timeoutMs = parsePositiveInteger(next(name), name);
+        break;
+      case '--overlay':
+        // The one flag whose value is optional, matching ./server and ./mongo
+        // so the three read the same way on a command line.
+        if (hasInline) {
+          options.overlay = inlineValue;
+        }
+        else if (index + 1 < argv.length && String(argv[index + 1]).slice(0, 1) !== '-') {
+          index++;
+          options.overlay = argv[index];
+        }
+        else {
+          options.overlay = mongo.DEFAULT_OVERLAY;
+        }
+        break;
+      case '--no-overlay':
+        options.overlay = null;
+        break;
+      case '--host':
+        options.host = next(name);
+        break;
+      case '--port':
+        options.port = parsePositiveInteger(next(name), name);
+        break;
+      case '--database':
+        options.database = next(name);
+        break;
+      case '--mongo-uri':
+        options.mongoUri = next(name);
+        break;
+      case '--no-mongo':
+        options.provisionMongo = false;
+        break;
+      case '--provision-mongo':
+        options.provisionMongo = true;
+        break;
+      case '--run-dir':
+        options.runDir = next(name);
+        break;
+      case '--node-flags':
+        // The one option whose values legitimately begin with a dash.
+        options.nodeFlags.push(next(name, true));
+        break;
+      case '--worker-evidence':
+        options.workerEvidence = next(name);
+        break;
+      case '--ready-timeout':
+        options.readyTimeoutMs = parsePositiveInteger(next(name), name);
+        break;
+      case '--config':
+        options.config = parseConfigLayer(next(name));
+        break;
+      case '--self-check':
+        options.selfCheck = true;
+        break;
+      case '--allow-unreviewed-corpus':
+        options.allowUnreviewedCorpus = true;
+        break;
+
+      case '--baseline-head':
+        options.baselineHead = parseBaselineHead(next(name));
+        break;
+      case '--attest':
+        options.attest = true;
+        break;
+      case '--diagnostic':
+        options.diagnostic = true;
+        break;
+      case '--print-report':
+        options.printReport = true;
+        break;
+      case '-h':
+      case '--help':
+        options.help = true;
+        break;
+      default:
+        throw usageError('unknown option ' + JSON.stringify(token));
+    }
+  }
+
+  return options;
+}
+
+/**
+ * Validates a --baseline-head value.
+ *
+ * `any` is accepted and means the check is declined, which is deliberately a
+ * word rather than a flag: declining to verify which tree a corpus recorded is
+ * a decision worth spelling out in the command a reviewer reads.
+ *
+ * @param {string} value
+ * @returns {string}
+ * @throws {ToolError}
+ */
+function parseBaselineHead(value) {
+  var text = String(value).trim();
+
+  if (text.toLowerCase() === 'any') {
+    return 'any';
+  }
+
+  if (!/^[0-9a-f]{7,40}$/i.test(text)) {
+    throw usageError('--baseline-head takes a git commit sha (7 to 40 hex ' +
+      'characters) or the word `any`; got ' + JSON.stringify(String(value)));
+  }
+
+  return text.toLowerCase();
+}
+
+/**
+ * Validates a --pass value.
+ *
+ * @param {string} value
+ * @returns {string}
+ * @throws {ToolError}
+ */
+function parsePass(value) {
+  var normalizedValue = String(value).toLowerCase();
+
+  if ([PASS_BOTH, PASS_NON_SECURE, PASS_SECURE].indexOf(normalizedValue) === -1) {
+    throw usageError('--pass takes ' + PASS_BOTH + ', ' + PASS_NON_SECURE +
+      ' or ' + PASS_SECURE + '; got ' + JSON.stringify(String(value)));
+  }
+
+  return normalizedValue;
+}
+
+/**
+ * Parses a positive integer flag.
+ *
+ * @param {string} value
+ * @param {string} flag
+ * @returns {number}
+ * @throws {ToolError}
+ */
+function parsePositiveInteger(value, flag) {
+  var parsed = Number(value);
+
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw usageError(flag + ' takes a positive integer; got ' +
+      JSON.stringify(String(value)));
+  }
+
+  return parsed;
+}
+
+/**
+ * Parses the --config JSON layer.
+ *
+ * @param {string} value
+ * @returns {Object}
+ * @throws {ToolError}
+ */
+function parseConfigLayer(value) {
+  var parsed;
+
+  try {
+    parsed = JSON.parse(value);
+  }
+  catch (err) {
+    throw usageError('--config is not valid JSON: ' + reasonOf(err));
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw usageError('--config must be a JSON object');
+  }
+
+  return parsed;
+}
+
+// ---------------------------------------------------------------------------
+// Reading the corpus
+// ---------------------------------------------------------------------------
+
+/**
+ * What a corpus supplying the recorded baseline has to prove.
+ *
+ * `baseline` is the only role that qualifies, because that is the claim the
+ * comparison rests on: a corpus captured from the migrated tree, or from a
+ * tree nobody identified, cannot be the reference the migrated tree is
+ * measured against. The escape relaxes the role, the analysed-tree
+ * requirement and - only when the block itself says so - the requirement that
+ * the generator be committed. It is named in the refusal, and a run that takes
+ * it is labelled gateQualifying: false.
+ *
+ * `allowUncommittedGenerator` is the ONLY route to the identity waiver in this
+ * file, and it is never on by default: a default waiver makes the escape
+ * redundant and the gate unsound, because a corpus naming a generator blob
+ * that is no object in this repository, no generator commit and a delivered
+ * head nobody can resolve would be accepted as verified the moment its payload
+ * digest recomputed. The waiver travels with the flag that already labels the
+ * run a diagnostic, so a gate run cannot reach it.
+ *
+ * @param {Object} options
+ * @returns {Object} the expectation readCorpus takes
+ */
+function baselineExpectation(options) {
+  if (options.allowUnreviewedCorpus) {
+    return {
+      roles: manifest.provenance.ROLES,
+      requireBaselineTree: false,
+      allowUncommittedGenerator: true
+    };
+  }
+
+  return {
+    roles: ['baseline'],
+    requireBaselineTree: true,
+    escape: '--allow-unreviewed-corpus'
+  };
+}
+
+/**
+ * The artifact's payload - everything except its own provenance block.
+ *
+ * This is what `payloadDigest` covers, so recomputing it here is what detects
+ * a block that was copied in from another run: the digest travels with the
+ * facts it describes and cannot be transplanted onto different bytes.
+ *
+ * @param {Object} parsed
+ * @returns {Object}
+ */
+function provenancePayload(parsed) {
+  var payload = {};
+
+  Object.keys(parsed).forEach(function(key) {
+    if (key !== 'provenance') {
+      payload[key] = parsed[key];
+    }
+  });
+
+  return payload;
+}
+
+/**
+ * Verifies an artifact's provenance before this tool consumes it.
+ *
+ * Without it, ANY JSON carrying a `scenarios` array would serve as the baseline
+ * corpus and any file at the manifest path as the route surface, with nothing
+ * establishing which tree either was measured on, which tool produced it, or
+ * whether its recorded provenance belongs to those very bytes - so a corpus
+ * captured from the migrated tree, or from any other tree at any other commit,
+ * would replay as though it were the baseline and every comparison in the
+ * result would be against the wrong reference.
+ *
+ * Every requirement is passed to the shared contract rather than re-derived
+ * here, and a failure names each unmet requirement: a refusal a reader cannot
+ * act on gets worked around instead of fixed.
+ *
+ * WHAT A GATE CONSUMER MAY NOT WAIVE. `allowUncommitted: true` is never passed
+ * unconditionally from here. Under it a corpus carrying a random generator blob
+ * that resolves to nothing in this repository, `commit: null`,
+ * `verified: false` and a random delivered head passes every check and is
+ * reported as "provenance verified" as soon as its payload digest recomputes -
+ * which it does, because a fabricated artifact hashes to whatever it says it
+ * hashes to.
+ * Identity is the one thing a payload digest cannot establish, so it is
+ * required here: the generator blob and the delivered head must resolve as
+ * objects in this repository, and `requireGeneratorVerified` demands that the
+ * recorded commit be verified to hold the generator as it ran.
+ *
+ * The waiver survives only where it cannot decide a gate: `expect
+ * .allowUncommittedGenerator`, which `baselineExpectation` sets from
+ * `--allow-unreviewed-corpus` alone - a flag that already labels the whole run
+ * `gateQualifying: false`. Under it the resolution checks are recorded as
+ * WAIVED with their reason rather than as passed, and only when the block
+ * itself says `commitState: uncommitted-source`; a block that claims a
+ * committed generator is held to that claim either way.
+ *
+ * The sidecar is reconciled here too, when one sits beside the artifact. Its
+ * whole contribution is a digest of the exact bytes written, so a sidecar left
+ * from an earlier run - or carried over from a different file - is
+ * indistinguishable from a fresh one until it is read against those bytes.
+ *
+ * @param {(Object|null)} block from provenance.extract
+ * @param {Object} parsed the parsed artifact
+ * @param {string} target its path
+ * @param {string} label what it is, for the message
+ * @param {Object} expect roles, requireBaselineTree, allowUncommittedGenerator
+ *   and the escape's name
+ * @returns {Object} the validation verdict
+ * @throws {ToolError} When a requirement is not met.
+ */
+function validateArtifactProvenance(block, parsed, target, label, expect) {
+  // Absent for most artifacts, because it is a run output; present and
+  // disagreeing is a finding, and that is what is checked.
+  var beside = sidecarBeside(target, label);
+  var diagnostic = !!expect.allowUncommittedGenerator;
+  var verdict = manifest.provenance.validate(block, {
+    artifact           : target,
+    roles              : expect.roles,
+    requireBaselineTree: !!expect.requireBaselineTree,
+    // The generator's recorded commit must be VERIFIED to contain the source
+    // that ran. `verified: false` is legitimate mid-change and is exactly what
+    // a gate must not consume, so it is required unless the diagnostic escape
+    // was taken.
+    requireGeneratorVerified: !diagnostic,
+    payload            : provenancePayload(parsed),
+    // The tool's own repository is where every recorded object has to resolve:
+    // the generator blob, the generator commit, the analysed head and the
+    // delivered head. An identity that resolves nowhere is unfalsifiable, and
+    // an unfalsifiable claim is not evidence.
+    repositoryRoot     : TOOL_ROOT,
+    // Never a default. See the note above: this is reachable only from
+    // --allow-unreviewed-corpus, and it records the resolution checks as
+    // waived rather than passed.
+    allowUncommitted   : diagnostic,
+    // Both halves, or the contract runs no sidecar check: the sidecar's digest
+    // is compared against the artifact's own bytes, and its payload digest
+    // against the embedded block's.
+    sidecar            : beside ? beside.sidecar : undefined,
+    artifactText       : beside ? beside.artifactText : undefined
+  });
+
+  if (!verdict.ok) {
+    throw new ToolError('the ' + label + ' ' + target + ' does not carry ' +
+      'provenance this replay can rely on, so it is not evidence about a ' +
+      'known tree:\n  - ' + verdict.failures.join('\n  - ') +
+      // The remedy names the tool that produces THIS artifact. A refusal that
+      // tells the reader to re-capture a corpus when what failed was the route
+      // manifest is a refusal that gets worked around.
+      '\n' + (expect.regenerate || 'Re-capture it with `node ' +
+        'test/parity/capture.js --app <worktree at ' +
+        manifest.provenance.BASELINE_HEAD.slice(0, 7) +
+        '> --expect-baseline`') + ', from a worktree whose generators are ' +
+      'committed - an object this repository does not contain cannot be ' +
+      'retrieved from it, whatever the artifact says about it' +
+      (expect.escape
+        ? '. Or pass ' + expect.escape + ' to replay it as a DIAGNOSTIC, ' +
+          'which is labelled gateQualifying: false, cannot stand as the gate, ' +
+          'and is the only mode that tolerates an uncommitted generator.'
+        : '.'));
+  }
+
+  if (beside) {
+    // Scoped to what was actually compared, because the shared contract's
+    // `sidecar-agrees-with-embedded` check compares the PAYLOAD DIGEST and
+    // nothing else. An unqualified "agrees with the artifact beside it" read
+    // as a statement about the whole record, and it was printed directly above
+    // a refusal for a sidecar whose generator identity contradicted the
+    // embedded block - measured, on a sidecar whose digests were untouched and
+    // whose `generator.commit` was replaced with an object that does not
+    // exist. The identity halves are compared in `validateCorpusProvenance`,
+    // which is where the corpus's own embedded block is available to compare
+    // them against.
+    note(label + ': the provenance sidecar ' + beside.path + ' agrees with ' +
+      'the artifact beside it on the digests it declares');
+  }
+
+  return verdict;
+}
+
+/**
+ * The provenance sidecar written beside an artifact, when there is one.
+ *
+ * `<artifact>.provenance.json` is a RUN OUTPUT: capture.js and this file both
+ * write one, no delivery commits one, and most artifacts a consumer is handed
+ * therefore have none. So absence is an answer rather than a failure - what is
+ * not permitted is a sidecar that exists and does not describe the bytes it
+ * sits beside, which is either a stale file left from an earlier run or one
+ * copied in from a different artifact.
+ *
+ * A sidecar that cannot be parsed is fatal rather than ignored, for the same
+ * reason: silently skipping an unreadable one turns "the pair disagrees" into
+ * "there is no pair", which is exactly the answer a reader must not be given.
+ *
+ * @param {string} target the artifact's path
+ * @param {string} label what the artifact is, for the message
+ * @returns {(Object|null)} {path, sidecar, artifactText}, or null when absent
+ * @throws {ToolError} If a present sidecar cannot be read or parsed.
+ */
+function sidecarBeside(target, label) {
+  var sidecarPath = target + '.provenance.json';
+  var text;
+  var parsed;
+  var artifactText;
+
+  try {
+    text = fs.readFileSync(sidecarPath, 'utf8');
+  }
+  catch (err) {
+    if (err && err.code === 'ENOENT') {
+      return null;
+    }
+
+    throw new ToolError('the ' + label + ' ' + target + ' has a provenance ' +
+      'sidecar at ' + sidecarPath + ' that cannot be read: ' + reasonOf(err) +
+      '. A sidecar that cannot be reconciled with its artifact is not ' +
+      'skippable evidence; repair or remove it.');
+  }
+
+  try {
+    parsed = JSON.parse(text);
+  }
+  catch (err) {
+    throw new ToolError('the provenance sidecar ' + sidecarPath + ' beside ' +
+      'the ' + label + ' ' + target + ' is not valid JSON: ' + reasonOf(err) +
+      '. Re-generate the pair, or remove the sidecar - it is a run output and ' +
+      'the artifact carries the same block embedded.');
+  }
+
+  try {
+    artifactText = fs.readFileSync(target, 'utf8');
+  }
+  catch (err) {
+    throw new ToolError('cannot re-read the ' + label + ' ' + target +
+      ' to reconcile it with its provenance sidecar: ' + reasonOf(err));
+  }
+
+  return { path: sidecarPath, sidecar: parsed, artifactText: artifactText };
+}
+
+/**
+ * Reads a corpus artifact and verifies it says which tree it measured.
+ *
+ * Two checks, in this order: the shape, so a file that is not a corpus at all
+ * is reported as that; then the provenance, which is what makes the artifact
+ * evidence rather than a plausible JSON document.
+ *
+ * `expect` is how a caller says what it is consuming the corpus FOR, because
+ * the requirements genuinely differ. A corpus supplying the recorded baseline
+ * must have been measured on the base commit by a known tool. An annotations
+ * corpus supplies authored markers and no measurement at all, so a block is
+ * verified when it carries one and its absence is reported rather than fatal -
+ * the committed definitions corpus is hand-authored and no generator produced
+ * it.
+ *
+ * @param {string} target
+ * @param {string} label what this corpus is, for the message
+ * @param {(Object|undefined)} expect {roles, requireBaselineTree, optional,
+ *   escape}
+ * @returns {Object} the parsed corpus, unmodified
+ * @throws {ToolError} If it cannot be read, parsed, recognized or verified.
+ */
+function readCorpus(target, label, expect) {
+  var artifact = readCorpusFile(target, label);
+
+  verifyCorpusBlock(artifact, label, expect);
+
+  return artifact.parsed;
+}
+
+/**
+ * Verifies the provenance BLOCK a corpus carries about itself.
+ *
+ * Separate from the sidecar check below, and neither replaces the other: the
+ * block travels inside the artifact and is what makes a transplanted record
+ * detectable, because the payload digest is recomputed over the artifact's own
+ * bytes; the sidecar is a second, external record of the same capture. An
+ * artifact that carries a block naming a generator nobody can resolve is not
+ * evidence, whatever its sidecar says.
+ *
+ * @param {Object} artifact as readCorpusFile returns
+ * @param {string} label what this corpus is, for the message
+ * @param {(Object|undefined)} expect {roles, requireBaselineTree, optional,
+ *   escape}
+ * @returns {(Object|null)} the verdict, or null when an optional block is absent
+ * @throws {ToolError} If the block is missing, contradicted or unverifiable.
+ */
+function verifyCorpusBlock(artifact, label, expect) {
+  var wanted = expect || {};
+  var block = manifest.provenance.extract(artifact.text);
+  var verdict;
+  var waived;
+
+  if (block === null && wanted.optional) {
+    note('the ' + label + ' ' + artifact.path + ' carries no provenance ' +
+      'block. It supplies authored markers rather than measurements, so this ' +
+      'is reported and not fatal - but nothing establishes which tree those ' +
+      'markers were written against.');
+
+    return null;
+  }
+
+  verdict = validateArtifactProvenance(block, artifact.parsed, artifact.path,
+    label, wanted);
+  // Named rather than counted silently: under the diagnostic escape some
+  // repository-resolution checks are recorded as waived, and a line that says
+  // "provenance verified" while an identity check was waived is exactly the
+  // report that let a fabricated corpus read as evidence.
+  waived = verdict.checks.filter(function(entry) { return entry.waived; });
+
+  note(label + ': provenance verified - role ' + block.role +
+    ', analysed tree ' + ((block.analysedTree && block.analysedTree.headShort) ||
+      'not recorded') + ', generator ' + block.generator.path + ' blob ' +
+    String(block.generator.blob).slice(0, 12) + ', payload digest recomputed' +
+    (waived.length
+      ? ' - but ' + waived.length + ' identity check(s) WAIVED (' +
+        waived.map(function(entry) { return entry.name; }).join(', ') +
+        '), so this corpus is a DIAGNOSTIC reference and not baseline evidence'
+      : ''));
+
+  return verdict;
+}
+
+/**
+ * Reads a corpus and keeps its bytes, so the artifact can be digested.
+ *
+ * The digest is what ties a run to the exact artifact it compared against. It
+ * is computed over the raw bytes rather than over a re-serialization, because a
+ * re-serialization is a different byte string and would not match a digest
+ * anybody else computed.
+ *
+ * @param {string} target
+ * @param {string} label
+ * @returns {Object} {path, text, digest, parsed}
+ * @throws {ToolError} If it cannot be read, parsed or recognized.
+ */
+function readCorpusFile(target, label) {
+  var text;
+  var parsed;
+
+  try {
+    text = fs.readFileSync(target, 'utf8');
+  }
+  catch (err) {
+    throw new ToolError('cannot read the ' + label + ' ' + target + ': ' +
+      reasonOf(err));
+  }
+
+  try {
+    parsed = JSON.parse(text);
+  }
+  catch (err) {
+    throw new ToolError('the ' + label + ' ' + target +
+      ' is not valid JSON: ' + reasonOf(err));
+  }
+
+  if (!parsed || !Array.isArray(parsed.scenarios)) {
+    throw new ToolError('the ' + label + ' ' + target +
+      ' has no `scenarios` array, so it is not a corpus');
+  }
+
+  return {
+    path: target,
+    text: text,
+    digest: sha256Hex(text),
+    parsed: parsed
+  };
+}
+
+/**
+ * Requires and validates the provenance sidecar of a corpus being COMPARED
+ * AGAINST.
+ *
+ * A corpus is a recording of one tree's behaviour, and on its own it does not
+ * say which tree. Being an array of scenarios was the only thing this file used
+ * to check, which left three failure modes indistinguishable from a clean gate:
+ * a corpus captured from the MIGRATED tree replayed against the migrated tree
+ * (a self-comparison that always passes), a corpus captured from some
+ * intermediate commit (a recording of behaviour nobody approved), and a corpus
+ * edited after capture (a baseline adjusted to match the target). Each is
+ * checked here, by name, before a request is driven.
+ *
+ * The sidecar is `<corpus>.provenance.json`, which is what capture.js writes
+ * and the same convention manifest.js and joi-matrix.js follow. It is required
+ * for `--corpus` and `--secure-corpus` - the artifacts whose recorded responses
+ * are the baseline - and NOT for `--annotations`, which carries markers and
+ * reasons rather than responses and is a hand-authored definition file with no
+ * capture behind it.
+ *
+ * THE COOKIE MODE IS PART OF THE IDENTITY. capture.js records which cookie
+ * configuration it drove - `configuration.secure` and `server.secure` - and the
+ * two corpus roles want opposite values: `--corpus` is the non-secure
+ * recording and `--secure-corpus` is the secure one. Without that check the
+ * same non-secure artifact could be handed to both roles and the secure pass
+ * would report a measured secure baseline while comparing against a recording
+ * made with `isSecure` unset, which is the one thing the secure pass exists to
+ * measure. The same artifact in both roles is refused outright, by digest.
+ *
+ * @param {Object} artifact as readCorpusFile returns
+ * @param {string} label
+ * @param {Object} context {appHead, selfCheck, baselineHead, expectSecure,
+ *   otherDigest}
+ * @returns {Object} the provenance record for the result document
+ * @throws {ToolError} On a missing, unreadable or contradicted sidecar.
+ */
+function validateCorpusProvenance(artifact, label, context) {
+  var sidecarPath = artifact.path + PROVENANCE_SUFFIX;
+  var failures = [];
+  var text;
+  var sidecar;
+  var declaredDigest;
+  var expectedBaseline;
+  var identity;
+  var embedded;
+  var treeHead;
+  var toolHead;
+  var toolPath;
+  var capturedSecure;
+  var record;
+
+  if (!fs.existsSync(sidecarPath)) {
+    throw new ToolError('the ' + label + ' ' + artifact.path + ' carries no ' +
+      'provenance sidecar at ' + sidecarPath + '. A corpus without one does ' +
+      'not say which tree it recorded, so replaying against it proves ' +
+      'nothing: a corpus captured from the MIGRATED tree would compare ' +
+      'cleanly against the migrated tree and the gate would pass on a ' +
+      'self-comparison. capture.js writes the sidecar beside the corpus, so ' +
+      'capture one:\n' +
+      '  node test/parity/capture.js --app "$BASELINE" --out "$CORPUS" ' +
+      '--expect-baseline\n' +
+      'and replay with --corpus "$CORPUS". Its digest is ' + artifact.digest +
+      ', which is what the sidecar has to describe.');
+  }
+
+  try {
+    text = fs.readFileSync(sidecarPath, 'utf8');
+  }
+  catch (err) {
+    throw new ToolError('the provenance sidecar ' + sidecarPath +
+      ' cannot be read, so the ' + label + ' cannot be authenticated: ' +
+      reasonOf(err));
+  }
+
+  try {
+    sidecar = JSON.parse(text);
+  }
+  catch (err) {
+    throw new ToolError('the provenance sidecar ' + sidecarPath +
+      ' is not valid JSON, so the ' + label + ' cannot be authenticated: ' +
+      reasonOf(err));
+  }
+
+  if (!sidecar || typeof sidecar !== 'object') {
+    throw new ToolError('the provenance sidecar ' + sidecarPath +
+      ' is not an object');
+  }
+
+  identity = readSidecarIdentity(sidecar);
+  treeHead = identity.treeHead;
+  toolHead = identity.toolHead;
+  toolPath = identity.toolPath;
+  declaredDigest = identity.digest;
+  expectedBaseline = context.baselineHead === null
+    ? BASELINE_COMMIT
+    : context.baselineHead;
+
+  // The cookie configuration the recording was made under. `configuration` is
+  // what the capturing run was ASKED for and `server` is what the launcher
+  // reports it did; a disagreement between them is itself a finding, so both
+  // are read and the pair has to agree.
+  capturedSecure = describeCapturedCookieMode(sidecar);
+
+  if (sidecar.artifact && String(sidecar.artifact) !== path.basename(artifact.path)) {
+    failures.push('it describes the artifact ' +
+      JSON.stringify(String(sidecar.artifact)) + ' and sits beside ' +
+      JSON.stringify(path.basename(artifact.path)) + ', so one of the two ' +
+      'was moved and this sidecar is not this corpus\'s');
+  }
+
+  if (identity.corpusSchema !== undefined && artifact.parsed.schema !== undefined &&
+      String(identity.corpusSchema) !== String(artifact.parsed.schema)) {
+    failures.push('it records schema ' + JSON.stringify(identity.corpusSchema) +
+      ' and the corpus declares schema ' +
+      JSON.stringify(artifact.parsed.schema));
+  }
+
+  // The sidecar and the artifact's own embedded block are two copies of one
+  // identity, and this is where they are held to that.
+  //
+  // The reason it is here rather than left to the shared verifier: that
+  // verifier's `sidecar-agrees-with-embedded` compares the PAYLOAD DIGEST and
+  // nothing else, so a sidecar whose digests are untouched but whose
+  // `generator.commit` names a different - even a nonexistent - object passes
+  // it. Measured: with the corpus bytes and both digests left alone and only
+  // the sidecar's `generator.commit` changed to an object that does not exist,
+  // the shared verifier reported the artifact OK against the EMBEDDED identity
+  // while this replay read the SIDECAR one, started the database and the
+  // application, drove the selection, and recorded the fabricated commit into
+  // its own result document as the corpus's capture origin. Two consumers of
+  // one artifact then asserted two different provenances, which is the state
+  // the provenance contract exists to make impossible.
+  //
+  // So every field both records carry is compared, and only the two the
+  // sidecar alone owns are exempt: `artifactDigest`, which describes the
+  // artifact's bytes from outside them and therefore cannot be embedded in
+  // them, and `note`, which is prose. A field absent from either side is not
+  // compared here - `readSidecarIdentity` and the checks above are what
+  // require the ones that must be present - because a missing field and a
+  // contradicted one are different findings and reporting the first as the
+  // second would send a reader looking for a forgery that is not there.
+  embedded = manifest.provenance.extract(artifact.text);
+
+  if (embedded) {
+    [
+      ['role', sidecar.role, embedded.role],
+      ['baselineCommit', sidecar.baselineCommit, embedded.baselineCommit],
+      ['generator.path', pluck(sidecar.generator, 'path'),
+        pluck(embedded.generator, 'path')],
+      ['generator.blob', pluck(sidecar.generator, 'blob'),
+        pluck(embedded.generator, 'blob')],
+      ['generator.commit', pluck(sidecar.generator, 'commit'),
+        pluck(embedded.generator, 'commit')],
+      ['generator.commitState', pluck(sidecar.generator, 'commitState'),
+        pluck(embedded.generator, 'commitState')],
+      ['generator.deliveredHead', pluck(sidecar.generator, 'deliveredHead'),
+        pluck(embedded.generator, 'deliveredHead')],
+      ['analysedTree.head', pluck(sidecar.analysedTree, 'head'),
+        pluck(embedded.analysedTree, 'head')],
+      ['delivered.head', pluck(sidecar.delivered, 'head'),
+        pluck(embedded.delivered, 'head')],
+      ['payloadDigest.value', pluck(sidecar.payloadDigest, 'value'),
+        pluck(embedded.payloadDigest, 'value')]
+    ].forEach(function(entry) {
+      var field = entry[0];
+      var fromSidecar = entry[1];
+      var fromEmbedded = entry[2];
+
+      if (fromSidecar === null || fromSidecar === undefined ||
+          fromEmbedded === null || fromEmbedded === undefined) {
+        return;
+      }
+
+      if (String(fromSidecar) === String(fromEmbedded)) {
+        return;
+      }
+
+      failures.push('it records ' + field + ' as ' +
+        JSON.stringify(String(fromSidecar)) + ' and the corpus\'s own ' +
+        'embedded provenance block records ' +
+        JSON.stringify(String(fromEmbedded)) + '. The sidecar and the ' +
+        'embedded block are two copies of one identity written by one run, ' +
+        'so a disagreement means one of them was edited afterwards and ' +
+        'neither can be trusted to say which tree or which generator this ' +
+        'corpus describes');
+    });
+  }
+
+  if (!treeHead || !/^[0-9a-f]{40}$/i.test(treeHead)) {
+    failures.push('it records no commit for the tree that was captured - ' +
+      'neither `analysedTree.head` nor `tree.head` (' +
+      JSON.stringify(treeHead) + ') - so the baseline this corpus ' +
+      'describes cannot be identified');
+  }
+
+  if (!toolHead || !/^[0-9a-f]{40}$/i.test(toolHead)) {
+    failures.push('it records no commit for the generator - neither ' +
+      '`generator.commit` nor `tool.head` (' + JSON.stringify(toolHead) +
+      ') - so which version of the capture tool produced this corpus ' +
+      'cannot be established');
+  }
+
+  if (!toolPath) {
+    failures.push('it names no generator path - neither `generator.path` ' +
+      'nor `tool.path` - so the generator behind the corpus is ' +
+      'unidentified');
+  }
+  else if (!/^[A-Za-z0-9._\/-]+\.js$/.test(toolPath)) {
+    failures.push('it names the generator ' + JSON.stringify(toolPath) +
+      ', which is not a path to a JavaScript tool, so what produced this ' +
+      'corpus cannot be identified');
+  }
+
+  if (capturedSecure.contradictory) {
+    failures.push('it records the capturing run as ' +
+      (capturedSecure.requested ? 'secure' : 'non-secure') + ' under ' +
+      '`configuration.secure` and the server it drove as ' +
+      (capturedSecure.served ? 'secure' : 'non-secure') + ' under ' +
+      '`server.secure`. The two disagree, so which cookie configuration this ' +
+      'recording was made under is not established');
+  }
+
+  // The role check. `--corpus` is the non-secure recording and
+  // `--secure-corpus` the secure one; a run that handed the same artifact to
+  // both roles, or the non-secure recording to the secure role, would report a
+  // measured secure baseline while comparing against a recording made with
+  // `isSecure` unset.
+  if (context.expectSecure !== undefined && capturedSecure.known &&
+      capturedSecure.secure !== context.expectSecure) {
+    failures.push('this role needs a corpus captured in the ' +
+      (context.expectSecure ? 'SECURE' : 'NON-SECURE') + ' cookie ' +
+      'configuration and the sidecar records a ' +
+      (capturedSecure.secure ? 'secure' : 'non-secure') + ' capture. ' +
+      (context.expectSecure
+        ? 'Capture one with capture.js against a --secure server; a ' +
+          'non-secure recording cannot evidence the secure cookie contract, ' +
+          'which is the only thing the secure pass measures.'
+        : 'The primary corpus is the non-secure recording; the secure one ' +
+          'belongs to --secure-corpus.'));
+  }
+
+  if (context.expectSecure !== undefined && !capturedSecure.known) {
+    failures.push('it records no cookie configuration - neither ' +
+      '`configuration.secure` nor `server.secure` - so whether this ' +
+      'recording was made with `isSecure` set cannot be established, and ' +
+      'this role requires the ' +
+      (context.expectSecure ? 'secure' : 'non-secure') + ' one');
+  }
+
+  if (context.otherDigest && context.otherDigest === artifact.digest) {
+    failures.push('this is byte-for-byte the same artifact as the other ' +
+      'corpus in this run (digest ' + artifact.digest.slice(0, 16) + '). One ' +
+      'recording cannot be both cookie configurations, and passing it as ' +
+      'both would report the secure contract as measured while measuring ' +
+      'nothing');
+  }
+
+  if (declaredDigest && String(declaredDigest) !== artifact.digest) {
+    failures.push('it declares the artifact digest ' +
+      JSON.stringify(String(declaredDigest)) + ' and the file on disk ' +
+      'digests to ' + artifact.digest + ', so the corpus was changed after ' +
+      'it was captured');
+  }
+
+  // The self-comparison guard. Replaying a corpus against the very tree it was
+  // captured from is a legitimate REHEARSAL - the file's own --self-check - and
+  // it is a meaningless gate run when it happens by accident, which is why the
+  // declaration is required rather than inferred.
+  if (!context.selfCheck && treeHead && context.appHead &&
+      treeHead.toLowerCase() === String(context.appHead).toLowerCase()) {
+    failures.push('it records the captured tree as ' + treeHead +
+      ', which is the HEAD of the tree now under test. That is a ' +
+      'self-comparison: it compares a recording against the tree that ' +
+      'produced it and cannot fail on a behaviour change. Pass --self-check ' +
+      'to declare that deliberately (it makes the run STRICTER: every ' +
+      'difference fails and the approved deviation must NOT materialize), or ' +
+      'replay a corpus captured at the baseline commit');
+  }
+
+  if (!context.selfCheck && expectedBaseline !== 'any' && treeHead &&
+      treeHead.toLowerCase().indexOf(String(expectedBaseline).toLowerCase()) !== 0 &&
+      String(expectedBaseline).toLowerCase().indexOf(treeHead.toLowerCase()) !== 0) {
+    failures.push('it records the captured tree as ' + treeHead +
+      ' and the R-f baseline reference is ' + expectedBaseline +
+      ' (AAP §0.10.3). A corpus captured anywhere else records some other ' +
+      'tree\'s behaviour, so comparing against it says nothing about this ' +
+      'migration. Pass --baseline-head <sha> to name a different baseline ' +
+      'deliberately, or --baseline-head any to compare against a corpus ' +
+      'whose commit is not being checked');
+  }
+
+  if (failures.length) {
+    throw new ToolError('the provenance sidecar ' + sidecarPath +
+      ' does not authenticate the ' + label + ' ' + artifact.path + ':\n  - ' +
+      failures.join('\n  - '));
+  }
+
+  record = {
+    corpus: artifact.path,
+    sidecar: sidecarPath,
+    artifactDigest: artifact.digest,
+    digestDeclared: declaredDigest ? String(declaredDigest) : null,
+    digestVerified: !!declaredDigest,
+    cookieMode: capturedSecure,
+    generatorIsCapture: toolPath
+      ? path.basename(toolPath) === CAPTURE_GENERATOR
+      : false,
+    schema: identity.corpusSchema === undefined ? null : identity.corpusSchema,
+    capturedTree: {
+      appRoot: identity.treeAppRoot,
+      head: treeHead
+    },
+    generator: {
+      path: identity.toolPath,
+      worktree: identity.toolWorktree,
+      head: toolHead
+    },
+    capturedAt: sidecar.generatedAt || sidecar.capturedAt || null,
+    baselineHeadExpected: expectedBaseline,
+    baselineHeadMatched: context.selfCheck || expectedBaseline === 'any'
+      ? null
+      : true,
+    // Whether the FROZEN baseline reference was the one checked, rather than a
+    // caller-named commit or no commit at all. `qualifyGate` requires this for
+    // gate status: --baseline-head is a diagnostic escape, not a way to
+    // redefine the baseline.
+    frozenBaselineChecked: !context.selfCheck &&
+      expectedBaseline === BASELINE_COMMIT,
+    selfComparisonDeclared: !!context.selfCheck,
+    note: declaredDigest
+      ? 'the sidecar declares the artifact digest and it matches the file on disk'
+      : 'the sidecar carries no artifact digest - capture.js does not write ' +
+        'one - so the digest recorded here was computed from the file this ' +
+        'run read, and it is what a later run compares against'
+  };
+
+  return record;
+}
+
+/**
+ * Reads the cookie configuration a capture was made under, from its sidecar.
+ *
+ * capture.js records it twice and the two mean different things:
+ * `configuration.secure` is what the capturing run was ASKED for, and
+ * `server.secure` is what the launcher reports it actually served. Both are
+ * read, a disagreement between them is reported as one, and a sidecar carrying
+ * neither is `known: false` rather than assumed either way - an assumption here
+ * would be the whole of the check it is supposed to support.
+ *
+ * @param {Object} sidecar
+ * @returns {Object} {known, secure, requested, served, contradictory}
+ */
+function describeCapturedCookieMode(sidecar) {
+  // The delivered writer records the run's own description under `detail`, so
+  // both spellings are read: `detail.configuration` / `detail.server` first,
+  // then the flat form. Reading only the flat form found nothing in a sidecar
+  // capture.js had just written, which left `known` false and silently
+  // disabled the role check this value exists for.
+  var configuration = (sidecar.detail && sidecar.detail.configuration) ||
+    sidecar.configuration || null;
+  var server = (sidecar.detail && sidecar.detail.server) ||
+    sidecar.server || null;
+  var requested = configuration && configuration.secure !== undefined
+    ? !!configuration.secure
+    : null;
+  var served = server && server.secure !== undefined
+    ? !!server.secure
+    : null;
+
+  return {
+    known: requested !== null || served !== null,
+    // The served value wins where both exist and agree; where only one exists
+    // it is the only evidence there is.
+    secure: served === null ? !!requested : served,
+    requested: requested,
+    served: served,
+    contradictory: requested !== null && served !== null && requested !== served
+  };
+}
+
+/**
+ * The identity fields this file checks, resolved out of a provenance sidecar.
+ *
+ * There are two spellings in the tree and this reads both, because the checks
+ * are about the FACTS - which tree was captured, which generator captured it,
+ * and whether the bytes still digest to what was declared - not about where
+ * those facts are spelled.
+ *
+ * The current writer records `analysedTree.head`, `generator.path`,
+ * `generator.commit` and an `artifactDigest` OBJECT carrying `{algorithm,
+ * canonicalization, value}`; the other spelling puts the same facts in
+ * `tree.head`, `tool.head`, `tool.path` and a STRING `artifactDigest`. Reading
+ * one spelling only is not a cosmetic loss: `treeHead` resolving to null is
+ * what the self-comparison guard and the frozen-baseline guard are both
+ * conditioned on, so the two checks that make a replay evidence rather than a
+ * rehearsal silently do not run, and a digest object compared as a string
+ * stringifies to "[object Object]" and reports an untouched corpus as
+ * "changed after it was captured".
+ *
+ * `generator.commit` and not `generator.deliveredHead` for the tool: the
+ * question is which generator source produced the artifact, and the delivered
+ * writer leaves `commit` null precisely when the generator was uncommitted.
+ * Falling back to the delivered head would answer a question nobody asked and
+ * would let an unreviewed generator pass a check written to catch it.
+ *
+ * @param {Object} sidecar
+ * @returns {Object} {treeHead, treeAppRoot, toolHead, toolPath, toolWorktree,
+ *   digest, corpusSchema} with null for anything absent
+ */
+function readSidecarIdentity(sidecar) {
+  var tree = sidecar.analysedTree || sidecar.tree || null;
+  var tool = sidecar.generator || sidecar.tool || null;
+  var digest = sidecar.artifactDigest || sidecar.digest || null;
+  var schema = sidecar.schema;
+
+  if (schema === undefined) {
+    schema = sidecar.detail && sidecar.detail.corpusSchema !== undefined
+      ? sidecar.detail.corpusSchema
+      : undefined;
+  }
+
+  if (digest && typeof digest === 'object') {
+    digest = digest.value === undefined ? null : digest.value;
+  }
+
+  return {
+    treeHead: tree && tree.head ? String(tree.head) : null,
+    treeAppRoot: (tree && tree.appRoot) || null,
+    toolHead: tool && (tool.commit || tool.head)
+      ? String(tool.commit || tool.head)
+      : null,
+    toolPath: tool && tool.path ? String(tool.path) : null,
+    toolWorktree: (tool && tool.worktree) || null,
+    digest: digest === null || digest === undefined ? null : String(digest),
+    corpusSchema: schema
+  };
+}
+
+/**
+ * Compiles the --only patterns into one predicate.
+ *
+ * Same semantics as capture.js's, deliberately, so a segment captured with one
+ * command is replayed with the same one: a value wrapped in slashes is a
+ * regular expression, anything else a case-insensitive substring, matched
+ * against the scenario id, its group and its route key.
+ *
+ * @param {Array.<string>} patterns
+ * @returns {(function(Object): boolean|null)} null when everything is selected
+ * @throws {ToolError} On an invalid regular expression.
+ */
+function compileFilter(patterns) {
+  var compiled;
+
+  if (!patterns || !patterns.length) {
+    return null;
+  }
+
+  compiled = patterns.map(function(pattern) {
+    var match = /^\/(.*)\/([a-z]*)$/.exec(pattern);
+
+    if (match) {
+      try {
+        return new RegExp(match[1], match[2]);
+      }
+      catch (err) {
+        throw usageError('--only ' + JSON.stringify(pattern) +
+          ' is not a valid regular expression: ' + reasonOf(err));
+      }
+    }
+
+    return String(pattern).toLowerCase();
+  });
+
+  return function(item) {
+    var haystack = [
+      item.id,
+      item.group,
+      manifest.routeKey(item.route.method, item.route.path)
+    ];
+
+    return compiled.some(function(pattern) {
+      if (pattern instanceof RegExp) {
+        return haystack.some(function(value) { return pattern.test(value); });
+      }
+
+      return haystack.some(function(value) {
+        return String(value).toLowerCase().indexOf(pattern) >= 0;
+      });
+    });
+  };
+}
+
+/**
+ * Reads one step in EITHER of the two shapes a corpus step can have.
+ *
+ * Before a capture a step carries its spec - label, method, target, accept,
+ * payload, and optionally timeoutMs, identity and resetSessionBefore - with
+ * `response: null`. When capture.js drives it, the step is REPLACED by
+ * {label, request, response}, and the spec-only fields are dropped with it. A
+ * replay needs them back: a step that reset the session before running is a
+ * different request without that reset, and a step with a four-second budget
+ * would sit for fifteen without it.
+ *
+ * So both shapes are read here, and anything the recorded shape dropped is
+ * taken from the matching step of the annotations corpus when one was given.
+ * Which fields came from where is recorded on the step, and the report says so,
+ * because a silently defaulted timeout is a silently different request.
+ *
+ * @param {Object} step the corpus step
+ * @param {number} index its position in the sequence
+ * @param {Object} item the scenario
+ * @param {(Object|null)} definition the matching step of the annotations corpus
+ * @returns {Object} the internal step
+ * @throws {ToolError} If neither shape yields a method and a target.
+ */
+function readStep(step, index, item, definition) {
+  var request = step && step.request ? step.request : null;
+  var recorded = step && step.response !== undefined ? step.response : null;
+  var spec = definition || {};
+  var restored = [];
+  var out = {
+    index: index,
+    label: step && step.label ? step.label : 'step-' + index,
+    method: null,
+    target: null,
+    accept: null,
+    payload: null,
+    contentType: null,
+    identity: null,
+    resetSessionBefore: false,
+    timeoutMs: null,
+    // The model-boundary fault control. It has to be carried into the plan or
+    // the step is replayed UNFAULTED against a baseline captured faulted, and
+    // the resulting difference is attributed to the application instead of to
+    // the harness that stopped injecting.
+    modelFault: null,
+    baseline: recorded,
+    restoredFields: restored
+  };
+
+  out.method = request && request.method
+    ? request.method
+    : (step && step.method) || spec.method || null;
+  out.target = request && request.target
+    ? request.target
+    : (step && step.target) || spec.target || null;
+  out.accept = (request && request.accept) || (step && step.accept) ||
+    spec.accept || item.accept || ACCEPT_HTML;
+  out.contentType = (request && request.contentType) ||
+    (step && step.contentType) || spec.contentType || null;
+
+  if (request && request.payload !== undefined) {
+    out.payload = request.payload;
+  }
+  else if (step && step.payload !== undefined) {
+    out.payload = step.payload;
+  }
+  else if (spec.payload !== undefined) {
+    out.payload = spec.payload;
+  }
+
+  if (request && request.identity) {
+    out.identity = request.identity;
+  }
+  else if (step && step.identity) {
+    out.identity = step.identity;
+  }
+  else if (spec.identity) {
+    out.identity = spec.identity;
+    restored.push('identity');
+  }
+  else {
+    out.identity = item.identity;
+  }
+
+  if (step && step.resetSessionBefore !== undefined) {
+    out.resetSessionBefore = !!step.resetSessionBefore;
+  }
+  else if (spec.resetSessionBefore !== undefined) {
+    out.resetSessionBefore = !!spec.resetSessionBefore;
+    restored.push('resetSessionBefore');
+  }
+
+  // The fault control, from the corpus step first and the annotation spec
+  // second - the same precedence every other field above uses. `recordStep`
+  // carries it through capture, so a corpus driven by the current tooling has
+  // it on the step; an older artifact may not, and `assertFaultControls` below
+  // is what stops that being replayed as an application difference.
+  if (step && step.modelFault) {
+    out.modelFault = step.modelFault;
+  }
+  else if (spec.modelFault) {
+    out.modelFault = spec.modelFault;
+    restored.push('modelFault');
+  }
+
+  if (step && step.timeoutMs) {
+    out.timeoutMs = step.timeoutMs;
+  }
+  else if (recorded && recorded.timeoutMs) {
+    // The budget the capture actually applied. Preferred over the spec, because
+    // it is what produced the recorded result.
+    out.timeoutMs = recorded.timeoutMs;
+  }
+  else if (spec.timeoutMs) {
+    out.timeoutMs = spec.timeoutMs;
+    restored.push('timeoutMs');
+  }
+
+  if (!out.method || !out.target) {
+    throw new ToolError('scenario ' + item.id + ' step ' + index + ' (' +
+      out.label + ') carries neither a spec nor a recorded request, so there ' +
+      'is nothing to replay. A corpus step must have either ' +
+      '{method, target} or {request: {method, target}}.');
+  }
+
+  return out;
+}
+
+/**
+ * Builds the replay plan: one entry per selected scenario, with its baseline.
+ *
+ * @param {Object} corpus the baseline corpus
+ * @param {(Object|null)} annotations the marker and spec source, or null
+ * @param {(function(Object): boolean|null)} filter
+ * @returns {Object} {scenarios, skipped, annotationsUsed, unknownAnnotations}
+ * @throws {ToolError} On a corpus that cannot be planned.
+ */
+function buildPlan(corpus, annotations, filter) {
+  var byId = Object.create(null);
+  var used = { expectedDeviation: [], unreachableReason: [], steps: [] };
+  var unknown = [];
+  var skipped = [];
+  var scenarios = [];
+
+  if (annotations) {
+    annotations.scenarios.forEach(function(item) {
+      if (item && item.id) {
+        byId[item.id] = item;
+      }
+    });
+  }
+
+  corpus.scenarios.forEach(function(item, position) {
+    var annotation;
+    var plan;
+
+    if (!item || !item.id || !item.route || !item.route.method || !item.route.path) {
+      throw new ToolError('the corpus scenario at position ' + position +
+        ' has no id or no route, so it cannot be replayed or accounted');
+    }
+
+    if (filter && !filter(item)) {
+      skipped.push(item.id);
+      return;
+    }
+
+    annotation = byId[item.id] || null;
+
+    plan = {
+      id: item.id,
+      group: item.group || '(ungrouped)',
+      route: { method: item.route.method, path: item.route.path },
+      routeKey: manifest.routeKey(item.route.method, item.route.path),
+      identity: item.identity || IDENTITY_ANONYMOUS,
+      accept: item.accept || ACCEPT_HTML,
+      intent: item.intent || 'success',
+      mutating: !!item.mutating,
+      // Carried because the CAPTURE reseeded before every destructive case, so
+      // each delete was recorded against freshly seeded fixtures rather than
+      // against whatever the delete before it left behind. A replay that drives
+      // them in sequence without doing the same compares the second delete
+      // against a recording of the first - see the forced reseed in `runPass`.
+      phase: item.phase || PHASE_READ_ONLY,
+      fixtureProfile: item.fixtureProfile || 'default',
+      freshSession: !!item.freshSession,
+      covers: Array.isArray(item.covers) ? item.covers.slice() : [],
+      notes: Array.isArray(item.notes) ? item.notes.slice() : [],
+      expectation: item.expectation ||
+        (annotation && annotation.expectation) || null,
+      expectedDeviation: item.expectedDeviation || null,
+      unreachableReason: item.unreachableReason || null,
+      markerSource: { expectedDeviation: null, unreachableReason: null },
+      steps: [],
+      baselineRecorded: false
+    };
+
+    if (!plan.covers.length) {
+      plan.covers = [plan.routeKey];
+    }
+
+    if (plan.expectedDeviation) {
+      plan.markerSource.expectedDeviation = 'corpus';
+    }
+    else if (annotation && annotation.expectedDeviation) {
+      plan.expectedDeviation = annotation.expectedDeviation;
+      plan.markerSource.expectedDeviation = 'annotations';
+      used.expectedDeviation.push(item.id);
+    }
+    else if (approvedDeviationContract(item.id)) {
+      // THE THIRD MARKER SOURCE: the closed register in this file, for an
+      // allowlisted scenario that carries no marker in the corpus and none in
+      // the annotations. Recorded as `register` so the report never presents
+      // it as something the corpus said.
+      //
+      // WHY IT EXISTS, measured. A marker is emitted by capture.js's scenario
+      // builder, so adding one for a newly argued deviation means RE-CAPTURING
+      // the corpus with an edited capture.js. This file refuses such a corpus
+      // as gate evidence - `verifiedCorpus` requires the recording's generator
+      // to be a committed blob, and a corpus stamped with an uncommitted
+      // capture.js is replayable only under --allow-unreviewed-corpus, which is
+      // labelled `gateQualifying: false`. Requiring the corpus marker would
+      // therefore make a fully argued deviation UNAPPROVABLE by this gate for
+      // as long as its marker is uncommitted, and the gate would report an
+      // unapproved difference for a change §11.0 approved. That is a false
+      // negative produced by the artifact pipeline, not by the tree.
+      //
+      // WHAT IS NOT RELAXED, and this is the whole of the argument. Identity is
+      // unchanged: `approvedDeviationContract` is the same closed allowlist the
+      // marker path is checked against, so this branch cannot admit an id
+      // nobody argued for - it fires only for an id already registered here,
+      // and an unregistered id still reaches `verifyApprovedDeviation` with no
+      // contract and fails there. Shape is unchanged: every field check runs
+      // exactly as it does for a corpus marker - fromOutcome against the
+      // RECORDED baseline, materialization, toOutcome, status, content type,
+      // absent headers and byte length, each mandatory field required to have
+      // been OBSERVED and not merely unobjectionable.
+      //
+      // WHAT THE CORPUS MARKER WAS PROTECTING, and why the protection survives
+      // its absence: it evidenced that the recording was made from a tree where
+      // the deviation had NOT yet landed. `contract.fromOutcome` establishes
+      // that from the recording itself - a corpus that already records the
+      // deviated outcome is refused with "this corpus therefore already
+      // records the deviated behaviour" - so the property is measured rather
+      // than asserted, which is strictly the better evidence.
+      plan.expectedDeviation = registerMarker(
+        approvedDeviationContract(item.id));
+      plan.markerSource.expectedDeviation = 'register';
+      used.expectedDeviation.push(item.id);
+    }
+
+    if (plan.unreachableReason) {
+      plan.markerSource.unreachableReason = 'corpus';
+    }
+    else if (annotation && annotation.unreachableReason) {
+      plan.unreachableReason = annotation.unreachableReason;
+      plan.markerSource.unreachableReason = 'annotations';
+      used.unreachableReason.push(item.id);
+    }
+
+    (item.steps || []).forEach(function(step, index) {
+      var definition = annotation && Array.isArray(annotation.steps)
+        ? matchDefinitionStep(annotation.steps, step, index)
+        : null;
+      var planned = readStep(step, index, plan, definition);
+
+      if (planned.restoredFields.length) {
+        used.steps.push(plan.id + '#' + index + ': ' +
+          planned.restoredFields.join(', '));
+      }
+
+      if (planned.baseline) {
+        plan.baselineRecorded = true;
+      }
+
+      plan.steps.push(planned);
+    });
+
+    assertFaultControls(plan, item);
+    // After the steps, so a clause that addresses a step the scenario does not
+    // have is caught with the rest. This is where a corpus declaring an
+    // operator this file cannot evaluate stops the run.
+    assertExpectationSchema(plan);
+
+    scenarios.push(plan);
+  });
+
+  // A marker in the annotations for a scenario the corpus does not hold is
+  // reported rather than ignored: it means the two artifacts describe different
+  // scenario sets, and the marker it was carrying is doing nothing.
+  if (annotations) {
+    annotations.scenarios.forEach(function(item) {
+      var carriesMarker = item &&
+        (item.expectedDeviation || item.unreachableReason);
+      var present = corpus.scenarios.some(function(candidate) {
+        return candidate && candidate.id === item.id;
+      });
+
+      if (carriesMarker && !present) {
+        unknown.push(item.id);
+      }
+    });
+  }
+
+  return {
+    scenarios: scenarios,
+    skipped: skipped,
+    annotationsUsed: used,
+    unknownAnnotations: unknown,
+    // What the capture DID, carried so the replay can do the same. The only
+    // field read is `reseedBeforeEachDestructiveCase`: a corpus captured with
+    // ./capture's `--no-reseed` recorded its deletes in sequence, and a replay
+    // that reseeded anyway would be just as mismatched as one that fails to.
+    ordering: corpus.ordering || null
+  };
+}
+
+/**
+ * Refuses to replay a scenario whose fault control was lost.
+ *
+ * FAIL CLOSED, and this is the point of the function. A step captured with a
+ * `modelFault` produced a FAULTED response; replaying it without the control
+ * drives the ordinary path, gets an ordinary success, and reports the
+ * difference against the application - when what changed is that the harness
+ * stopped injecting. That failure mode is silent in exactly the direction that
+ * matters: the auth scheme's lookup-error case would report "the outcome
+ * changed" while the truth is "the outcome was never reached".
+ *
+ * Two shapes are refused:
+ *
+ *   A corpus step whose recorded response exists and whose declared fault has
+ *   not reached the plan. Either the artifact predates `recordStep` carrying
+ *   the control, or a hand edit dropped it.
+ *
+ *   A scenario in the auth-outcome group that declares no fault at all on any
+ *   step. That group's fifth member is only reachable through one, so a
+ *   silently fault-free `auth.outcome.lookup-error` is the exact regression
+ *   this whole mechanism exists to prevent, and it is caught at plan time
+ *   rather than discovered as a mismatched response.
+ *
+ * @param {Object} plan The planned scenario.
+ * @param {Object} item The corpus scenario it was planned from.
+ * @returns {undefined}
+ * @throws {ToolError} When a fault control is missing.
+ */
+function assertFaultControls(plan, item) {
+  var declared = 0;
+  var planned = 0;
+
+  (item.steps || []).forEach(function(step, index) {
+    if (!step || !step.modelFault) {
+      return;
+    }
+
+    declared = declared + 1;
+
+    if (!plan.steps[index] || !plan.steps[index].modelFault) {
+      throw new ToolError('corpus scenario ' + plan.id + ' step ' + index +
+        ' (' + (step.label || 'unlabelled') + ') declares a model-boundary ' +
+        'fault that did not reach the replay plan. Replaying it would drive ' +
+        'the step UNFAULTED against a baseline captured WITH the fault, and ' +
+        'report the resulting difference against the application rather than ' +
+        'against this harness. Re-capture the scenario with tooling that ' +
+        'carries `modelFault` through recordStep, or supply it through ' +
+        '--annotations.');
+    }
+  });
+
+  plan.steps.forEach(function(step) {
+    if (step.modelFault) {
+      planned = planned + 1;
+    }
+  });
+
+  if (plan.id === LOOKUP_ERROR_SCENARIO && !planned) {
+    throw new ToolError('corpus scenario ' + plan.id + ' carries no ' +
+      'model-boundary fault on any step. That outcome - the auth scheme\'s ' +
+      'fifth, `Boom.unauthorized(\'Auth error\')` - is reachable ONLY by ' +
+      'making the user lookup itself fail, so a fault-free version of this ' +
+      'scenario cannot assert it however it is driven. It would drive an ' +
+      'ordinary authenticated request and pass.');
+  }
+
+  if (declared !== planned) {
+    throw new ToolError('corpus scenario ' + plan.id + ' declares ' + declared +
+      ' model-boundary fault(s) and the plan carries ' + planned +
+      '. The two must agree, because a fault the plan does not carry is a ' +
+      'step driven down a different path than the one that was recorded.');
+  }
+}
+
+/**
+ * Finds the annotation step that corresponds to a corpus step.
+ *
+ * By label first, because both shapes keep it and it survives a reordering, and
+ * by position only when the label does not resolve.
+ *
+ * @param {Array.<Object>} steps
+ * @param {Object} step
+ * @param {number} index
+ * @returns {(Object|null)}
+ */
+function matchDefinitionStep(steps, step, index) {
+  var label = step && step.label;
+  var found = null;
+
+  if (label) {
+    steps.forEach(function(candidate) {
+      if (!found && candidate && candidate.label === label) {
+        found = candidate;
+      }
+    });
+  }
+
+  return found || steps[index] || null;
+}
+
+// ---------------------------------------------------------------------------
+// The driver
+// ---------------------------------------------------------------------------
+
+/**
+ * Encodes a scenario payload the way the application expects to receive it.
+ *
+ * Form encoding is the default because that is what the page routes' own forms
+ * send and what the hand-rolled validation block reads; a payload the corpus
+ * recorded as JSON is sent as JSON. A payload carrying a Buffer-shaped entry is
+ * rejected rather than silently mangled - the corpus holds none, and a
+ * multipart upload is driven by the storage harness, not from here.
+ *
+ * @param {*} payload
+ * @param {(string|null)} preferred the content type the corpus recorded
+ * @returns {Object} {body, contentType, encoding}
+ * @throws {ToolError} On a payload shape that cannot be encoded faithfully.
+ */
+function encodePayload(payload, preferred) {
+  var parameters;
+
+  if (payload === null || payload === undefined) {
+    return { body: null, contentType: null, encoding: 'none' };
+  }
+
+  if (typeof payload === 'string') {
+    return {
+      body: Buffer.from(payload, 'utf8'),
+      contentType: preferred || FORM_TYPE,
+      encoding: 'raw'
+    };
+  }
+
+  if (typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new ToolError('a scenario payload must be an object, a string or ' +
+      'null; got ' + (Array.isArray(payload) ? 'an array' : typeof payload));
+  }
+
+  if (preferred && preferred.indexOf('json') >= 0) {
+    return {
+      body: Buffer.from(JSON.stringify(payload), 'utf8'),
+      contentType: JSON_TYPE,
+      encoding: 'json'
+    };
+  }
+
+  parameters = Object.keys(payload).map(function(key) {
+    var value = payload[key];
+
+    if (value !== null && typeof value === 'object') {
+      // Nested objects have no faithful form encoding, and guessing one would
+      // send a different request than the one that was recorded.
+      throw new ToolError('the payload key ' + JSON.stringify(key) + ' holds ' +
+        'an object, which has no faithful form encoding. Record the step with ' +
+        'a JSON content type instead.');
+    }
+
+    return encodeURIComponent(key) + '=' +
+      encodeURIComponent(value === null || value === undefined ? '' : String(value));
+  });
+
+  return {
+    body: Buffer.from(parameters.join('&'), 'utf8'),
+    contentType: FORM_TYPE,
+    encoding: 'form'
+  };
+}
+
+/**
+ * Drives one request and records what came back, in the corpus's own shape.
+ *
+ * Deliberately NOT shared with capture.js, and the reason is the comparison
+ * itself: if the recorder and the comparator were one implementation, a bug in
+ * its normalization would be symmetric and therefore invisible - both sides
+ * would be wrong in the same way and the gate would pass. This is an
+ * independent implementation of the SAME documented contract (corpus schema 1),
+ * which makes the two a cross-check rather than a tautology. Everything the
+ * contract fixes is reproduced exactly: which types are textual, the text
+ * cut-off, the sha256 body digest, the header normalization, the Set-Cookie
+ * parse, and the three record shapes - answered, timed out, and transport
+ * failure.
+ *
+ * Never rejects. A transport failure IS a recorded outcome here - it is how the
+ * refused streaming case is captured - so it resolves with a record rather than
+ * throwing.
+ *
+ * @param {Object} spec {baseUrl, method, target, headers, body, contentType}
+ * @param {number} timeoutMs
+ * @returns {Promise<Object>} the response record
+ */
+function drive(spec, timeoutMs) {
+  return new Promise(function(resolve) {
+    var url;
+    var transport;
+    var started = process.hrtime.bigint();
+    var settled = false;
+    var request;
+    var headers = {};
+
+    function elapsedMs() {
+      return Number((process.hrtime.bigint() - started) / BigInt(1000)) / 1000;
+    }
+
+    function finish(record) {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      resolve(record);
+    }
+
+    try {
+      // `new URL` throughout. The legacy parser emits DEP0169, and this
+      // process's stderr is inside the stream the zero-warning gate inspects.
+      url = new URL(spec.target, spec.baseUrl);
+    }
+    catch (err) {
+      finish({
+        ok: false,
+        error: 'the target ' + JSON.stringify(String(spec.target)) +
+          ' is not resolvable against ' + spec.baseUrl + ': ' + reasonOf(err),
+        timedOut: false,
+        elapsedMs: 0,
+        elapsedBucket: elapsedBucket(0),
+        timeoutMs: timeoutMs
+      });
+      return;
+    }
+
+    Object.keys(spec.headers || {}).forEach(function(key) {
+      if (spec.headers[key] !== null && spec.headers[key] !== undefined) {
+        headers[key] = spec.headers[key];
+      }
+    });
+
+    if (spec.body) {
+      headers['content-length'] = String(spec.body.length);
+
+      if (spec.contentType) {
+        headers['content-type'] = spec.contentType;
+      }
+    }
+
+    transport = url.protocol === 'https:' ? https : http;
+
+    try {
+      request = transport.request(url, {
+        method: spec.method,
+        headers: headers,
+        // A per-request agent with keep-alive off. A pooled socket held open by
+        // the never-settling case would keep this process alive after the
+        // report was written, turning a clean exit into a hang.
+        agent: new transport.Agent({ keepAlive: false })
+      });
+    }
+    catch (err) {
+      finish({
+        ok: false,
+        error: 'the request could not be created: ' + reasonOf(err),
+        timedOut: false,
+        elapsedMs: elapsedMs(),
+        elapsedBucket: elapsedBucket(elapsedMs()),
+        timeoutMs: timeoutMs
+      });
+      return;
+    }
+
+    request.setTimeout(timeoutMs, function() {
+      var spent = elapsedMs();
+
+      request.destroy();
+
+      // The expected-timeout path. A recorded `timedOut: true` is the EXPECTED
+      // result for the two never-settling cases, so this is a first-class
+      // outcome rather than a fault.
+      finish({
+        ok: true,
+        timedOut: true,
+        timeoutMs: timeoutMs,
+        elapsedMs: spent,
+        elapsedBucket: elapsedBucket(spent),
+        status: null,
+        headers: null,
+        body: null
+      });
+    });
+
+    request.on('error', function(err) {
+      var spent = elapsedMs();
+
+      if (settled) {
+        return;
+      }
+
+      finish({
+        ok: false,
+        error: 'transport failure: ' + reasonOf(err) +
+          (err && err.code ? ' (' + err.code + ')' : ''),
+        timedOut: false,
+        elapsedMs: spent,
+        elapsedBucket: elapsedBucket(spent),
+        timeoutMs: timeoutMs
+      });
+    });
+
+    request.on('response', function(response) {
+      var chunks = [];
+      var total = 0;
+
+      response.on('data', function(chunk) {
+        chunks.push(chunk);
+        total += chunk.length;
+      });
+
+      response.on('aborted', function() {
+        var spent = elapsedMs();
+
+        finish({
+          ok: false,
+          error: 'the response was aborted after ' + total + ' bytes',
+          timedOut: false,
+          elapsedMs: spent,
+          elapsedBucket: elapsedBucket(spent),
+          timeoutMs: timeoutMs,
+          status: response.statusCode
+        });
+      });
+
+      response.on('end', function() {
+        var spent = elapsedMs();
+        var buffer = Buffer.concat(chunks, total);
+        var rawCookies = response.headers['set-cookie'] || [];
+        var textual = isTextualType(response.headers['content-type']);
+        var body = {
+          encoding: textual ? 'text' : 'binary',
+          length: buffer.length,
+          digest: sha256Hex(buffer),
+          truncated: false,
+          text: null
+        };
+        var record;
+
+        if (textual) {
+          if (buffer.length > MAX_TEXT_BYTES) {
+            body.text = buffer.slice(0, MAX_TEXT_BYTES).toString('utf8');
+            body.truncated = true;
+          }
+          else {
+            body.text = buffer.toString('utf8');
+          }
+        }
+
+        // THE ARCHIVE SUMMARY, taken here because this is the only place the
+        // raw bytes still exist: everything downstream sees the record. It is
+        // attached for exactly the content types whose raw digest the
+        // timestamps category exempts, and it is what replaces that exemption
+        // with a comparison - see the ARCHIVE CONTAINERS section. A container
+        // this reader cannot open is recorded as unparsed with its reason, so
+        // the artifact never presents an unread container as a compared one.
+        if (isArchiveDigestExempt(response.headers['content-type'])) {
+          body.archive = readArchiveContainer(buffer,
+            response.headers['content-type']);
+        }
+
+        record = {
+          ok: true,
+          timedOut: false,
+          timeoutMs: timeoutMs,
+          status: response.statusCode,
+          statusMessage: response.statusMessage || '',
+          httpVersion: response.httpVersion,
+          headers: recordHeaders(response.headers),
+          setCookies: rawCookies.map(parseSetCookie),
+          body: body,
+          elapsedMs: spent,
+          elapsedBucket: elapsedBucket(spent)
+        };
+
+        // The genuine Set-Cookie values, needed to carry a session across a
+        // sequence. NON-ENUMERABLE so that neither JSON.stringify nor
+        // Object.keys can move a live session token into an artifact, however
+        // this record is handled later.
+        Object.defineProperty(record, 'rawSetCookie', {
+          value: rawCookies.slice(),
+          enumerable: false,
+          writable: false
+        });
+
+        finish(record);
+      });
+    });
+
+    if (spec.body) {
+      request.write(spec.body);
+    }
+
+    request.end();
+  });
+}
+
+/**
+ * Splits one Set-Cookie header into its name, its value digest and its
+ * attributes - the same parse the corpus was written with.
+ *
+ * The VALUE is replaced by its digest and its length, both of which are inside
+ * the cookie-values category of the volatile set and are therefore not
+ * compared. Everything that IS compared survives in full: the name, every
+ * attribute, and the presence and day horizon of Expires.
+ *
+ * @param {string} raw one Set-Cookie header value
+ * @returns {Object}
+ */
+function parseSetCookie(raw) {
+  var text = String(raw);
+  var segments = text.split(';');
+  var first = segments.shift() || '';
+  var separator = first.indexOf('=');
+  var name = separator === -1 ? first.trim() : first.slice(0, separator).trim();
+  var value = separator === -1 ? '' : first.slice(separator + 1);
+  var attributes = {};
+  var expiresAt = null;
+
+  segments.forEach(function(segment) {
+    var trimmed = segment.trim();
+    var index;
+    var key;
+
+    if (!trimmed) {
+      return;
+    }
+
+    index = trimmed.indexOf('=');
+
+    if (index === -1) {
+      attributes[trimmed.toLowerCase()] = true;
+      return;
+    }
+
+    key = trimmed.slice(0, index).trim().toLowerCase();
+    attributes[key] = trimmed.slice(index + 1).trim();
+  });
+
+  if (attributes.expires) {
+    expiresAt = Date.parse(attributes.expires);
+    // The absolute date is volatile; the HORIZON is the contract, and it is
+    // recorded in whole days so that a one-year expiry compares equal across
+    // two runs taken on different days while a collapse to session-only does
+    // not.
+    attributes.expires = 'present';
+  }
+
+  return {
+    name: name,
+    valueLength: value.length,
+    valueDigest: sha256Hex(value),
+    attributes: sortedKeys(attributes),
+    expiresInDays: expiresAt === null
+      ? null
+      : Math.round((expiresAt - Date.now()) / 86400000)
+  };
+}
+
+/**
+ * Normalizes the raw header bag: keys lowercased and sorted, repeated headers
+ * kept as arrays, and the value of any Set-Cookie redacted to its digest.
+ *
+ * The header is otherwise kept in its original shape, so a change in attribute
+ * ORDER or spelling is still visible rather than being smoothed away by the
+ * parse.
+ *
+ * @param {Object} raw node's incoming headers
+ * @returns {Object}
+ */
+function recordHeaders(raw) {
+  var out = {};
+
+  Object.keys(raw || {}).forEach(function(key) {
+    var lower = key.toLowerCase();
+    var value = raw[key];
+
+    if (lower === 'set-cookie') {
+      out[lower] = (Array.isArray(value) ? value : [value]).map(function(entry) {
+        var parsed = parseSetCookie(entry);
+
+        return String(entry).replace(/^([^=;]*)=([^;]*)/, function(match, cookieName) {
+          return cookieName + '=<redacted:sha256:' +
+            parsed.valueDigest.slice(0, 16) + '>';
+        });
+      });
+      return;
+    }
+
+    out[lower] = Array.isArray(value) ? value.slice() : value;
+  });
+
+  return sortedKeys(out);
+}
+
+// ---------------------------------------------------------------------------
+// The cookie jar
+// ---------------------------------------------------------------------------
+
+/**
+ * A cookie jar keyed by identity, plus the login flow that populates it.
+ *
+ * This reproduces the pattern the suite's own request helper uses - file the
+ * `set-cookie` of a response against the active identity, replay only its
+ * name=value pair on that identity's later requests, and send a `referer` of
+ * the configured url on everything - rather than importing it. That helper
+ * requires the application at its top, which would pull the entry point into
+ * this process and break the two-worktree model outright. It is a pattern
+ * reference, not a dependency.
+ *
+ * Sessions are established by driving the REAL login, never by forging a
+ * cookie: maxCookieSize is 0, so session state lives on the server and a forged
+ * cookie could not work even in principle, and the login flow is itself part of
+ * the surface under comparison.
+ *
+ * @param {Object} context {baseUrl, referer, timeoutMs}
+ * @constructor
+ */
+function Jar(context) {
+  this.baseUrl = context.baseUrl;
+  this.referer = context.referer;
+  this.timeoutMs = context.timeoutMs;
+
+  this.cookies = {};
+  this.established = {};
+  this.failures = {};
+
+  IDENTITIES.forEach(function(name) {
+    this.cookies[name] = [];
+  }, this);
+}
+
+/**
+ * The Cookie header for an identity, or null when it holds none.
+ *
+ * Only the name=value pair of each stored cookie is replayed, which is what a
+ * browser sends; replaying the attributes would produce a malformed header.
+ *
+ * @param {string} identity
+ * @returns {(string|null)}
+ */
+Jar.prototype.header = function(identity) {
+  var stored = this.cookies[identity] || [];
+
+  if (!stored.length) {
+    return null;
+  }
+
+  return stored.map(function(entry) {
+    return String(entry).split(';')[0];
+  }).join('; ');
+};
+
+/**
+ * Files any Set-Cookie from a response against the identity that made the
+ * request, replacing a cookie of the same name rather than appending, so a
+ * rotated session id does not accumulate duplicates a server would then have to
+ * disambiguate.
+ *
+ * @param {string} identity
+ * @param {Object} response a record from `drive`
+ * @returns {undefined}
+ */
+Jar.prototype.absorb = function(identity, response) {
+  var stored;
+  var incoming = (response && response.rawSetCookie) || [];
+
+  if (!incoming.length) {
+    return;
+  }
+
+  stored = this.cookies[identity] || [];
+
+  incoming.forEach(function(entry) {
+    var name = String(entry).split('=')[0];
+    var replaced = false;
+
+    stored = stored.map(function(existing) {
+      if (String(existing).split('=')[0] !== name) {
+        return existing;
+      }
+
+      replaced = true;
+      return entry;
+    });
+
+    if (!replaced) {
+      stored.push(entry);
+    }
+  });
+
+  this.cookies[identity] = stored;
+};
+
+/**
+ * Discards an identity's cookies, so its next request starts a fresh session.
+ *
+ * @param {string} identity
+ * @returns {undefined}
+ */
+Jar.prototype.reset = function(identity) {
+  this.cookies[identity] = [];
+  this.established[identity] = false;
+};
+
+/**
+ * Drives one request as an identity, filing the cookies it returns.
+ *
+ * @param {string} identity
+ * @param {Object} spec {method, target, accept, headers, payload, contentType}
+ * @param {number} [timeoutMs]
+ * @returns {Promise<Object>} {response, sent}
+ */
+Jar.prototype.request = async function(identity, spec, timeoutMs) {
+  var encoded = encodePayload(spec.payload, spec.contentType);
+  var cookie = this.header(identity);
+  var headers = {
+    // The shape the suite's own requests have, so a replayed request is the
+    // same kind of request the assertions were written against. Several
+    // handlers read `request.headers.referer` into the view metrics they
+    // persist, which makes it part of the behaviour rather than decoration.
+    referer: this.referer,
+    accept: spec.accept || ACCEPT_HTML,
+    // Identity encoding, so a body digest is over the bytes the application
+    // produced rather than over whatever compression negotiated.
+    'accept-encoding': 'identity',
+    'user-agent': USER_AGENT
+  };
+  var response;
+
+  if (cookie) {
+    headers.cookie = cookie;
+  }
+
+  Object.keys(spec.headers || {}).forEach(function(key) {
+    headers[key.toLowerCase()] = spec.headers[key];
+  });
+
+  response = await drive({
+    baseUrl: this.baseUrl,
+    method: spec.method,
+    target: spec.target,
+    headers: headers,
+    body: encoded.body,
+    contentType: encoded.contentType
+  }, timeoutMs === undefined || timeoutMs === null ? this.timeoutMs : timeoutMs);
+
+  this.absorb(identity, response);
+
+  return {
+    response: response,
+    sent: {
+      method: spec.method,
+      target: spec.target,
+      accept: headers.accept,
+      identity: identity,
+      cookiePresent: !!cookie,
+      contentType: encoded.contentType,
+      payloadEncoding: encoded.encoding
+    }
+  };
+};
+
+/**
+ * Establishes a session for one of the password identities by driving the real
+ * login form, and reports whether it landed.
+ *
+ * A successful login is a 302 whose Location ends at `/home`; the failure form
+ * of this route is a 302 back to `/login`, so the status alone cannot tell them
+ * apart and the Location is what is checked. The disabled identity is expected
+ * NOT to reach /home - its account is refused by the auth scheme on the next
+ * request - so its login is driven and its outcome recorded without being
+ * treated as a fault.
+ *
+ * @param {string} identity
+ * @param {Object} credentials {email, password}
+ * @returns {Promise<Object>} {ok, status, location, error}
+ */
+Jar.prototype.login = async function(identity, credentials) {
+  var driven = await this.request(identity, {
+    method: 'POST',
+    target: '/login',
+    accept: ACCEPT_HTML,
+    payload: { email: credentials.email, password: credentials.password }
+  });
+  var response = driven.response;
+  var location = response.ok && response.headers
+    ? String(response.headers.location || '')
+    : '';
+  var landed = /\/home$/.test(location);
+
+  this.established[identity] = landed;
+
+  if (!landed) {
+    this.failures[identity] = 'POST /login answered ' +
+      (response.ok ? response.status + ' -> ' + (location || '(no Location)')
+                   : response.error);
+  }
+
+  return {
+    ok: landed,
+    status: response.ok ? response.status : null,
+    location: location,
+    error: response.ok ? null : response.error
+  };
+};
+
+// ---------------------------------------------------------------------------
+// Difference records
+// ---------------------------------------------------------------------------
+
+/**
+ * One difference, in the shape the report and the result document both use.
+ *
+ * Four fields are required of every difference - the scenario id, the route,
+ * the field, and the two values - plus the step, because a sequence has more
+ * than one request and "which one" is the first thing a reviewer asks.
+ *
+ * @param {string} field
+ * @param {*} baseline
+ * @param {*} target
+ * @param {Object} [extra] further named context
+ * @returns {Object}
+ */
+function difference(field, baseline, target, extra) {
+  var record = {
+    field: field,
+    baseline: excerpt(baseline),
+    target: excerpt(target)
+  };
+
+  Object.keys(extra || {}).forEach(function(key) {
+    record[key] = extra[key];
+  });
+
+  return record;
+}
+
+/**
+ * An observation: something worth reporting that is NOT a gate field.
+ *
+ * Exactly two things reach here, and both are inside the volatile set: coarse
+ * timing, where a case that moved from under a second to over ten is worth
+ * seeing even though the value is a clock read, and a field whose exactness was
+ * given up for this one comparison because normalization had to touch the body
+ * it derives from. Nothing else may be reported this way - an observation is
+ * not a soft failure, and there is no mode in which one affects the verdict.
+ *
+ * @param {string} field
+ * @param {*} baseline
+ * @param {*} target
+ * @param {string} reason
+ * @returns {Object}
+ */
+function observation(field, baseline, target, reason) {
+  return {
+    field: field,
+    baseline: excerpt(baseline),
+    target: excerpt(target),
+    reason: reason
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Header comparison
+// ---------------------------------------------------------------------------
+
+/**
+ * A content type with its charset parameter removed.
+ *
+ * @param {*} value
+ * @returns {(string|null)}
+ */
+function typeWithoutCharset(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  return String(value)
+    .split(';')
+    .filter(function(part) {
+      return !/^\s*charset\s*=/i.test(part);
+    })
+    .join(';')
+    .replace(/\s+$/, '');
+}
+
+/**
+ * A header value in a comparable form: normalized through the volatile set,
+ * with an array kept as an array so a repeated header cannot compare equal to a
+ * single one.
+ *
+ * @param {*} value
+ * @returns {*}
+ */
+function comparableHeader(value) {
+  if (Array.isArray(value)) {
+    return value.map(function(entry) {
+      return normalized(entry);
+    });
+  }
+
+  return normalized(value);
+}
+
+/**
+ * Compares two header bags exactly, field by field.
+ *
+ * EVERY header is compared, not only the ones the contract names: the named
+ * ones lead the report, and the rest are compared with the same rigour, because
+ * a header that appeared or vanished is a behaviour change whether or not
+ * anyone thought to name it. Three rules bend, each declared in the volatile
+ * set and nowhere else:
+ *
+ *   * a header in `VOLATILE_HEADERS` is dropped from both sides;
+ *   * a header in `PRESENCE_ONLY_HEADERS` is compared for presence only;
+ *   * `content-length` is compared exactly only when normalization touched
+ *     neither body, because a normalized id or timestamp of a different length
+ *     changes the byte count without changing behaviour. When it is not
+ *     comparable it becomes an observation, and the body is compared in full
+ *     regardless, so nothing is lost.
+ *
+ * The four error-page headers are compared like any other, which is the correct
+ * treatment of the branch behaviour: app.js's first onPreResponse extension
+ * returns early on 401/404/403/>=500 for a browser HTML request, so those
+ * responses carry none of them and both sides agree on their absence, while a
+ * 400 Boom and every non-Boom response carry all of them and both sides agree
+ * on their values. Asserting the branch rule directly would encode a second
+ * copy of the application's logic; comparing every response against its own
+ * recorded baseline tests the same thing without one.
+ *
+ * A fourth rule applies to the derived secure pass only, and only to
+ * `set-cookie`: that pass exists to change exactly the attribute suffix of that
+ * one header, so its string form is compared for count while its attributes are
+ * compared one by one through the cookie comparator, with the two documented
+ * moves applied. Nothing is lost - the attributes ARE the header.
+ *
+ * @param {Object} baseline recorded headers
+ * @param {Object} target observed headers
+ * @param {Object} context {normalizationApplied, differential}
+ * @returns {Object} {differences, observations}
+ */
+function compareHeaders(baseline, target, context) {
+  var differences = [];
+  var observations = [];
+  var names = {};
+  var ordered;
+
+  Object.keys(baseline || {}).forEach(function(name) { names[name] = true; });
+  Object.keys(target || {}).forEach(function(name) { names[name] = true; });
+
+  // The named headers first, then everything else alphabetically, so the report
+  // leads with the contract.
+  ordered = NAMED_HEADERS.filter(function(name) {
+    return names[name];
+  }).concat(Object.keys(names).sort().filter(function(name) {
+    return NAMED_HEADERS.indexOf(name) === -1;
+  }));
+
+  ordered.forEach(function(name) {
+    var left = baseline ? baseline[name] : undefined;
+    var right = target ? target[name] : undefined;
+    var leftValue;
+    var rightValue;
+
+    if (VOLATILE_HEADERS.indexOf(name) >= 0) {
+      return;
+    }
+
+    if (PRESENCE_ONLY_HEADERS.indexOf(name) >= 0) {
+      if ((left === undefined) !== (right === undefined)) {
+        differences.push(difference('header.' + name + '.present',
+          left !== undefined, right !== undefined, {
+            note: 'compared for presence only; its value is inside the ' +
+              categoryForHeader(name) + ' category of the volatile set'
+          }));
+      }
+      return;
+    }
+
+    if (name === 'content-type') {
+      leftValue = typeWithoutCharset(left);
+      rightValue = typeWithoutCharset(right);
+
+      if (leftValue !== rightValue) {
+        differences.push(difference('content-type', leftValue, rightValue, {
+          note: 'compared without the charset parameter'
+        }));
+      }
+      else if (String(left) !== String(right)) {
+        observations.push(observation('content-type.charset', left, right,
+          'the media type is identical and the charset parameter is excluded ' +
+          'from the comparison by the contract'));
+      }
+      return;
+    }
+
+    if (name === 'set-cookie' && context.differential) {
+      if ((Array.isArray(left) ? left.length : 0) !==
+          (Array.isArray(right) ? right.length : 0)) {
+        differences.push(difference('header.set-cookie.count',
+          Array.isArray(left) ? left.length : 0,
+          Array.isArray(right) ? right.length : 0));
+      }
+      else {
+        observations.push(observation('header.set-cookie', left, right,
+          'the secure pass changes exactly this header\'s attribute suffix, ' +
+          'so its string form is compared for count here and its attributes ' +
+          'are compared one by one against the documented differential'));
+      }
+      return;
+    }
+
+    if (name === 'content-length' && context.normalizationApplied) {
+      if (String(left) !== String(right)) {
+        observations.push(observation('content-length', left, right,
+          'not comparable for this response: normalization touched the body ' +
+          'it counts (' + context.normalizationApplied + '). The body itself ' +
+          'is compared in full.'));
+      }
+      return;
+    }
+
+    leftValue = comparableHeader(left);
+    rightValue = comparableHeader(right);
+
+    if (JSON.stringify(leftValue) !== JSON.stringify(rightValue)) {
+      differences.push(difference('header.' + name, leftValue, rightValue));
+    }
+  });
+
+  return { differences: differences, observations: observations };
+}
+
+// ---------------------------------------------------------------------------
+// The framework's own suppression of cookies on a 500
+// ---------------------------------------------------------------------------
+
+// The literal source of the rule below, quoted so a reader does not have to go
+// looking for it, and so a framework bump that removes it makes this comment
+// visibly stale. node_modules/@hapi/hapi/lib/headers.js, `exports.state`:
+//
+//     const clearOnly = response._error?.output.statusCode === 500;
+//     for (const name in request._states) {
+//         if (!clearOnly ||
+//             (request._states[name].options?.ttl === 0 &&
+//              request._core.states.cookies[name])) {
+//             states.push(request._states[name]);
+//         }
+//     }
+//
+// hapi 20.3.0's headers.js has no such branch: it pushes every entry of
+// `request._states` unconditionally. So a state set from an onPreResponse
+// extension - which is exactly how @hapi/yar commits a session - reaches the
+// wire on a 500 under hapi 20 and does not under hapi 21, unless it is a
+// cookie CLEAR.
+//
+// THE PREDICATE IS THE FRAMEWORK'S OWN, AND IT IS WIDER THAN "A RAW BOOM 500".
+// `response._error` is set on any response built from an error - a handler that
+// threw, a handler that returned a Boom, AND the rebuild hapi performs when
+// marshalling fails - so all three lose the header. A 500 that a later
+// extension REPLACES with its own response carries no `_error`, which is why
+// the application's rendered 50x.html pages keep the cookie.
+//
+// THIS EXEMPTION IS A RULE, NOT A MARKER, AND ITS AUTHORITY IS THE REGISTER
+// NAMED IN `register` BELOW. It demotes a field on any response meeting that
+// predicate; the approved-deviation allowlist elsewhere in this file stays
+// exactly one scenario id and is a different mechanism. Neither may be minted
+// by a tool: a rule whose register entry does not exist has no authority at
+// all, which is why the pointer is carried in the constant, emitted into every
+// artifact and printed in the report rather than left in this comment.
+var FRAMEWORK_COOKIE_SUPPRESSION = Object.freeze({
+  id: 'hapi21-500-clear-only-states',
+  framework: '@hapi/hapi 21.x lib/headers.js exports.state',
+  register: 'docs/preserved-quirks.md 12.1 - "hapi 21 emits only cookie ' +
+    'CLEARS on a response carrying a 500 error", the single entry of that ' +
+    'document\'s section 12 register of framework-imposed divergences. That ' +
+    'entry owns the decision, the T-6 conflict argument and the ' +
+    'classification; this constant carries the mechanism and must agree with ' +
+    'it field for field.',
+  measurement: 'One server containing no repository code - a state set from an ' +
+    'onPreResponse extension, eight paths, and a second extension that ' +
+    'replaces the Boom with a rendered page for one of them - run under Node ' +
+    '22.23.2 against both majors, each from its own installation. Set-Cookie ' +
+    'names emitted, hapi 20.3.0 then hapi 21.4.10: /ok 200 probe, probe; ' +
+    '/throw (handler threw) 500 probe, NONE; /boom (returned Boom) 500 ' +
+    'probe, NONE; /marshal (JSON marshalling failed AFTER onPreResponse) 500 ' +
+    'probe, NONE; /notfound 404 probe, probe; /badrequest 400 probe, probe; ' +
+    '/replaced (Boom 500 replaced by a rendered page in a later extension) ' +
+    '500 probe, probe; /clear (a set plus a ttl-0 clear on a 500) 500 ' +
+    'probe+clearme, clearme only. So hapi 21 drops the set on a thrown 500 ' +
+    'and on a marshal-time 500 as well as on a returned Boom, and a cookie ' +
+    'CLEAR always survives. The branch condition is therefore the ' +
+    'framework\'s own predicate - any response whose _error.output.statusCode ' +
+    'is 500 - and not "a raw Boom 500"; a 500 a later extension REPLACES ' +
+    'carries no _error, which is why /replaced keeps its cookie and why the ' +
+    'application\'s rendered 50x.html pages are unaffected.',
+  why: 'The suppression is deliberate upstream behaviour - a server error ' +
+    'should not set cookies - and it is hardcoded in the framework\'s header ' +
+    'path with no per-server, per-route or per-state option to disable it. ' +
+    'The AAP requires @hapi/hapi 21.4.10 (0.5.1) AND exact Set-Cookie parity ' +
+    '(0.9.3); on a 500 carrying a session write the two cannot both hold. ' +
+    'AAP rule T-6 governs that shape - name the conflict, decide which ' +
+    'requirement controls, record it, align the quirk record and the gate - ' +
+    'and the decision lives in the register named above, not here: R-d\'s ' +
+    'preservation of the baseline header yields to the mandated framework ' +
+    'version, and no state is re-attached on 5xx. Preserving the header would ' +
+    'mean re-appending a Set-Cookie onto 5xx responses from app.js\'s ' +
+    'onPreResponse - authored behaviour that defeats a security change and ' +
+    'that no AAP requirement describes. For the marshal-time subset it is not ' +
+    'implementable at all: onPreResponse runs exactly once and sees a ' +
+    'response whose isBoom is false, and the 500 that reaches the wire is ' +
+    'built afterwards by internals.fail in node_modules/@hapi/hapi/lib/' +
+    'transmit.js (the catch at :17-35 calls it, the rebuild is at :46-70), ' +
+    'which re-runs the marshal cycle and not the request lifecycle - measured ' +
+    'on the wire, where a header that extension set does not appear.',
+  costs: 'Nothing the application decides, and - measured rather than ' +
+    'reasoned, because the intuitive answer is the wrong way round - nothing ' +
+    'a client loses. yar\'s commit re-sets the SAME session id it received - ' +
+    '`h.state(name, {id: this.id})` on a repeat visit - so the header the ' +
+    'baseline emitted carried the value and attributes the client already ' +
+    'holds. The server-side half of the commit is unaffected: the store write ' +
+    'follows the h.state call and happens in both trees, so a flash cleared ' +
+    'on a 500 is cleared in both. THERE IS NO EXPIRES HORIZON ON A 500 HEADER ' +
+    'TO LOSE: of the 13 recorded application/json 500 steps in the committed ' +
+    'corpus that carry a baseline cookie, all 13 carry the attribute set ' +
+    'httponly|path|samesite and NOT ONE carries Expires or Max-Age, and the ' +
+    'five rendered text/html 500s are identical in that respect - the ' +
+    'baseline repeated a SESSION-cookie header on a 500, never a persistent ' +
+    'one. Read from Chrome\'s own store through the Cookie Store API, against ' +
+    'a 25-line standalone server holding no repository code: a record stored ' +
+    'persistently from Expires=<+1y> is left exactly as held by a 500 that ' +
+    'sends no Set-Cookie, and is downgraded to session-only (expires: null) ' +
+    'by a 500 that repeats the same cookie WITHOUT Expires, which is the ' +
+    'baseline\'s exact shape; the cookie is still sent in both cases. So ' +
+    'where the two majors differ for a client at all, this suppression ' +
+    'PRESERVES a held expiry and the baseline\'s header DISCARDS it. The ' +
+    'practical cost is nil in either direction because only the ' +
+    'session-establishing response carries the attribute and the very next ' +
+    'authenticated 200 re-sets the same cookie without it. A 404 and a 400 ' +
+    'keep the header entirely, as the measurement above shows.',
+  retained: 'Measured over the committed corpus: 392 scenarios, 404 recorded ' +
+    'steps, 231 of them carrying at least one recorded Set-Cookie. The 24 ' +
+    'status-500 steps are 13 application/json 500s carrying a baseline ' +
+    'cookie - the only steps where this rule can fire - plus 6 ' +
+    'application/json 500s with no baseline cookie, so nothing to demote, ' +
+    'plus 5 text/html 500s carrying a cookie, which are the rendered pages ' +
+    'the predicate does not reach and are compared exactly. So 218 of the 231 ' +
+    'cookie-bearing steps are compared EXACTLY, including all 39 ' +
+    'cookie-bearing steps among the 65 redirects, and the rule reaches 13. ' +
+    'The Expires-horizon assertion that detects the private-field patch going ' +
+    'silently no-op (AAP 0.9.6) is therefore retained in full, because it ' +
+    'runs on non-500 responses. A cookie CLEAR is never demoted, because hapi ' +
+    '21 keeps clears on a 500, so a logout that stopped clearing its cookie ' +
+    'still fails. Read those figures as the GATE\'S exposure and not as the ' +
+    'behaviour\'s bound: the SCOPE of the divergence is the framework ' +
+    'predicate - every response carrying a 500 error, on any route - so 13 is ' +
+    'a count of corpus steps this run can demote, never a count of affected ' +
+    'routes.'
+});
+
+// The register document the exemption above defers to, resolved from THIS
+// FILE's own location and never from the working directory. The distinction is
+// the whole point of the check below: a cwd-relative read passes when the tool
+// happens to be driven from the repository root and silently finds nothing
+// when it is driven from anywhere else, which would turn a fail-closed
+// precondition into a coin toss decided by the caller's shell.
+var REGISTER_DOCUMENT = path.join(TOOL_ROOT, 'docs', 'preserved-quirks.md');
+
+// What the register has to actually contain for the exemption to have the
+// authority it claims. The section heading proves the register exists, the
+// entry heading proves THIS divergence is the one it registered, the rule id
+// inside that entry's own body proves the entry and the constant are talking
+// about the same rule, and the length floor rejects an entry reduced to a
+// heading - which would satisfy every string search while approving nothing.
+var REGISTER_ANCHORS = Object.freeze({
+  relativePath: 'docs/preserved-quirks.md',
+  section: '## 12. The register of framework-imposed divergences',
+  entry: '### 12.1 hapi 21 emits only cookie CLEARS on a response carrying ' +
+    'a 500 error',
+  minimumEntryLength: 2000
+});
+
+/**
+ * Verifies that the register a framework exemption cites actually exists and
+ * actually registers that rule, and THROWS if it does not.
+ *
+ * This closes the gap between what the exemption's own comment asserts - that a
+ * rule whose register entry does not exist has no authority at all - and what
+ * the tool previously did about it, which was nothing: the pointer was carried
+ * in the constant, emitted into every artifact and printed in the report, and
+ * never once read. A rule that demotes real difference records on the strength
+ * of an unread citation is a rule that can outlive the argument that approved
+ * it, and the failure is silent in the direction that matters, because a
+ * missing register makes the exemption look MORE authoritative in the artifact
+ * (it names a document) rather than less.
+ *
+ * Pure, and parameterised on its reader, so every failure branch can be
+ * exercised in memory with no temporary file and no filesystem damage.
+ *
+ * @param {Object} rule the exemption constant, needing `id` and `register`
+ * @param {string} documentPath absolute path of the register document
+ * @param {Function} read reader taking a path and returning the document text
+ * @param {Object} anchors {relativePath, section, entry, minimumEntryLength}
+ * @returns {Object} {documentPath, register, id, entryLength}
+ * @throws {ToolError} If the pointer is absent, points elsewhere, or the
+ *   document does not carry the section, the entry, the rule id or a body.
+ */
+function verifyRegisterAuthority(rule, documentPath, read, anchors) {
+  var register;
+  var text;
+  var entryAt;
+  var nextSectionAt;
+  var body;
+
+  if (!rule || typeof rule.id !== 'string' || !rule.id.trim()) {
+    throw new ToolError('a framework exemption carries no rule id, so there ' +
+      'is nothing to look up in a register. An exemption that removes ' +
+      'difference records must name both the rule and the entry that ' +
+      'approved it.');
+  }
+
+  register = typeof rule.register === 'string' ? rule.register.trim() : '';
+
+  if (!register) {
+    throw new ToolError('the framework exemption ' + JSON.stringify(rule.id) +
+      ' carries no register pointer. Its own contract is that a rule whose ' +
+      'register entry does not exist has no authority at all, so it may not ' +
+      'demote a difference on the strength of a pointer nobody wrote.');
+  }
+
+  if (register.indexOf(anchors.relativePath) === -1) {
+    throw new ToolError('the framework exemption ' + JSON.stringify(rule.id) +
+      ' points at a register this check does not read: its pointer does not ' +
+      'name ' + anchors.relativePath + ', which is the document verified ' +
+      'here. The pointer and the check must name one document, or the ' +
+      'pointer can drift onto a file nothing validates.');
+  }
+
+  try {
+    text = read(documentPath);
+  } catch (err) {
+    throw new ToolError('the register the framework exemption ' +
+      JSON.stringify(rule.id) + ' cites cannot be read at ' + documentPath +
+      ' (' + ((err && err.message) || String(err)) + '). The exemption ' +
+      'removes real difference records, so its register is a precondition of ' +
+      'running rather than a citation to be taken on trust.');
+  }
+
+  if (typeof text !== 'string' || !text.length) {
+    throw new ToolError('the register at ' + documentPath + ' is empty, so ' +
+      'the framework exemption ' + JSON.stringify(rule.id) + ' is authorized ' +
+      'by nothing.');
+  }
+
+  if (text.indexOf(anchors.section) === -1) {
+    throw new ToolError('the register at ' + documentPath + ' does not carry ' +
+      'the section heading ' + JSON.stringify(anchors.section) + ', so the ' +
+      'register of framework-imposed divergences the exemption ' +
+      JSON.stringify(rule.id) + ' cites does not exist in it.');
+  }
+
+  entryAt = text.indexOf(anchors.entry);
+
+  if (entryAt === -1) {
+    throw new ToolError('the register at ' + documentPath + ' does not carry ' +
+      'the entry ' + JSON.stringify(anchors.entry) + '. The register exists ' +
+      'but this divergence is not the one it registered, which is exactly ' +
+      'the drift the pointer is supposed to make impossible.');
+  }
+
+  nextSectionAt = text.indexOf('\n## ', entryAt);
+  body = nextSectionAt === -1 ? text.slice(entryAt) :
+    text.slice(entryAt, nextSectionAt);
+
+  if (body.indexOf(rule.id) === -1) {
+    throw new ToolError('the register entry at ' + documentPath + ' does not ' +
+      'name the rule id ' + JSON.stringify(rule.id) + ' anywhere in its own ' +
+      'body. A heading that matches while the entry describes a differently ' +
+      'keyed rule is a pointer to the wrong argument.');
+  }
+
+  if (body.length < anchors.minimumEntryLength) {
+    throw new ToolError('the register entry for ' + JSON.stringify(rule.id) +
+      ' at ' + documentPath + ' carries almost no body (' + body.length +
+      ' characters, floor ' + anchors.minimumEntryLength + '). A heading ' +
+      'satisfies every string search above while approving nothing, so an ' +
+      'entry emptied out is treated as an entry absent.');
+  }
+
+  return {
+    documentPath: documentPath,
+    register: register,
+    id: rule.id,
+    entryLength: body.length
+  };
+}
+
+/**
+ * Verifies the delivered exemption against the delivered register, and proves
+ * the verification fails closed, at startup.
+ *
+ * Deliberately SEPARATE from `assertFrameworkCookieSuppression`, which probes
+ * the rule's firing conditions. The two answer different questions - "does the
+ * mechanism still behave as declared" and "is the mechanism still authorized" -
+ * and a run can fail either one on its own, so collapsing them would hide
+ * which. This one runs FIRST, because probing the conditions of a rule nobody
+ * approved is work in the wrong order.
+ *
+ * The negative probes construct their own document text and their own rule
+ * objects in memory; nothing on disk is written or moved.
+ *
+ * @returns {Object} the verification record, with its probe results
+ * @throws {ToolError} If the delivered pair does not verify, or if any failure
+ *   branch stopped rejecting what it exists to reject.
+ */
+function assertRegisterAuthority() {
+  var anchors = REGISTER_ANCHORS;
+  var rule = FRAMEWORK_COOKIE_SUPPRESSION;
+
+  function readFromDisk(target) {
+    return fs.readFileSync(target, 'utf8');
+  }
+
+  function reader(text) {
+    return function() {
+      return text;
+    };
+  }
+
+  var verified = verifyRegisterAuthority(rule, REGISTER_DOCUMENT,
+    readFromDisk, anchors);
+  var text = readFromDisk(REGISTER_DOCUMENT);
+  var entryAt = text.indexOf(anchors.entry);
+  var afterEntry = text.indexOf('\n## ', entryAt);
+  var probes = [
+    {
+      id: 'rejects-a-rule-with-no-id',
+      because: 'an exemption with no id names nothing a register could ' +
+        'approve',
+      expect: 'carries no rule id',
+      run: function() {
+        return verifyRegisterAuthority({ id: '  ', register: rule.register },
+          REGISTER_DOCUMENT, readFromDisk, anchors);
+      }
+    },
+    {
+      id: 'rejects-a-blank-register-pointer',
+      because: 'a blank pointer is the case the constant\'s own comment says ' +
+        'has no authority at all',
+      expect: 'carries no register pointer',
+      run: function() {
+        return verifyRegisterAuthority({ id: rule.id, register: '   ' },
+          REGISTER_DOCUMENT, readFromDisk, anchors);
+      }
+    },
+    {
+      id: 'rejects-a-pointer-naming-a-document-this-check-does-not-read',
+      because: 'a pointer and a check that name different documents leave the ' +
+        'cited one unvalidated',
+      expect: 'points at a register this check does not read',
+      run: function() {
+        return verifyRegisterAuthority(
+          { id: rule.id, register: 'docs/somewhere-else.md 4.2' },
+          REGISTER_DOCUMENT, readFromDisk, anchors);
+      }
+    },
+    {
+      id: 'rejects-a-register-that-cannot-be-read',
+      because: 'a deleted or renamed register must stop the run rather than ' +
+        'be assumed',
+      expect: 'cannot be read at',
+      run: function() {
+        return verifyRegisterAuthority(rule, REGISTER_DOCUMENT, function() {
+          var err = new Error('ENOENT: no such file or directory');
+          err.code = 'ENOENT';
+          throw err;
+        }, anchors);
+      }
+    },
+    {
+      id: 'rejects-a-register-without-its-section-heading',
+      because: 'the section heading is what proves the register of ' +
+        'framework-imposed divergences exists at all',
+      expect: 'does not carry the section heading',
+      run: function() {
+        return verifyRegisterAuthority(rule, REGISTER_DOCUMENT,
+          reader(text.split(anchors.section).join('## 12. Something else')),
+          anchors);
+      }
+    },
+    {
+      id: 'rejects-a-register-without-this-entry',
+      because: 'a register that exists but registered a different divergence ' +
+        'authorizes nothing here',
+      expect: 'does not carry the entry',
+      run: function() {
+        return verifyRegisterAuthority(rule, REGISTER_DOCUMENT,
+          reader(text.split(anchors.entry).join('### 12.1 something else')),
+          anchors);
+      }
+    },
+    {
+      id: 'rejects-an-entry-that-does-not-name-the-rule-id',
+      because: 'a matching heading over a differently keyed rule points at ' +
+        'the wrong argument',
+      expect: 'does not name the rule id',
+      run: function() {
+        return verifyRegisterAuthority(rule, REGISTER_DOCUMENT,
+          reader(text.split(rule.id).join('some-other-rule-id')), anchors);
+      }
+    },
+    {
+      id: 'rejects-an-entry-reduced-to-its-heading',
+      because: 'an emptied entry satisfies every string search while ' +
+        'approving nothing',
+      expect: 'carries almost no body',
+      run: function() {
+        return verifyRegisterAuthority(rule, REGISTER_DOCUMENT,
+          reader(text.slice(0, entryAt) + anchors.entry + '\n\n' + rule.id +
+            '\n' + (afterEntry === -1 ? '' : text.slice(afterEntry))),
+          anchors);
+      }
+    }
+  ];
+  var results = [];
+
+  probes.forEach(function(probe) {
+    var threw = false;
+    var message = '';
+
+    try {
+      probe.run();
+    } catch (err) {
+      threw = true;
+      message = (err && err.message) || String(err);
+    }
+
+    if (!threw) {
+      throw new ToolError('the register-authority check stopped rejecting ' +
+        JSON.stringify(probe.id) + ', and it must reject it: ' +
+        probe.because + '. A check that accepts its own failure cases is not ' +
+        'a check, and this one is the only thing standing between an ' +
+        'unapproved exemption and a demoted difference.');
+    }
+
+    if (message.indexOf(probe.expect) === -1) {
+      throw new ToolError('the register-authority check rejected ' +
+        JSON.stringify(probe.id) + ' for the wrong reason: it was expected to ' +
+        'report ' + JSON.stringify(probe.expect) + ' and reported ' +
+        JSON.stringify(message) + '. A probe that passes on an unrelated ' +
+        'failure stops covering the branch it names.');
+    }
+
+    results.push({
+      id: probe.id,
+      rejected: true,
+      because: probe.because,
+      reported: probe.expect
+    });
+  });
+
+  return {
+    id: verified.id,
+    register: verified.register,
+    documentPath: verified.documentPath,
+    documentRelativePath: anchors.relativePath,
+    entryHeading: anchors.entry,
+    entryLength: verified.entryLength,
+    resolvedFrom: 'this file\'s own directory, not the working directory',
+    probes: results
+  };
+}
+
+/**
+ * The exemption as a sidecar reader sees it, refusing to describe one whose
+ * register metadata is absent.
+ *
+ * The previous form read the two fields straight off the constant, so a rule
+ * that lost its pointer was published as an exemption pointing at `undefined` -
+ * which reads, to anything consuming the sidecar, as an exemption in force.
+ *
+ * @param {Object} rule the exemption constant
+ * @returns {Object} {id, register}
+ * @throws {ToolError} If either field is missing or blank.
+ */
+function describeFrameworkExemption(rule) {
+  var id = (rule && typeof rule.id === 'string') ? rule.id.trim() : '';
+  var register = (rule && typeof rule.register === 'string') ?
+    rule.register.trim() : '';
+
+  if (!id || !register) {
+    throw new ToolError('a framework exemption cannot be published without ' +
+      'both its rule id and its register pointer (id ' + JSON.stringify(id) +
+      ', register ' + JSON.stringify(register) + '). An artifact that names ' +
+      'an exemption and not its authority is worse than one that names ' +
+      'neither: it looks audited.');
+  }
+
+  return { id: id, register: register };
+}
+
+/**
+ * Demotes the Set-Cookie a 500 lost to the framework, and nothing else.
+ *
+ * FAILS CLOSED. Every condition below has to hold, and each one exists to stop
+ * a different real difference from being demoted with this one:
+ *
+ *   Both sides answered 500. A status change is compared before this runs and
+ *   is a difference; this rule cannot fire where the status moved.
+ *   The baseline emitted at least one cookie and the target emitted NONE.
+ *   hapi 21 suppresses every non-clear state at once, so a target that emitted
+ *   some cookies and not others is not this rule and keeps its differences.
+ *   No baseline cookie is a CLEAR. hapi 21 keeps `ttl: 0` states on a 500, so
+ *   a missing clear is a real difference - a logout, or a session reset, that
+ *   stopped taking effect.
+ *   The differences to demote are EXACTLY the three fields the absence of the
+ *   header produces: `header.set-cookie`, `cookies.count` and one
+ *   `cookie[<name>].present` per baseline cookie. Any other cookie-shaped
+ *   difference in the same step means something else changed too, and the
+ *   whole demotion is declined rather than applied selectively.
+ *
+ * @param {Object} baseline the recorded response
+ * @param {Object} observed the response just driven
+ * @param {Array.<Object>} differences the records produced so far
+ * @returns {Object} {applies, demoted, observations}
+ */
+function frameworkCookieSuppression(baseline, observed, differences) {
+  var declined = { applies: false, demoted: [], observations: [] };
+  var recorded = baseline.setCookies || [];
+  var seen = observed.setCookies || [];
+  var expected;
+  var cookieFields;
+
+  if (baseline.status !== 500 || observed.status !== 500) {
+    return declined;
+  }
+
+  if (!recorded.length || seen.length) {
+    return declined;
+  }
+
+  if (recorded.some(isCookieClear)) {
+    return declined;
+  }
+
+  expected = ['header.set-cookie', 'cookies.count'].concat(
+    recorded.map(function(entry) {
+      return 'cookie[' + entry.name + '].present';
+    }));
+
+  cookieFields = differences.map(function(record) {
+    return record.field;
+  }).filter(function(field) {
+    return field === 'header.set-cookie' || field === 'cookies.count' ||
+      field.indexOf('cookie[') === 0;
+  });
+
+  // Set equality in both directions: every field the absence produces must be
+  // present, and no cookie-shaped field beyond them may be.
+  if (cookieFields.length !== expected.length ||
+      expected.some(function(field) {
+        return cookieFields.indexOf(field) === -1;
+      })) {
+    return declined;
+  }
+
+  return {
+    applies: true,
+    demoted: expected,
+    observations: [observation('cookies.suppressed-on-500',
+      recorded.map(function(entry) {
+        return entry.name;
+      }).join(', '), '(none)',
+      'the framework suppressed it, not the application: ' +
+      FRAMEWORK_COOKIE_SUPPRESSION.framework + ' emits only cookie CLEARS ' +
+      'when the response is a 500 error, and hapi 20.3.0 emitted all of them. ' +
+      FRAMEWORK_COOKIE_SUPPRESSION.measurement + ' ' +
+      FRAMEWORK_COOKIE_SUPPRESSION.costs + ' Every condition this demotion ' +
+      'required is in frameworkCookieSuppression, and a cookie clear is ' +
+      'never demoted.')]
+  };
+}
+
+/**
+ * Whether a recorded Set-Cookie is a CLEAR rather than a set.
+ *
+ * Three shapes, because a clear is written differently by different code: an
+ * empty value, `Max-Age=0`, or an `Expires` in the past. `parseSetCookie`
+ * reduces `expires` to the literal `present` and keeps the horizon in whole
+ * days, so a past date arrives here as a non-positive `expiresInDays`.
+ *
+ * @param {Object} entry as `parseSetCookie` produced
+ * @returns {boolean}
+ */
+function isCookieClear(entry) {
+  var attributes = (entry && entry.attributes) || {};
+
+  return !entry || entry.valueLength === 0 ||
+    String(attributes['max-age']) === '0' ||
+    (entry.expiresInDays !== null && entry.expiresInDays !== undefined &&
+      entry.expiresInDays <= 0);
+}
+
+// ---------------------------------------------------------------------------
+// THE HELD-BACK SHORT CODE, RECONCILED PAIRWISE
+// ---------------------------------------------------------------------------
+//
+// WHAT THIS IS. The `generated trinket short code` rule in VOLATILE_SET rewrites
+// a minted code to `<generated-shortcode>` on BOTH sides of every comparison,
+// which is what lets a scenario create a trinket without reporting the code it
+// happened to draw. That rule ends with a deliberate exemption:
+//
+//     if (SEEDED_SHORT_CODES[match.toLowerCase()] || /^\d{10,12}$/.test(match))
+//
+// an all-digit token is left alone, because ten to twelve decimal digits is
+// also the shape of an epoch-seconds or epoch-millis reading and an
+// UNANCHORED text rule has no business rewriting one. That reasoning is sound
+// and the rule is not changed here.
+//
+// THE HOLE IT LEAVES, MEASURED. `hashify` [lib/models/trinket.js:119-120] mints
+// sha1(seed + Date.now()).substring(0, 10) - ten characters of hexadecimal - so
+// (10/16)^10, about one code in a hundred and ten, comes out all digits and is
+// held back by the exemption while its counterpart on the other side comes out
+// with a letter in it and is normalized. The pair then differs by placeholder
+// against digits and nothing else. MEASURED across four runs of one unchanged
+// tree: run `v1` reported no such difference, run `v2` reported
+// `route.post.api-courses-{courseId}/lessons/{lessonId}/materials/{materialId}
+// /feedback` `body.json.data.comments[1].trinketShortCode` as
+// `string:<generated-shortcode>` against `string:8196599281`, and generation
+// run `a1` reported `route.post.api-trinkets-{trinketId}-grant.json`
+// `body.json.shortCode` the same way. Ten decimal digits, no letters, so the
+// exemption fired; twelve hex characters in the recorded body, so the rule
+// fired there. Nothing about the application changed between those runs.
+//
+// WHY IT IS RECONCILED HERE AND NOT IN THE VOLATILE SET. Two reasons, and the
+// second is the one that matters.
+//
+//   1. VOLATILE_SET is closed at the six categories AAP 0.9.3 enumerates and
+//      is not this worker's to widen. Its rules are also SINGLE-SIDED - each
+//      one sees one string - so no rule inside it can express "this digit run
+//      is a short code BECAUSE the other side carries the placeholder in the
+//      same position", which is exactly the evidence that makes the rewrite
+//      safe. A single-sided rule strong enough to close the hole would have to
+//      rewrite every 10-to-12-digit run in every body, which is the epoch
+//      reading the exemption was written to protect.
+//   2. So the reconciliation is PAIRWISE and runs after the comparators, in
+//      the same place and for the same reason as `frameworkCookieSuppression`:
+//      it is decided by both sides together and it removes difference records
+//      the comparators have already produced.
+//
+// IT FAILS CLOSED. `heldBackShortCodePair` splits both values on the combined
+// token expression and requires:
+//
+//   the LITERAL text around every token to be identical, character for
+//   character, so a pair that differs anywhere else keeps its difference;
+//   the two token counts to be equal, so a value that gained or lost a code is
+//   a difference;
+//   every token pair to be either equal or exactly {placeholder, all-digit run
+//   of 10 to 12}, so two differing epoch readings at the same position - the
+//   case the exemption exists for - are NOT reconciled, because neither side
+//   carries the placeholder;
+//   at least one pair to be an actual placeholder-against-digits
+//   reconciliation, so this never fires on a pair that matched anyway.
+//
+// The placeholder on one side is the whole of the evidence: it is written only
+// by the committed rule, only over a code that rule recognised, and
+// `assertHeldBackShortCodeReconciliation` re-measures that binding on every
+// run so a change to the committed rule fails the probe rather than silently
+// widening this one.
+//
+// WHAT IS LOST. The literal value of a minted short code, in the one position
+// where the committed rule had already given it up on the other side - so
+// nothing this gate was still comparing. Length is not lost: a code that
+// changed from ten characters to twelve is normalized to one placeholder by
+// the committed rule on both sides already, which is that rule's documented
+// intent, and the length change itself is registered as a deviation elsewhere.
+// Everything around the code - the key it hangs off, the href it sits in, the
+// surrounding markup and prose - is still compared exactly, because the
+// literal parts have to match for this to fire at all.
+
+/**
+ * The placeholder the committed short-code rule writes.
+ *
+ * Declared here rather than read out of VOLATILE_SET because the rule's
+ * `replace` is a function, not a literal, so there is nothing to read. The
+ * binding is asserted instead - see `assertHeldBackShortCodeReconciliation`,
+ * which drives `normalizeText` over a hex code and requires this exact string
+ * back.
+ *
+ * @constant {string}
+ */
+var SHORT_CODE_PLACEHOLDER = '<generated-shortcode>';
+
+/**
+ * The reconciliation's name, as it appears in the pass document and report.
+ *
+ * @constant {string}
+ */
+var HELD_BACK_SHORT_CODE_RULE =
+  'held-back short code:all-digit mint against normalized placeholder';
+
+/**
+ * Placeholder, or an all-digit run of exactly the exempted width.
+ *
+ * ONE expression for both token kinds on purpose: splitting both sides on the
+ * same expression is what makes the token positions comparable, and a
+ * position-by-position comparison is the whole safety argument. The digit
+ * bounds are copied from the committed rule's exemption - `\d{10,12}` - so a
+ * nine-digit or thirteen-digit run is not a candidate here either.
+ *
+ * @constant {RegExp}
+ */
+var HELD_BACK_SHORT_CODE_EXPRESSION =
+  /(<generated-shortcode>|\b\d{10,12}\b)/g;
+
+/**
+ * What this pass reconciled, accumulated across its steps.
+ *
+ * Module state, like `harnessOrigin`, because `compareStep` is a pure function
+ * with nowhere to hang a tally and the accounting has to reach the pass
+ * document. Reset at the start of every pass by `resetHeldBackShortCodeTally`.
+ */
+var heldBackShortCodeTally = null;
+
+/**
+ * Starts a fresh tally for one pass.
+ *
+ * @returns {void}
+ */
+function resetHeldBackShortCodeTally() {
+  heldBackShortCodeTally = { steps: 0, tokens: 0, fields: [], entries: [] };
+}
+
+/**
+ * Records one reconciled field, for the pass document and the report.
+ *
+ * Every entry names the scenario, the step and the field, and carries both
+ * values as they were compared. There is no aggregate-only path: a
+ * reconciliation this gate cannot point at is one a reviewer cannot audit.
+ *
+ * @param {Object} record the difference record being reconciled
+ * @param {number} tokens how many token pairs were reconciled in it
+ * @param {Object} where {scenario, step, stepIndex}
+ * @returns {void}
+ */
+function recordHeldBackShortCode(record, tokens, where) {
+  if (!heldBackShortCodeTally) {
+    resetHeldBackShortCodeTally();
+  }
+
+  heldBackShortCodeTally.tokens += tokens;
+
+  if (heldBackShortCodeTally.fields.indexOf(record.field) === -1) {
+    heldBackShortCodeTally.fields.push(record.field);
+  }
+
+  heldBackShortCodeTally.entries.push({
+    scenario: (where && where.scenario) || null,
+    step: (where && where.step) || null,
+    stepIndex: (where && where.stepIndex) !== undefined ?
+      where.stepIndex : null,
+    field: record.field,
+    baseline: record.baseline,
+    target: record.target,
+    tokens: tokens
+  });
+}
+
+/**
+ * Splits a value into the literal text around its tokens, and its tokens.
+ *
+ * @param {string} value
+ * @returns {Object} {literals, tokens}
+ */
+function splitOnShortCodeTokens(value) {
+  var literals = [];
+  var tokens = [];
+  var cursor = 0;
+  var expression = new RegExp(HELD_BACK_SHORT_CODE_EXPRESSION.source, 'g');
+  var match = expression.exec(value);
+
+  while (match) {
+    literals.push(value.slice(cursor, match.index));
+    tokens.push(match[0]);
+    cursor = match.index + match[0].length;
+    match = expression.exec(value);
+  }
+
+  literals.push(value.slice(cursor));
+
+  return { literals: literals, tokens: tokens };
+}
+
+/**
+ * Whether one token pair is a held-back code against its placeholder.
+ *
+ * @param {string} baselineToken
+ * @param {string} targetToken
+ * @returns {boolean}
+ */
+function isHeldBackShortCodePair(baselineToken, targetToken) {
+  var digits = /^\d{10,12}$/;
+
+  return (baselineToken === SHORT_CODE_PLACEHOLDER &&
+      digits.test(targetToken)) ||
+    (targetToken === SHORT_CODE_PLACEHOLDER && digits.test(baselineToken));
+}
+
+/**
+ * Whether two compared values differ ONLY by held-back short codes.
+ *
+ * @param {*} baselineValue as the difference record carries it
+ * @param {*} targetValue as the difference record carries it
+ * @returns {Object} {reconciled, tokens, reason}
+ */
+function heldBackShortCodePair(baselineValue, targetValue) {
+  var declined = { reconciled: false, tokens: 0, reason: null };
+  var left;
+  var right;
+  var reconciledTokens = 0;
+  var index;
+
+  if (typeof baselineValue !== 'string' || typeof targetValue !== 'string') {
+    return { reconciled: false, tokens: 0, reason: 'not both strings' };
+  }
+
+  if (baselineValue === targetValue) {
+    return { reconciled: false, tokens: 0, reason: 'values are equal' };
+  }
+
+  // Neither side carries the placeholder, so nothing here has been recognised
+  // as a short code by the committed rule and there is no evidence to act on.
+  // This is the guard that keeps two differing epoch readings failing.
+  if (baselineValue.indexOf(SHORT_CODE_PLACEHOLDER) === -1 &&
+      targetValue.indexOf(SHORT_CODE_PLACEHOLDER) === -1) {
+    return { reconciled: false, tokens: 0, reason: 'no placeholder on either side' };
+  }
+
+  left = splitOnShortCodeTokens(baselineValue);
+  right = splitOnShortCodeTokens(targetValue);
+
+  if (left.tokens.length !== right.tokens.length) {
+    return { reconciled: false, tokens: 0, reason: 'token counts differ' };
+  }
+
+  for (index = 0; index < left.literals.length; index += 1) {
+    if (left.literals[index] !== right.literals[index]) {
+      return { reconciled: false, tokens: 0,
+        reason: 'the literal text around the tokens differs' };
+    }
+  }
+
+  for (index = 0; index < left.tokens.length; index += 1) {
+    if (left.tokens[index] === right.tokens[index]) {
+      continue;
+    }
+
+    if (!isHeldBackShortCodePair(left.tokens[index], right.tokens[index])) {
+      return { reconciled: false, tokens: 0,
+        reason: 'token ' + index + ' is not a placeholder against an ' +
+          'all-digit code' };
+    }
+
+    reconciledTokens += 1;
+  }
+
+  if (!reconciledTokens) {
+    return declined;
+  }
+
+  return { reconciled: true, tokens: reconciledTokens, reason: null };
+}
+
+/**
+ * Removes the difference records that are held-back short codes and nothing
+ * else, and reports what it removed.
+ *
+ * @param {Array.<Object>} differences the records produced so far
+ * @param {Object} where {scenario, step, stepIndex}
+ * @returns {Object} {applies, demoted, observations}
+ */
+function heldBackShortCodeReconciliation(differences, where) {
+  var demoted = [];
+  var observations = [];
+
+  (differences || []).forEach(function(record) {
+    var verdict = heldBackShortCodePair(record.baseline, record.target);
+
+    if (!verdict.reconciled) {
+      return;
+    }
+
+    demoted.push(record);
+    recordHeldBackShortCode(record, verdict.tokens, where);
+    observations.push(observation(record.field, record.baseline, record.target,
+      'reconciled as a held-back short code: the committed `generated ' +
+      'trinket short code` rule normalized one side to ' +
+      SHORT_CODE_PLACEHOLDER + ' and its `/^\\d{10,12}$/` exemption held the ' +
+      'other side back because the code hashify minted came out all digits. ' +
+      'Every literal character around the code matched and ' + verdict.tokens +
+      ' token pair(s) were reconciled - see THE HELD-BACK SHORT CODE, ' +
+      'RECONCILED PAIRWISE for why this is decided on both sides together ' +
+      'and what it does not reconcile.'));
+  });
+
+  if (!demoted.length) {
+    return { applies: false, demoted: [], observations: [] };
+  }
+
+  if (heldBackShortCodeTally) {
+    heldBackShortCodeTally.steps += 1;
+  }
+
+  return { applies: true, demoted: demoted, observations: observations };
+}
+
+/**
+ * What the reconciliation did this pass, for the pass document and the report.
+ *
+ * @returns {Object}
+ */
+function heldBackShortCodeAccounting() {
+  var tally = heldBackShortCodeTally ||
+    { steps: 0, tokens: 0, fields: [], entries: [] };
+
+  return {
+    rule: HELD_BACK_SHORT_CODE_RULE,
+    placeholder: SHORT_CODE_PLACEHOLDER,
+    expression: String(HELD_BACK_SHORT_CODE_EXPRESSION),
+    steps: tally.steps,
+    tokens: tally.tokens,
+    fields: tally.fields.slice(),
+    entries: tally.entries.slice(),
+    note: tally.entries.length ?
+      'each entry names the scenario, the step and the field, and carries ' +
+      'both compared values; nothing was reconciled in aggregate' :
+      'nothing was reconciled this pass, which is the common case - the ' +
+      'exemption is only reached when a minted code comes out all digits'
+  };
+}
+
+/**
+ * Probes for the pairwise reconciliation, driven once at startup.
+ *
+ * The first two probes are the BINDING to the committed rule: they drive
+ * `normalizeText` itself and require that a hex code becomes exactly
+ * SHORT_CODE_PLACEHOLDER and that an all-digit code is returned untouched. If
+ * either changes, this whole mechanism has lost its evidence and the run fails
+ * here rather than reconciling on an assumption. The rest are the refusals.
+ *
+ * @constant {Array.<Object>}
+ */
+var HELD_BACK_SHORT_CODE_PROBES = Object.freeze([
+  Object.freeze({
+    name: 'the committed rule normalizes a hex code to the placeholder',
+    binding: true,
+    input: '{"shortCode":"4d8ba326326e"}',
+    expected: '{"shortCode":"' + SHORT_CODE_PLACEHOLDER + '"}'
+  }),
+  Object.freeze({
+    name: 'the committed rule holds back a ten-digit code',
+    binding: true,
+    input: '{"shortCode":"8196599281"}',
+    expected: '{"shortCode":"8196599281"}'
+  }),
+  Object.freeze({
+    name: 'the measured pair reconciles',
+    baseline: 'string:' + SHORT_CODE_PLACEHOLDER,
+    target: 'string:8196599281',
+    reconciled: true,
+    tokens: 1
+  }),
+  Object.freeze({
+    name: 'a twelve-digit mint reconciles too',
+    baseline: 'string:' + SHORT_CODE_PLACEHOLDER,
+    target: 'string:819659928123',
+    reconciled: true,
+    tokens: 1
+  }),
+  Object.freeze({
+    name: 'the placeholder on the target side reconciles as well',
+    baseline: 'string:8196599281',
+    target: 'string:' + SHORT_CODE_PLACEHOLDER,
+    reconciled: true,
+    tokens: 1
+  }),
+  Object.freeze({
+    name: 'a code inside an href reconciles, context intact',
+    baseline: '/u/testing/trinket/' + SHORT_CODE_PLACEHOLDER + '?embed=1',
+    target: '/u/testing/trinket/8196599281?embed=1',
+    reconciled: true,
+    tokens: 1
+  }),
+  Object.freeze({
+    name: 'two differing epoch readings are NOT reconciled',
+    baseline: '{"at":1700000000}',
+    target: '{"at":1700000001}',
+    reconciled: false
+  }),
+  Object.freeze({
+    name: 'a placeholder elsewhere does not license a differing digit run',
+    baseline: '{"code":"' + SHORT_CODE_PLACEHOLDER + '","at":1700000000}',
+    target: '{"code":"' + SHORT_CODE_PLACEHOLDER + '","at":1700000001}',
+    reconciled: false
+  }),
+  Object.freeze({
+    name: 'differing literal context is NOT reconciled',
+    baseline: '{"a":"' + SHORT_CODE_PLACEHOLDER + '","b":1}',
+    target: '{"a":"8196599281","b":2}',
+    reconciled: false
+  }),
+  Object.freeze({
+    name: 'a nine-digit value is outside the exemption and NOT reconciled',
+    baseline: 'string:' + SHORT_CODE_PLACEHOLDER,
+    target: 'string:819659928',
+    reconciled: false
+  }),
+  Object.freeze({
+    name: 'a thirteen-digit value is outside the exemption and NOT reconciled',
+    baseline: 'string:' + SHORT_CODE_PLACEHOLDER,
+    target: 'string:8196599281234',
+    reconciled: false
+  }),
+  Object.freeze({
+    name: 'a gained code is a difference, not a reconciliation',
+    baseline: 'string:' + SHORT_CODE_PLACEHOLDER,
+    target: 'string:' + SHORT_CODE_PLACEHOLDER + '/8196599281',
+    reconciled: false
+  }),
+  Object.freeze({
+    name: 'a placeholder against a hex code is NOT reconciled',
+    baseline: 'string:' + SHORT_CODE_PLACEHOLDER,
+    target: 'string:4d8ba326326e',
+    reconciled: false
+  }),
+  Object.freeze({
+    name: 'equal values produce no reconciliation',
+    baseline: 'string:' + SHORT_CODE_PLACEHOLDER,
+    target: 'string:' + SHORT_CODE_PLACEHOLDER,
+    reconciled: false
+  }),
+  Object.freeze({
+    name: 'a non-string value is never reconciled',
+    baseline: 8196599281,
+    target: SHORT_CODE_PLACEHOLDER,
+    reconciled: false
+  })
+]);
+
+/**
+ * Drives HELD_BACK_SHORT_CODE_PROBES and throws on the first disagreement.
+ *
+ * @returns {Object} {probes, binding}
+ */
+function assertHeldBackShortCodeReconciliation() {
+  var results = [];
+
+  HELD_BACK_SHORT_CODE_PROBES.forEach(function(probe) {
+    var produced;
+    var verdict;
+
+    if (probe.binding) {
+      produced = normalizeText(probe.input).value;
+
+      if (produced !== probe.expected) {
+        throw new Error('the held-back short code reconciliation has lost ' +
+          'its binding to the committed volatile rule: probe "' + probe.name +
+          '" over ' + JSON.stringify(probe.input) + ' expected ' +
+          JSON.stringify(probe.expected) + ' and observed ' +
+          JSON.stringify(produced) + '. This mechanism reconciles a digit run ' +
+          'ONLY because the committed `generated trinket short code` rule ' +
+          'wrote ' + SHORT_CODE_PLACEHOLDER + ' on the other side; if that ' +
+          'rule no longer behaves this way the evidence is gone and nothing ' +
+          'may be reconciled on it. See THE HELD-BACK SHORT CODE, ' +
+          'RECONCILED PAIRWISE.');
+      }
+
+      results.push({ name: probe.name, binding: true, ok: true });
+
+      return;
+    }
+
+    verdict = heldBackShortCodePair(probe.baseline, probe.target);
+
+    if (verdict.reconciled !== probe.reconciled) {
+      throw new Error('the held-back short code reconciliation misjudged a ' +
+        'probe: "' + probe.name + '" over ' + JSON.stringify(probe.baseline) +
+        ' against ' + JSON.stringify(probe.target) + ' expected reconciled=' +
+        probe.reconciled + ' and observed reconciled=' + verdict.reconciled +
+        (verdict.reason ? ' (' + verdict.reason + ')' : '') + '. A pairwise ' +
+        'reconciliation that fires where it should not deletes a real ' +
+        'difference, so the run stops here.');
+    }
+
+    if (probe.reconciled && probe.tokens !== undefined &&
+        verdict.tokens !== probe.tokens) {
+      throw new Error('the held-back short code reconciliation counted ' +
+        verdict.tokens + ' token(s) where probe "' + probe.name +
+        '" expects ' + probe.tokens + '. The count reaches the pass document ' +
+        'and the report, so it has to be exact.');
+    }
+
+    results.push({
+      name: probe.name,
+      binding: false,
+      expected: probe.reconciled,
+      observed: verdict.reconciled,
+      ok: true
+    });
+  });
+
+  return {
+    probes: results,
+    binding: results.filter(function(entry) {
+      return entry.binding;
+    }).length,
+    rule: HELD_BACK_SHORT_CODE_RULE
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Cookie comparison
+// ---------------------------------------------------------------------------
+
+/**
+ * Compares the parsed Set-Cookie records of two responses.
+ *
+ * Every attribute is compared over the UNION of the two attribute maps, so an
+ * attribute nobody enumerated - one a new framework version started emitting -
+ * still fails rather than passing unnoticed. COOKIE_ATTRIBUTES exists to order
+ * the report and to document the contract, not to bound the comparison.
+ *
+ * `expires` is the one attribute whose VALUE is not compared, because it is
+ * "one year from whenever the response was produced". Its presence is compared
+ * through the attribute map, where the parse has already reduced it to the
+ * literal `present`, and its HORIZON is compared in whole days with a two-day
+ * tolerance. That horizon assertion is the only thing in this file that can
+ * detect a silent failure of `app.js`'s cookie patch: it runs
+ * only while `request.response._header` is a function, so if hapi stopped
+ * populating that private field the patch would silently become a no-op and the
+ * expiry would change with nothing erroring.
+ *
+ * @param {Array.<Object>} baseline recorded setCookies
+ * @param {Array.<Object>} target observed setCookies
+ * @param {Object} [expectation] {differential} for the derived secure pass
+ * @returns {Object} {differences, observations}
+ */
+function compareCookies(baseline, target, expectation) {
+  var differences = [];
+  var observations = [];
+  var left = indexCookies(baseline);
+  var right = indexCookies(target);
+  var names = Object.keys(left).concat(Object.keys(right)).filter(function(name, index, all) {
+    return all.indexOf(name) === index;
+  }).sort();
+
+  if ((baseline || []).length !== (target || []).length) {
+    differences.push(difference('cookies.count',
+      (baseline || []).length, (target || []).length));
+  }
+
+  names.forEach(function(name) {
+    var recorded = left[name] || null;
+    var observed = right[name] || null;
+    var expectedAttributes;
+    var attributeNames;
+
+    if (!recorded || !observed) {
+      differences.push(difference('cookie[' + name + '].present',
+        !!recorded, !!observed));
+      return;
+    }
+
+    expectedAttributes = expectation && expectation.differential
+      ? secureDifferential(recorded.attributes)
+      : recorded.attributes;
+
+    attributeNames = COOKIE_ATTRIBUTES.filter(function(attribute) {
+      return has(expectedAttributes, attribute) || has(observed.attributes, attribute);
+    }).concat(Object.keys(expectedAttributes || {})
+      .concat(Object.keys(observed.attributes || {}))
+      .filter(function(attribute, index, all) {
+        return all.indexOf(attribute) === index &&
+          COOKIE_ATTRIBUTES.indexOf(attribute) === -1;
+      }).sort());
+
+    attributeNames.forEach(function(attribute) {
+      var recordedValue = has(expectedAttributes, attribute)
+        ? expectedAttributes[attribute]
+        : null;
+      var observedValue = has(observed.attributes, attribute)
+        ? observed.attributes[attribute]
+        : null;
+
+      if (String(recordedValue) !== String(observedValue)) {
+        differences.push(difference(
+          'cookie[' + name + '].' + attribute,
+          recordedValue,
+          observedValue,
+          expectation && expectation.differential
+            ? { note: 'expected value derived from the non-secure pass; see ' +
+                'the secure-pass note in the report' }
+            : undefined
+        ));
+      }
+    });
+
+    if ((recorded.expiresInDays === null) !== (observed.expiresInDays === null)) {
+      differences.push(difference('cookie[' + name + '].expires.horizon',
+        recorded.expiresInDays, observed.expiresInDays, {
+          note: 'one side carries an Expires horizon and the other does not. ' +
+            'This is the assertion that detects the private-field cookie ' +
+            'patch going silently no-op.'
+        }));
+      return;
+    }
+
+    if (recorded.expiresInDays !== null &&
+        Math.abs(recorded.expiresInDays - observed.expiresInDays) >
+          EXPIRES_HORIZON_TOLERANCE_DAYS) {
+      differences.push(difference('cookie[' + name + '].expires.horizon',
+        recorded.expiresInDays + ' days', observed.expiresInDays + ' days', {
+          note: 'the horizon is compared in whole days with a tolerance of ' +
+            EXPIRES_HORIZON_TOLERANCE_DAYS + ', because the timestamp is ' +
+            'volatile and the horizon is the contract'
+        }));
+    }
+    else if (recorded.expiresInDays !== null &&
+             recorded.expiresInDays !== observed.expiresInDays) {
+      observations.push(observation('cookie[' + name + '].expires.horizon',
+        recorded.expiresInDays + ' days', observed.expiresInDays + ' days',
+        'within the ' + EXPIRES_HORIZON_TOLERANCE_DAYS + '-day tolerance, ' +
+        'which absorbs a baseline and a replay taken on different dates'));
+    }
+  });
+
+  return { differences: differences, observations: observations };
+}
+
+/**
+ * Indexes cookie records by name.
+ *
+ * @param {Array.<Object>} records
+ * @returns {Object}
+ */
+function indexCookies(records) {
+  var out = Object.create(null);
+
+  (records || []).forEach(function(record) {
+    if (record && record.name) {
+      out[record.name] = record;
+    }
+  });
+
+  return out;
+}
+
+/**
+ * The attribute map the SECURE pass is expected to produce, derived from what
+ * the non-secure pass produced.
+ *
+ * ONE MECHANISM MOVES, AND ONLY ONE, which is what this function asserts:
+ *
+ *   Yar emits `Secure` on every cookie it sets whenever the session cookie
+ *   options say the connection is secure. That applies to EVERY response that
+ *   sets the session cookie, so `secure` is the one attribute that differs
+ *   between the two passes.
+ *
+ *   `SameSite` does NOT move. It is set once, on the state definition
+ *   (`app.js`'s `isSameSite: 'Lax'`), so hapi serialises it identically in
+ *   both passes and the private-field patch appends only the `Expires`
+ *   horizon.
+ *
+ * THIS IS A CHANGED CONTRACT, AND THE CHANGE IS REGISTERED. Until approved
+ * deviation 7 (docs/preserved-quirks.md §11.11) the patch also appended
+ * `"; SameSite=None; Secure"` on a cookie-setting request in secure mode, so
+ * this derivation moved `samesite` to `None` on exactly the cookies carrying
+ * an `Expires` horizon - the observable marker of "the patch ran", both
+ * appends having sat under one guard. That append emitted a SECOND `SameSite`
+ * onto an already-serialised header, which a browser resolves
+ * last-occurrence-wins, storing the session cookie as `SameSite=None`; it was
+ * removed, and this function follows the delivered contract rather than the
+ * one it replaced. A secure-pass response still carrying `SameSite=None`
+ * therefore fails here, which is the gate that observes the deviation.
+ *
+ * Everything else - HttpOnly, SameSite, Path, Domain, Max-Age and the Expires
+ * horizon - is expected to be identical, and a difference in any of them
+ * fails.
+ *
+ * This derivation exists because the committed corpus was captured through the
+ * launcher's non-secure default and therefore holds no secure-pass baseline.
+ * Capture one and pass --secure-corpus and this function is not used at all.
+ *
+ * @param {Object} attributes the non-secure attributes
+ * @returns {Object}
+ */
+function secureDifferential(attributes) {
+  var out = {};
+
+  Object.keys(attributes || {}).forEach(function(key) {
+    out[key] = attributes[key];
+  });
+
+  out.secure = true;
+
+  return out;
+}
+
+/**
+ * Whether an object carries a key of its own.
+ *
+ * @param {Object} value
+ * @param {string} key
+ * @returns {boolean}
+ */
+function has(value, key) {
+  return !!value && Object.prototype.hasOwnProperty.call(value, key);
+}
+
+// ---------------------------------------------------------------------------
+// ARCHIVE CONTAINERS - the structural comparison behind the digest exemption
+// ---------------------------------------------------------------------------
+//
+// The timestamps category exempts six archive container types from the binary
+// DIGEST comparison, and the reason it gives is true: a ZIP writes each entry's
+// DOS modification time into the entry's own local and central headers, so a
+// digest over the whole container is a clock read. MEASURED from the committed
+// corpus itself - the same request (GET
+// /testing/courses/test-course/download.zip?format=md as the seeded user) is
+// recorded twice, 538 bytes both times, with two different digests:
+// 15d30b76931402f6... on route.get.userSlug-courses-courseSlug-download-zip
+// and 006afd7264311bc0... on
+// quirk.reply-chain.header-resolved.course-download-zip. Restoring raw-digest
+// comparison would therefore produce a gate that can never pass.
+//
+// WHAT THAT REASON DOES NOT LICENSE is leaving the container uncompared, and
+// until this section existed it was: `compareBody` demoted the digest to an
+// observation and no other comparator in this file opened an archive, so the
+// binary comparator could not fail for an archive at all. The consequence was
+// measured by QA on the archiver 2.1.1 -> 7.0.1 bump - every entry's
+// general-purpose flags, the version needed to extract, the central
+// versionMadeBy, the directory and file external attributes and, on the
+// short-code archive, the declared crc32 and uncompressed size all changed on
+// two client-facing routes while the gate reported `match`. A comparator that
+// cannot fail in a category is not comparing it, and the same hole would have
+// hidden every future archive change.
+//
+// So the container is OPENED here and compared structurally, and only the raw
+// digest stays exempt. Two comparisons, with different failure modes:
+//
+//   body.archive.fingerprint    sha256 over the canonical JSON of the ordered
+//                               entry table with the mtime fields
+//                               DELIBERATELY EXCLUDED and each entry's content
+//                               taken as the sha256 of its INFLATED bytes. Two
+//                               responses holding the same entries fingerprint
+//                               identically however far apart their clock
+//                               reads are, which is exactly what the raw
+//                               digest cannot do. Inflated rather than
+//                               compressed bytes so the value does not move
+//                               with a zlib or Node patch release that
+//                               re-encodes the same content. COMPARED against
+//                               the recording where the recording carries a
+//                               fingerprint, and against the writer's PINNED
+//                               measurement in ARCHIVE_CONTAINER_REGISTER
+//                               where it does not - which is every archive
+//                               scenario of the committed corpus, because
+//                               that corpus records a binary body as a length
+//                               and a digest and predates this field. A
+//                               recording is always the authority when it
+//                               carries one, so a re-capture supersedes the
+//                               pin with no edit here; and each artifact
+//                               states which side decided, so a pin
+//                               comparison is never reported as a corpus one.
+//   body.archive.writerProfile  the content-INDEPENDENT container fields - the
+//                               UTF-8 name flag, the data-descriptor flag,
+//                               versionNeeded per compression method, the
+//                               central versionMadeBy, the directory and file
+//                               external attributes, and whether crc32 and the
+//                               uncompressed size are declared and agree with
+//                               the content - compared against the FROZEN
+//                               expectation in ARCHIVE_CONTAINER_REGISTER.
+//                               This is the half that fails on a writer change
+//                               even when the entries are identical, which is
+//                               what a future dependency bump trips over.
+//
+// WHY THE FINGERPRINT IS PINNED IN THE REGISTER RATHER THAN LEFT TO THE
+// CORPUS. The two halves have to be able to fail INDEPENDENTLY, and for a
+// while only one of them could. The profile half is content-independent by
+// design - that is what lets one frozen expectation cover a four-entry course
+// archive and a single-entry short-code archive - and the fingerprint half was
+// compared only against a RECORDED value, which the committed corpus does not
+// carry. So every archive scenario landed in the observation branch, and a
+// change to what a container HOLDS escaped both halves: MEASURED, two valid
+// ZIPs on one registered route with the same byte length, the same entry name,
+// the same entry sizes and an identical eleven-field profile but different
+// inflated content and a different crc32 produced ZERO differences. The pin
+// closes that with an exact comparison, which AAP 0.9.3 licenses in terms
+// ("Because seeding is deterministic, comparison is exact on..."), and it
+// removes the dependency on a corpus re-capture that lives in another unit.
+// The startup probe `a-container-differing-only-in-content-is-rejected-by-the-
+// pin` holds the discriminator permanently, and
+// `every-registered-writer-declares-a-complete-content-pin` is what keeps a
+// newly registered writer from reopening the hole.
+//
+// The volatile set is NOT widened by any of this: it stays at six categories,
+// the exempt type list stays exactly as declared in the timestamps category,
+// and what changes is that the exemption now has a comparator behind it and
+// every description of it says so.
+//
+// Nothing here reaches outside this file: the reader is buffer arithmetic over
+// the bytes the response delivered, `zlib` is the only dependency it adds, and
+// it neither requires the application tree nor defers to ./storage or ./worker.
+// `assertArchiveReader` exercises it against hand-built containers at startup,
+// because a reader that silently found no entries would make both comparisons
+// vacuous - and, for the same reason, because a fingerprint compared against
+// nothing would make the content half vacuous while every profile field
+// passed.
+// ---------------------------------------------------------------------------
+
+var ZIP_LOCAL_SIGNATURE     = 0x04034b50;
+var ZIP_CENTRAL_SIGNATURE   = 0x02014b50;
+var ZIP_EOCD_SIGNATURE      = 0x06054b50;
+var ZIP_EOCD_LENGTH         = 22;
+var ZIP_CENTRAL_LENGTH      = 46;
+var ZIP_LOCAL_LENGTH        = 30;
+// A ZIP comment is at most 0xffff bytes, so the record cannot begin further
+// back than that from the end of the body.
+var ZIP_MAX_COMMENT         = 0xffff;
+var ZIP_UTF8_NAME_FLAG      = 0x0800;
+var ZIP_DATA_DESCRIPTOR_FLAG = 0x0008;
+var ZIP_METHOD_STORED       = 0;
+var ZIP_METHOD_DEFLATED     = 8;
+var ARCHIVE_SUMMARY_SCHEMA  = 1;
+// The fingerprint and the profile are computed over EVERY entry; this bounds
+// only how many appear in the artifact, so a large export archive cannot turn
+// one step's evidence into megabytes. `entriesTruncated` says when it applied.
+var ARCHIVE_MAX_RECORDED_ENTRIES = 64;
+// An inflation budget, so a hostile or accidental declaration cannot make this
+// reader allocate without limit. An entry over the budget keeps every declared
+// field and records its content digest as skipped, with the reason.
+var ARCHIVE_MAX_INFLATE_BYTES = 8 * 1024 * 1024;
+
+// The CRC-32 table, built once. Present so the DECLARED crc32 can be checked
+// against the entry's actual content: the archiver 2.1.1 short-code archive
+// declared crc32 0 and uncompressed size 0 for an entry whose real values are
+// 0xf10614e3 and 61 bytes, which is a container-level defect no digest
+// comparison would ever have named.
+var CRC32_TABLE = (function() {
+  var table = new Int32Array(256);
+  var value;
+  var i;
+  var bit;
+
+  for (i = 0; i < 256; i++) {
+    value = i;
+
+    for (bit = 0; bit < 8; bit++) {
+      value = (value & 1) ? (0xedb88320 ^ (value >>> 1)) : (value >>> 1);
+    }
+
+    table[i] = value;
+  }
+
+  return table;
+}());
+
+/**
+ * The CRC-32 of a buffer, as an unsigned 32-bit number.
+ *
+ * @param {Buffer} buffer
+ * @returns {number}
+ */
+function crc32Of(buffer) {
+  var crc = -1;
+  var i;
+
+  for (i = 0; i < buffer.length; i++) {
+    crc = (crc >>> 8) ^ CRC32_TABLE[(crc ^ buffer[i]) & 0xff];
+  }
+
+  return (crc ^ -1) >>> 0;
+}
+
+/**
+ * A fixed-width hex literal, so a comparison and a report read the same.
+ *
+ * @param {number} value
+ * @param {number} digits
+ * @returns {string}
+ */
+function hexWord(value, digits) {
+  var text = (value >>> 0).toString(16);
+
+  while (text.length < digits) {
+    text = '0' + text;
+  }
+
+  return '0x' + text;
+}
+
+/**
+ * Which container a content type declares, for this reader's purposes.
+ *
+ * Only `zip` is opened. The other exempt types are named rather than guessed
+ * at, because a reader that treated a gzip stream as a ZIP would report it
+ * unparsed for the wrong reason and a reader that returned no entries would
+ * make the comparison vacuous.
+ *
+ * @param {*} contentType
+ * @returns {string} 'zip', or the media type this reader does not open
+ */
+function archiveContainerKind(contentType) {
+  var media = String(typeWithoutCharset(contentType) || '').trim().toLowerCase();
+
+  if (media === 'application/zip' || media === 'application/x-zip-compressed') {
+    return 'zip';
+  }
+
+  return media || 'unknown';
+}
+
+/**
+ * Opens an archive container and summarizes its structure.
+ *
+ * The one entry point. It never throws: a container it cannot read is reported
+ * as `parsed: false` with the reason and `entryCount: null` - never as a
+ * container that happened to hold no entries, which is the failure mode that
+ * would make every comparison built on it vacuous.
+ *
+ * The mtime fields are read past deliberately and appear nowhere in the
+ * summary. That is the whole point: they are the reason the raw digest cannot
+ * be compared, and excluding them is what makes everything else comparable.
+ *
+ * @param {Buffer} buffer the exact bytes the response delivered
+ * @param {*} contentType the response content type
+ * @returns {Object} the archive summary recorded as `body.archive`
+ */
+function readArchiveContainer(buffer, contentType) {
+  var summary = {
+    schema: ARCHIVE_SUMMARY_SCHEMA,
+    container: archiveContainerKind(contentType),
+    parsed: false,
+    unparsedReason: null,
+    empty: !buffer || !buffer.length,
+    byteLength: buffer ? buffer.length : 0,
+    entryCount: null,
+    entriesRecorded: 0,
+    entriesTruncated: false,
+    entries: [],
+    writerProfile: null,
+    fingerprint: null,
+    excludes: 'the DOS modification time and date of every entry, in both the ' +
+      'local and the central header - they are the reason the raw digest is a ' +
+      'clock read, so excluding them is what makes the rest comparable'
+  };
+  var read;
+
+  if (summary.empty) {
+    summary.unparsedReason = 'the response carried no body, so there is no ' +
+      'container to read. The byte length is compared exactly either way, ' +
+      'which is what covers this case';
+    return summary;
+  }
+
+  if (summary.container !== 'zip') {
+    summary.unparsedReason = 'this reader opens ZIP containers only and the ' +
+      'response declares ' + JSON.stringify(summary.container) + '. No ' +
+      'structural comparison covers that container type, so for it the digest ' +
+      'exemption is uncovered and is reported as such rather than presented ' +
+      'as compared';
+    return summary;
+  }
+
+  read = readZipEntries(buffer);
+
+  if (!read.ok) {
+    summary.unparsedReason = read.reason;
+    return summary;
+  }
+
+  summary.parsed = true;
+  summary.entryCount = read.entries.length;
+  // Over EVERY entry, before the artifact list is bounded, so a truncated
+  // record still carries a fingerprint that covers the whole container.
+  summary.writerProfile = archiveWriterProfile(read.entries);
+  summary.fingerprint = archiveFingerprint(read.entries);
+  summary.entries = read.entries.slice(0, ARCHIVE_MAX_RECORDED_ENTRIES);
+  summary.entriesRecorded = summary.entries.length;
+  summary.entriesTruncated = summary.entriesRecorded < summary.entryCount;
+
+  return summary;
+}
+
+/**
+ * Reads every central-directory entry of a ZIP, with its local header.
+ *
+ * The central directory is the authority for the compressed size, because a
+ * streaming writer emits local headers with the size and crc32 zeroed and the
+ * data-descriptor flag set - which is precisely the difference the archiver
+ * bump changed on the short-code archive, so a reader that trusted the local
+ * header would have read the entry's bytes from the wrong offsets.
+ *
+ * @param {Buffer} buffer
+ * @returns {Object} {ok, entries} or {ok: false, reason}
+ */
+function readZipEntries(buffer) {
+  var eocd = findZipEocd(buffer);
+  var declared;
+  var directorySize;
+  var directoryOffset;
+  var offset;
+  var entries = [];
+  var record;
+  var index;
+
+  if (eocd < 0) {
+    return {
+      ok: false,
+      reason: 'no end-of-central-directory record was found in the last ' +
+        Math.min(buffer.length, ZIP_MAX_COMMENT + ZIP_EOCD_LENGTH) + ' bytes ' +
+        'of the ' + buffer.length + '-byte body, so these bytes are not a ' +
+        'readable ZIP container. The first four bytes are ' +
+        hexWord(buffer.length >= 4 ? buffer.readUInt32LE(0) : 0, 8)
+    };
+  }
+
+  declared = buffer.readUInt16LE(eocd + 10);
+  directorySize = buffer.readUInt32LE(eocd + 12);
+  directoryOffset = buffer.readUInt32LE(eocd + 16);
+
+  if (declared === 0xffff || directorySize === 0xffffffff ||
+      directoryOffset === 0xffffffff) {
+    return {
+      ok: false,
+      reason: 'the end-of-central-directory record carries the ZIP64 escape ' +
+        'values and this reader does not read the ZIP64 directory. Reported ' +
+        'unparsed deliberately: parsing it wrongly would produce a ' +
+        'fingerprint over the wrong bytes'
+    };
+  }
+
+  if (directoryOffset + directorySize > buffer.length) {
+    return {
+      ok: false,
+      reason: 'the central directory is declared at byte ' + directoryOffset +
+        ' for ' + directorySize + ' bytes, which runs past the end of the ' +
+        buffer.length + '-byte body'
+    };
+  }
+
+  offset = directoryOffset;
+
+  for (index = 0; index < declared; index++) {
+    record = readZipCentralEntry(buffer, offset, index);
+
+    if (!record.ok) {
+      return record;
+    }
+
+    entries.push(record.entry);
+    offset = record.next;
+  }
+
+  return { ok: true, entries: entries };
+}
+
+/**
+ * The offset of the end-of-central-directory record, or -1.
+ *
+ * Scanned backwards from the end, because the record is the last thing in the
+ * file except for an optional comment of up to 0xffff bytes.
+ *
+ * @param {Buffer} buffer
+ * @returns {number}
+ */
+function findZipEocd(buffer) {
+  var floor = Math.max(0, buffer.length - ZIP_EOCD_LENGTH - ZIP_MAX_COMMENT);
+  var offset;
+
+  if (buffer.length < ZIP_EOCD_LENGTH) {
+    return -1;
+  }
+
+  for (offset = buffer.length - ZIP_EOCD_LENGTH; offset >= floor; offset--) {
+    if (buffer.readUInt32LE(offset) === ZIP_EOCD_SIGNATURE) {
+      // The declared comment length has to account for the remaining bytes, or
+      // this is a signature that happens to appear inside the data.
+      if (buffer.readUInt16LE(offset + 20) ===
+          buffer.length - offset - ZIP_EOCD_LENGTH) {
+        return offset;
+      }
+    }
+  }
+
+  return -1;
+}
+
+/**
+ * One central-directory record, joined to its local header and its content.
+ *
+ * @param {Buffer} buffer
+ * @param {number} offset
+ * @param {number} index the entry's position, for the message
+ * @returns {Object} {ok, entry, next} or {ok: false, reason}
+ */
+function readZipCentralEntry(buffer, offset, index) {
+  var versionMadeBy;
+  var versionNeeded;
+  var flags;
+  var method;
+  var declaredCrc;
+  var compressedSize;
+  var uncompressedSize;
+  var nameLength;
+  var extraLength;
+  var commentLength;
+  var internalAttributes;
+  var externalAttributes;
+  var localOffset;
+  var name;
+  var local;
+  var content;
+  var entry;
+
+  if (offset + ZIP_CENTRAL_LENGTH > buffer.length) {
+    return {
+      ok: false,
+      reason: 'central-directory entry ' + index + ' is declared at byte ' +
+        offset + ', which leaves fewer than the ' + ZIP_CENTRAL_LENGTH +
+        ' bytes a record header needs'
+    };
+  }
+
+  if (buffer.readUInt32LE(offset) !== ZIP_CENTRAL_SIGNATURE) {
+    return {
+      ok: false,
+      reason: 'the bytes at ' + offset + ' are not central-directory entry ' +
+        index + ': the signature is ' + hexWord(buffer.readUInt32LE(offset), 8) +
+        ' and a record begins ' + hexWord(ZIP_CENTRAL_SIGNATURE, 8)
+    };
+  }
+
+  versionMadeBy      = buffer.readUInt16LE(offset + 4);
+  versionNeeded      = buffer.readUInt16LE(offset + 6);
+  flags              = buffer.readUInt16LE(offset + 8);
+  method             = buffer.readUInt16LE(offset + 10);
+  // offset + 12 and offset + 14 are the DOS modification time and date. They
+  // are READ PAST and never recorded - see this section's header.
+  declaredCrc        = buffer.readUInt32LE(offset + 16);
+  compressedSize     = buffer.readUInt32LE(offset + 20);
+  uncompressedSize   = buffer.readUInt32LE(offset + 24);
+  nameLength         = buffer.readUInt16LE(offset + 28);
+  extraLength        = buffer.readUInt16LE(offset + 30);
+  commentLength      = buffer.readUInt16LE(offset + 32);
+  internalAttributes = buffer.readUInt16LE(offset + 36);
+  externalAttributes = buffer.readUInt32LE(offset + 38);
+  localOffset        = buffer.readUInt32LE(offset + 42);
+
+  if (offset + ZIP_CENTRAL_LENGTH + nameLength + extraLength + commentLength >
+      buffer.length) {
+    return {
+      ok: false,
+      reason: 'central-directory entry ' + index + ' declares a ' + nameLength +
+        '-byte name, ' + extraLength + ' bytes of extra and ' + commentLength +
+        ' bytes of comment, which runs past the end of the ' + buffer.length +
+        '-byte body'
+    };
+  }
+
+  name = decodeZipName(buffer.slice(offset + ZIP_CENTRAL_LENGTH,
+    offset + ZIP_CENTRAL_LENGTH + nameLength), flags);
+
+  local = readZipLocalHeader(buffer, localOffset, index, compressedSize);
+
+  if (!local.ok) {
+    return local;
+  }
+
+  content = inflateZipEntry(local.data, method);
+
+  entry = {
+    index: index,
+    name: name,
+    nameEncoding: (flags & ZIP_UTF8_NAME_FLAG) ? 'utf-8' : 'cp437',
+    directory: /\/$/.test(name) || isZipDirectoryMode(externalAttributes),
+    method: zipMethodName(method),
+    methodCode: method,
+    localMethodCode: local.method,
+    flags: hexWord(flags, 4),
+    localFlags: hexWord(local.flags, 4),
+    utf8NameFlag: !!(flags & ZIP_UTF8_NAME_FLAG),
+    dataDescriptorFlag: !!(flags & ZIP_DATA_DESCRIPTOR_FLAG),
+    versionNeeded: versionNeeded,
+    localVersionNeeded: local.versionNeeded,
+    versionMadeBy: hexWord(versionMadeBy, 4),
+    internalAttributes: hexWord(internalAttributes, 4),
+    externalAttributes: hexWord(externalAttributes, 8),
+    unixMode: externalAttributes >>> 16
+      ? '0o' + ((externalAttributes >>> 16) & 0xffff).toString(8)
+      : null,
+    crc32Declared: hexWord(declaredCrc, 8),
+    localCrc32Declared: hexWord(local.crc32, 8),
+    compressedSize: compressedSize,
+    uncompressedSizeDeclared: uncompressedSize,
+    localUncompressedSizeDeclared: local.uncompressedSize,
+    contentLength: content.length,
+    contentDigest: content.digest,
+    contentError: content.error,
+    crc32Computed: content.crc32 === null ? null : hexWord(content.crc32, 8),
+    // The check the archiver bump's short-code case turns on: 2.1.1 declared
+    // crc32 0 and size 0 for an entry whose content hashes to neither.
+    crc32DeclaredMatchesContent: content.crc32 === null
+      ? null
+      : content.crc32 === declaredCrc,
+    uncompressedSizeMatchesContent: content.length === null
+      ? null
+      : content.length === uncompressedSize
+  };
+
+  return {
+    ok: true,
+    entry: entry,
+    next: offset + ZIP_CENTRAL_LENGTH + nameLength + extraLength + commentLength
+  };
+}
+
+/**
+ * The local header of one entry, and the slice of compressed bytes it heads.
+ *
+ * The data length comes from the CENTRAL directory, for the reason
+ * `readZipEntries` gives: a streaming writer zeroes the local sizes.
+ *
+ * @param {Buffer} buffer
+ * @param {number} offset
+ * @param {number} index
+ * @param {number} compressedSize from the central record
+ * @returns {Object} {ok, flags, method, versionNeeded, crc32, uncompressedSize,
+ *   data} or {ok: false, reason}
+ */
+function readZipLocalHeader(buffer, offset, index, compressedSize) {
+  var nameLength;
+  var extraLength;
+  var dataStart;
+
+  if (offset + ZIP_LOCAL_LENGTH > buffer.length) {
+    return {
+      ok: false,
+      reason: 'entry ' + index + ' names a local header at byte ' + offset +
+        ', which leaves fewer than the ' + ZIP_LOCAL_LENGTH + ' bytes a local ' +
+        'header needs'
+    };
+  }
+
+  if (buffer.readUInt32LE(offset) !== ZIP_LOCAL_SIGNATURE) {
+    return {
+      ok: false,
+      reason: 'entry ' + index + ' names a local header at byte ' + offset +
+        ' and the signature there is ' + hexWord(buffer.readUInt32LE(offset), 8) +
+        ' rather than ' + hexWord(ZIP_LOCAL_SIGNATURE, 8)
+    };
+  }
+
+  nameLength  = buffer.readUInt16LE(offset + 26);
+  extraLength = buffer.readUInt16LE(offset + 28);
+  dataStart   = offset + ZIP_LOCAL_LENGTH + nameLength + extraLength;
+
+  if (dataStart + compressedSize > buffer.length) {
+    return {
+      ok: false,
+      reason: 'entry ' + index + ' declares ' + compressedSize +
+        ' compressed bytes at ' + dataStart + ', which runs past the end of ' +
+        'the ' + buffer.length + '-byte body'
+    };
+  }
+
+  return {
+    ok: true,
+    versionNeeded: buffer.readUInt16LE(offset + 4),
+    flags: buffer.readUInt16LE(offset + 6),
+    method: buffer.readUInt16LE(offset + 8),
+    // offset + 10 and offset + 12 are the DOS modification time and date, read
+    // past for the same reason as the central pair.
+    crc32: buffer.readUInt32LE(offset + 14),
+    uncompressedSize: buffer.readUInt32LE(offset + 22),
+    data: buffer.slice(dataStart, dataStart + compressedSize)
+  };
+}
+
+/**
+ * The inflated content of one entry, as a length, a digest and its crc32.
+ *
+ * A digest over the INFLATED bytes rather than the stored ones, so the value
+ * describes what a client would extract and does not move when a zlib or Node
+ * patch release re-encodes the same content at a different compression level.
+ *
+ * @param {Buffer} data the compressed bytes
+ * @param {number} method the compression method from the central record
+ * @returns {Object} {length, digest, crc32, error}
+ */
+function inflateZipEntry(data, method) {
+  var content;
+
+  if (data.length > ARCHIVE_MAX_INFLATE_BYTES) {
+    return {
+      length: null,
+      digest: null,
+      crc32: null,
+      error: 'the entry holds ' + data.length + ' compressed bytes, over this ' +
+        'reader\'s ' + ARCHIVE_MAX_INFLATE_BYTES + '-byte inflation budget, ' +
+        'so its content was not read. Every declared field above is still ' +
+        'compared'
+    };
+  }
+
+  if (method === ZIP_METHOD_STORED) {
+    content = data;
+  }
+  else if (method === ZIP_METHOD_DEFLATED) {
+    try {
+      content = zlib.inflateRawSync(data);
+    }
+    catch (err) {
+      return {
+        length: null,
+        digest: null,
+        crc32: null,
+        error: 'the deflated entry did not inflate: ' + reasonOf(err)
+      };
+    }
+  }
+  else {
+    return {
+      length: null,
+      digest: null,
+      crc32: null,
+      error: 'compression method ' + method + ' is not one this reader ' +
+        'inflates, so the entry\'s content was not read'
+    };
+  }
+
+  return {
+    length: content.length,
+    digest: sha256Hex(content),
+    crc32: crc32Of(content),
+    error: null
+  };
+}
+
+/**
+ * An entry name, decoded the way its own flag says it was encoded.
+ *
+ * @param {Buffer} raw
+ * @param {number} flags
+ * @returns {string}
+ */
+function decodeZipName(raw, flags) {
+  return raw.toString((flags & ZIP_UTF8_NAME_FLAG) ? 'utf8' : 'latin1');
+}
+
+/**
+ * A compression method's name, for the report.
+ *
+ * @param {number} method
+ * @returns {string}
+ */
+function zipMethodName(method) {
+  if (method === ZIP_METHOD_STORED) {
+    return 'stored';
+  }
+
+  if (method === ZIP_METHOD_DEFLATED) {
+    return 'deflated';
+  }
+
+  return 'method-' + method;
+}
+
+/**
+ * Whether an external-attributes word carries the UNIX directory bit.
+ *
+ * @param {number} externalAttributes
+ * @returns {boolean}
+ */
+function isZipDirectoryMode(externalAttributes) {
+  // S_IFDIR is 0o040000 in the high half of the word, which is where a UNIX
+  // writer puts the mode.
+  return (((externalAttributes >>> 16) & 0xf000) === 0x4000);
+}
+
+/**
+ * The deterministic fingerprint of an ordered entry table.
+ *
+ * sha256 over canonical JSON, so a key added to an entry record changes it and
+ * a key REORDERED does not. It covers every entry, including the ones the
+ * artifact's bounded list leaves out.
+ *
+ * @param {Array.<Object>} entries
+ * @returns {string}
+ */
+function archiveFingerprint(entries) {
+  return sha256Hex(archiveCanonicalJson({
+    schema: ARCHIVE_SUMMARY_SCHEMA,
+    entryCount: entries.length,
+    entries: entries
+  }));
+}
+
+/**
+ * Canonical JSON: object keys sorted at every depth, arrays left in order.
+ *
+ * `serialize` and `sortedKeys` are not enough here - the first preserves
+ * insertion order and the second is shallow, and a fingerprint that depended on
+ * either would move when a field was inserted somewhere else in this file.
+ *
+ * @param {*} value
+ * @returns {string}
+ */
+function archiveCanonicalJson(value) {
+  if (Array.isArray(value)) {
+    return '[' + value.map(archiveCanonicalJson).join(',') + ']';
+  }
+
+  if (value && typeof value === 'object') {
+    return '{' + Object.keys(value).sort().map(function(key) {
+      return JSON.stringify(key) + ':' + archiveCanonicalJson(value[key]);
+    }).join(',') + '}';
+  }
+
+  return JSON.stringify(value === undefined ? null : value);
+}
+
+/**
+ * The container's WRITER profile: what the writer did, not what it held.
+ *
+ * Every field here is decided by the library that produced the container
+ * rather than by the content it was given, which is what lets one frozen
+ * expectation cover a four-entry course archive and a single-entry short-code
+ * archive alike. A field these entries cannot determine - directory attributes
+ * in an archive with no directories, for instance - is `null`, and
+ * `compareArchiveProfile` reports it as undetermined instead of comparing it
+ * against nothing.
+ *
+ * @param {Array.<Object>} entries
+ * @returns {Object}
+ */
+function archiveWriterProfile(entries) {
+  var files = entries.filter(function(entry) { return !entry.directory; });
+  var directories = entries.filter(function(entry) { return entry.directory; });
+  var sized = entries.filter(function(entry) {
+    // An entry with no content declares nothing about whether its writer
+    // declares crc32 and size, so the crc32 and size questions are asked of
+    // the entries that carry bytes.
+    return entry.contentLength !== null && entry.contentLength > 0;
+  });
+
+  return {
+    determinable: entries.length > 0,
+    entriesConsidered: entries.length,
+    fileEntries: files.length,
+    directoryEntries: directories.length,
+    methods: entries.map(function(entry) { return entry.method; })
+      .filter(function(name, at, all) { return all.indexOf(name) === at; })
+      .sort(),
+    utf8NameFlag: archiveFlagSpread(entries, function(entry) {
+      return entry.utf8NameFlag;
+    }),
+    dataDescriptorFlag: archiveFlagSpread(entries, function(entry) {
+      return entry.dataDescriptorFlag;
+    }),
+    centralVersionMadeBy: archiveUniform(entries, function(entry) {
+      return entry.versionMadeBy;
+    }),
+    versionNeededByMethod: archiveByMethod(entries, function(entry) {
+      return entry.versionNeeded;
+    }),
+    localVersionNeededByMethod: archiveByMethod(entries, function(entry) {
+      return entry.localVersionNeeded;
+    }),
+    directoryExternalAttributes: archiveUniform(directories, function(entry) {
+      return entry.externalAttributes;
+    }),
+    fileExternalAttributes: archiveUniform(files, function(entry) {
+      return entry.externalAttributes;
+    }),
+    internalAttributes: archiveUniform(entries, function(entry) {
+      return entry.internalAttributes;
+    }),
+    crc32Declared: archiveFlagSpread(sized, function(entry) {
+      return entry.crc32Declared !== hexWord(0, 8);
+    }, ARCHIVE_CONTENT_SPREAD_LABELS),
+    uncompressedSizeDeclared: archiveFlagSpread(sized, function(entry) {
+      return entry.uncompressedSizeDeclared > 0;
+    }, ARCHIVE_CONTENT_SPREAD_LABELS),
+    crc32DeclaredMatchesContent: archiveFlagSpread(sized, function(entry) {
+      return entry.crc32DeclaredMatchesContent === true;
+    }, ARCHIVE_CONTENT_SPREAD_LABELS)
+  };
+}
+
+// The default labels a spread reports, and the ones for the three fields asked
+// only of entries that carry bytes - a directory entry declares nothing about
+// whether its writer declares a crc32, so saying `every-entry` there would
+// overstate what was looked at.
+var ARCHIVE_SPREAD_LABELS = Object.freeze({
+  all: 'every-entry',
+  some: 'some-entries',
+  none: 'no-entry'
+});
+var ARCHIVE_CONTENT_SPREAD_LABELS = Object.freeze({
+  all: 'every-entry-with-content',
+  some: 'some-entries-with-content',
+  none: 'no-entry-with-content'
+});
+
+/**
+ * How a boolean property is spread across a set of entries.
+ *
+ * Three-valued on purpose: `some-entries` is its own answer, because a writer
+ * that set the UTF-8 flag on half its entries is a different writer from one
+ * that set it on all of them, and collapsing the two into a boolean would hide
+ * exactly that.
+ *
+ * @param {Array.<Object>} entries
+ * @param {function(Object): boolean} pick
+ * @param {Object} [labels] as ARCHIVE_SPREAD_LABELS
+ * @returns {(string|null)}
+ */
+function archiveFlagSpread(entries, pick, labels) {
+  var names = labels || ARCHIVE_SPREAD_LABELS;
+  var set;
+
+  if (!entries.length) {
+    return null;
+  }
+
+  set = entries.filter(pick).length;
+
+  if (set === entries.length) {
+    return names.all;
+  }
+
+  return set ? names.some : names.none;
+}
+
+/**
+ * One value if every entry agrees on it, `mixed:` and the values if not.
+ *
+ * @param {Array.<Object>} entries
+ * @param {function(Object): *} pick
+ * @returns {(string|null)}
+ */
+function archiveUniform(entries, pick) {
+  var values = entries.map(pick).map(function(value) {
+    return value === null || value === undefined ? 'null' : String(value);
+  }).filter(function(value, at, all) { return all.indexOf(value) === at; })
+    .sort();
+
+  if (!values.length) {
+    return null;
+  }
+
+  return values.length === 1 ? values[0] : 'mixed:' + values.join(',');
+}
+
+// ---------------------------------------------------------------------------
+// THE ARCHIVE CONTAINER REGISTER - the frozen expectation, and the change it
+// registers
+// ---------------------------------------------------------------------------
+//
+// The gate half. `archiveWriterProfile` reads what the writer did; this is what
+// it is held to, and a container whose profile stops matching produces a real
+// difference and a non-zero exit. It is what makes the comparison able to fail
+// on a FUTURE archive change rather than only on the one QA measured.
+//
+// THE PROFILE IS PER ROUTE, and it has to be: the two archive routes do not
+// share a writer. MEASURED on the delivered tree, in both cookie passes -
+//
+//   GET /{userSlug}/courses/{courseSlug}/download.zip  is written by ADM-ZIP
+//   [lib/controllers/courses.js:14,337-339 - `new zip(); addLocalFolder;
+//   writeZip`], and emits versionMadeBy 0x0314 with the UTF-8 name flag on
+//   every entry and no data descriptor.
+//
+//   GET /{lang}/{shortCode} in its `.zip` form is written by ARCHIVER
+//   [lib/controllers/trinket.js:24,2044-2045 - `downloadZip` ->
+//   `archiver('zip', ...)`], and emits versionMadeBy 0x032d with NO UTF-8 name
+//   flag and a data descriptor on every entry.
+//
+// So one frozen expectation cannot cover both, and a single merged profile
+// would have had to be loose enough to accept either - which is the shape of an
+// expectation that cannot fail. Each writer is registered on its own, keyed by
+// the route the archive came from, and an archive served on a route this
+// register does not name is a DIFFERENCE: a new archive route is registered
+// here deliberately, or it is not covered.
+//
+// EACH ENTRY CARRIES BOTH COLUMNS. `expected` is what this tree measurably
+// does and is what the comparison enforces. `baseline` is what the tree at the
+// base commit did, taken from the QA field-level measurement rather than
+// re-derived here - it is not compared against anything, and it is carried so
+// the artifact holds the registered before-and-after instead of pointing at a
+// document. `changed` names the fields that moved and the dependency bump that
+// moved them; note that the two routes' changes come from two different bumps,
+// which the QA finding's single attribution to archiver does not separate.
+// ---------------------------------------------------------------------------
+
+// The profile fields the comparison covers, in one list so a field added to the
+// reader without being registered fails at startup rather than being silently
+// uncompared. `assertArchiveReader` holds that invariant.
+var ARCHIVE_PROFILE_FIELDS = Object.freeze([
+  'utf8NameFlag',
+  'dataDescriptorFlag',
+  'centralVersionMadeBy',
+  'versionNeededByMethod',
+  'localVersionNeededByMethod',
+  'directoryExternalAttributes',
+  'fileExternalAttributes',
+  'internalAttributes',
+  'crc32Declared',
+  'uncompressedSizeDeclared',
+  'crc32DeclaredMatchesContent'
+]);
+
+// The two fields whose expectation is a MAP keyed by compression method: a ZIP
+// declares versionNeeded 10 for a stored entry and 20 for a deflated one, so a
+// single number would compare one method against the other.
+var ARCHIVE_PROFILE_METHOD_FIELDS = Object.freeze([
+  'versionNeededByMethod',
+  'localVersionNeededByMethod'
+]);
+
+var ARCHIVE_CONTAINER_REGISTER = Object.freeze({
+  what: 'the ZIP container fields each archive route\'s writer emits, frozen. ' +
+    'A container whose profile no longer matches is a DIFFERENCE and exits ' +
+    'non-zero, which is what covers the raw-digest exemption in the ' +
+    'timestamps category of the volatile set.',
+  registered: 'The container bytes a client downloads changed on both archive ' +
+    'routes. On GET /{userSlug}/courses/{courseSlug}/download.zip the change ' +
+    'is adm-zip 0.4.16 -> 0.6.0 (AAP 0.5.1.2): the UTF-8 name flag is now set ' +
+    'on every entry, versionMadeBy moved from MS-DOS to UNIX, deflated ' +
+    'entries now declare versionNeeded 20, and the external attributes gained ' +
+    'the setgid bit on directories and S_IFREG on files. On GET ' +
+    '/{lang}/{shortCode}.zip the change is archiver 2.1.1 -> 7.0.1: every ' +
+    'header field is unchanged and the declared crc32 and uncompressed size ' +
+    'moved from zero to the entry\'s real values, because 2.1.1 with a ' +
+    'buffered append wrote both as zero. Entry names, order and content are ' +
+    'identical on both routes.',
+  measurement: 'The `expected` column was measured on the delivered tree by ' +
+    'this file, from the live archive responses of the four archive ' +
+    'scenarios, in both the non-secure and the secure cookie pass, and the ' +
+    'two passes agreed field for field. The `baseline` column is the QA ' +
+    'field-level measurement of the tree at the base commit and is recorded, ' +
+    'not compared.',
+  pins: 'Each writer also carries a `pinned` block - the entry-table ' +
+    'fingerprint, the entry count and the byte length, measured the same way ' +
+    'as `expected`. It exists because the writer profile is ' +
+    'content-INDEPENDENT: a container that holds different bytes on the same ' +
+    'route matches every profile field, so without a pinned fingerprint a ' +
+    'change to what an archive HOLDS is invisible. MEASURED before the pin ' +
+    'existed: two valid containers on one registered route, equal in byte ' +
+    'length, entry names, entry sizes and all eleven profile fields but ' +
+    'differing in inflated content and crc32, produced zero differences. ' +
+    'The pin is a FALLBACK and never an override: a recording that carries a ' +
+    'fingerprint is compared against, and the pin stands aside and reports ' +
+    'that it did, so a re-captured corpus takes over with no edit here.',
+  measuredFrom: Object.freeze([
+    'route.get.userSlug-courses-courseSlug-download-zip.html',
+    'route.get.userSlug-courses-courseSlug-download-zip.json',
+    'quirk.reply-chain.header-resolved.course-download-zip',
+    'quirk.reply-chain.header-resolved.short-code-zip'
+  ]),
+  writers: Object.freeze([
+    Object.freeze({
+      id: 'course-download-adm-zip',
+      writer: 'adm-zip [lib/controllers/courses.js:14,337-339]',
+      dependencyChange: 'adm-zip 0.4.16 -> 0.6.0',
+      routes: Object.freeze(['GET /{userSlug}/courses/{courseSlug}/download.zip']),
+      // THE CONTENT PIN, and why it is a compared field rather than the
+      // comment it used to be. The writer profile above is
+      // content-INDEPENDENT by design - that is what lets one frozen
+      // expectation cover a four-entry course archive and a single-entry
+      // short-code archive - so a change to what the container HOLDS moves
+      // nothing in it. The fingerprint is the half that moves, and until this
+      // block existed it was compared only against a RECORDED fingerprint,
+      // which the committed corpus does not carry: every archive scenario
+      // landed in the observation branch, and two valid containers on the same
+      // route with the same byte length, the same entry names, the same entry
+      // sizes and an identical profile but different inflated content and
+      // different crc32 produced ZERO differences. Measured, before this
+      // block: 0.
+      //
+      // So the measurement is pinned here and compared exactly. AAP 0.9.3
+      // licenses it in terms - "Because seeding is deterministic, comparison
+      // is exact on..." - and pinning removes the dependency on a corpus
+      // re-capture this file does not own. The pin is the FALLBACK, never the
+      // authority: a recording that carries a fingerprint is compared against
+      // and the pin stands aside, so a re-captured corpus takes over without
+      // an edit here.
+      //
+      // MEASURED on the delivered tree by this file, from the live archive
+      // responses of the three course-download scenarios, in both cookie
+      // passes: 538 bytes, 4 entries - two directories and two deflated
+      // markdown files. A run that moves any of the three values is either an
+      // intended change to the archive, in which case the pin is re-measured
+      // and re-approved here, or a seed that moved, in which case
+      // test/parity/seed.js is what needs fixing.
+      pinned: Object.freeze({
+        fingerprint:
+          '4f1c73376d54a1ebb7d0f6d63f4d2cf15a7f0ee5e0ff6314b6196fb4cf55a713',
+        entryCount: 4,
+        byteLength: 538,
+        holds: 'draft-lesson/ and test-lesson/ as stored directory entries, ' +
+          'and test-lesson/parity-assignment.md and ' +
+          'test-lesson/test-material.md as deflated files of 26 and 12 ' +
+          'inflated bytes',
+        measuredFrom: 'the three course-download scenarios of the committed ' +
+          'corpus, in both the non-secure and the secure cookie pass, which ' +
+          'agreed on all three values'
+      }),
+      expected: Object.freeze({
+        utf8NameFlag: 'every-entry',
+        dataDescriptorFlag: 'no-entry',
+        centralVersionMadeBy: '0x0314',
+        versionNeededByMethod: Object.freeze({ deflated: 20, stored: 10 }),
+        localVersionNeededByMethod: Object.freeze({ deflated: 20, stored: 10 }),
+        directoryExternalAttributes: '0x45ed0010',
+        fileExternalAttributes: '0x81a40000',
+        internalAttributes: '0x0000',
+        crc32Declared: 'every-entry-with-content',
+        uncompressedSizeDeclared: 'every-entry-with-content',
+        crc32DeclaredMatchesContent: 'every-entry-with-content'
+      }),
+      // The QA measurement of the base-commit tree, field for field as it was
+      // reported. Fields its diff did not state are `null` and say so rather
+      // than being guessed at from the target column.
+      baseline: Object.freeze({
+        utf8NameFlag: 'no-entry',
+        dataDescriptorFlag: null,
+        centralVersionMadeBy: '0x000a',
+        versionNeededByMethod: null,
+        localVersionNeededByMethod: Object.freeze({ deflated: 10, stored: 10 }),
+        directoryExternalAttributes: '0x41ed0010',
+        fileExternalAttributes: '0x01a40000',
+        internalAttributes: null,
+        crc32Declared: 'every-entry-with-content',
+        uncompressedSizeDeclared: 'every-entry-with-content',
+        crc32DeclaredMatchesContent: null
+      }),
+      baselineNote: 'measured by QA at the base commit: 200 application/zip, ' +
+        '538 bytes on both trees, identical content-disposition, identical ' +
+        'entry names, CRCs and sizes, and sha256 5603ba5babf7c169 (baseline) ' +
+        'against 9198237d2c6da699 (target). `null` marks a field the ' +
+        'field-level diff did not state.',
+      changed: Object.freeze([
+        'local general-purpose flags 0x0000 -> 0x0800 (UTF-8 name, bit 11) on ' +
+          'every entry',
+        'local versionNeeded 10 -> 20 on deflated entries',
+        'central versionMadeBy 0x000a (MS-DOS v1.0) -> 0x0314 (UNIX v2.0)',
+        'directory external attributes 0x41ed0010 -> 0x45ed0010 ' +
+          '(0o40755 -> 0o42755, setgid now set)',
+        'file external attributes 0x01a40000 -> 0x81a40000 ' +
+          '(0o644 -> S_IFREG|0o644)'
+      ])
+    }),
+    Object.freeze({
+      id: 'short-code-download-archiver',
+      writer: 'archiver [lib/controllers/trinket.js:24,2044-2045]',
+      dependencyChange: 'archiver 2.1.1 -> 7.0.1',
+      routes: Object.freeze(['GET /{lang}/{shortCode}']),
+      // THE CONTENT PIN. Same contract as the course writer's above, and the
+      // same reason: this profile is content-independent, so without a pinned
+      // fingerprint a changed entry body on this route is invisible. MEASURED
+      // on the delivered tree by this file, from the live archive response of
+      // the short-code scenario, in both cookie passes: 182 bytes, one
+      // deflated `main.txt` entry of 61 inflated bytes.
+      pinned: Object.freeze({
+        fingerprint:
+          '076ae4d6f0ffb51ce3c09ba731986b1fbb28fbf36bd81dabe837edf5e56f5377',
+        entryCount: 1,
+        byteLength: 182,
+        holds: 'main.txt as a single deflated entry, 52 compressed bytes ' +
+          'over 61 inflated bytes, crc32 0xf10614e3 - the seeded python ' +
+          'trinket source',
+        measuredFrom: 'the short-code archive scenario of the committed ' +
+          'corpus, in both the non-secure and the secure cookie pass, which ' +
+          'agreed on all three values'
+      }),
+      // `directoryExternalAttributes` is declared null because this writer
+      // emits no directory entry on this route - a directory appearing here
+      // would be a difference, not a gap.
+      expected: Object.freeze({
+        utf8NameFlag: 'no-entry',
+        dataDescriptorFlag: 'every-entry',
+        centralVersionMadeBy: '0x032d',
+        versionNeededByMethod: Object.freeze({ deflated: 20 }),
+        localVersionNeededByMethod: Object.freeze({ deflated: 20 }),
+        directoryExternalAttributes: null,
+        fileExternalAttributes: '0x81a40020',
+        internalAttributes: '0x0000',
+        crc32Declared: 'every-entry-with-content',
+        uncompressedSizeDeclared: 'every-entry-with-content',
+        crc32DeclaredMatchesContent: 'every-entry-with-content'
+      }),
+      baseline: Object.freeze({
+        utf8NameFlag: 'no-entry',
+        dataDescriptorFlag: 'every-entry',
+        centralVersionMadeBy: '0x032d',
+        versionNeededByMethod: Object.freeze({ deflated: 20 }),
+        localVersionNeededByMethod: Object.freeze({ deflated: 20 }),
+        directoryExternalAttributes: null,
+        fileExternalAttributes: '0x81a40020',
+        internalAttributes: '0x0000',
+        crc32Declared: 'no-entry-with-content',
+        uncompressedSizeDeclared: 'no-entry-with-content',
+        crc32DeclaredMatchesContent: 'no-entry-with-content'
+      }),
+      baselineNote: 'measured by QA at the base commit: 200, 182 bytes on ' +
+        'both trees, EVERY header field identical, sha256 403636a7b891fa71 ' +
+        '(baseline) against eaa4ecd3b3304c7d (target), and a byte-diff ' +
+        'isolating ten offsets - the data-descriptor and central-directory ' +
+        'crc32 and uncompressed-size fields, where the baseline declared 0 ' +
+        'and 0 for an entry whose real values are 0xf10614e3 and 61 bytes. ' +
+        'Every other field of this profile is therefore the same on both ' +
+        'trees.',
+      changed: Object.freeze([
+        'declared crc32 0x00000000 -> 0xf10614e3, the entry\'s real value',
+        'declared uncompressed size 0 -> 61, the entry\'s real length',
+        'so crc32DeclaredMatchesContent no-entry-with-content -> ' +
+          'every-entry-with-content: the baseline\'s archives were ' +
+          'structurally invalid, which is what adm-zip 0.6.0 rejects with ' +
+          '"CRC32 checksum failed" and adm-zip 0.4.16 silently read as ""'
+      ])
+    })
+  ])
+});
+
+/**
+ * The registered writer for the route an archive came from.
+ *
+ * With a route key, the writer is selected by it and a route the register does
+ * not name resolves to nothing, which the comparison reports as a difference -
+ * an archive route that is not registered is not covered, and saying so is the
+ * point. Without one - a harness calling the comparator directly - every
+ * registered writer is tried and the best match is returned, so the check
+ * still means "this container matches a registered writer".
+ *
+ * @param {(string|null)} routeKey as manifest.routeKey produces
+ * @param {(Object|null)} profile the observed writer profile
+ * @returns {Object} {writer, selectedBy, candidates}
+ */
+function selectArchiveWriter(routeKey, profile) {
+  var byRoute = null;
+  var best = null;
+
+  ARCHIVE_CONTAINER_REGISTER.writers.forEach(function(writer) {
+    if (routeKey && writer.routes.indexOf(routeKey) >= 0) {
+      byRoute = writer;
+    }
+  });
+
+  if (routeKey) {
+    return {
+      writer: byRoute,
+      selectedBy: byRoute ? 'route' : 'route-not-registered',
+      candidates: ARCHIVE_CONTAINER_REGISTER.writers.map(function(writer) {
+        return writer.id;
+      })
+    };
+  }
+
+  ARCHIVE_CONTAINER_REGISTER.writers.forEach(function(writer) {
+    var verdict = compareArchiveProfile(profile, writer.expected);
+
+    if (!best || verdict.mismatches.length < best.verdict.mismatches.length) {
+      best = { writer: writer, verdict: verdict };
+    }
+  });
+
+  return {
+    writer: best ? best.writer : null,
+    selectedBy: 'best-match',
+    candidates: ARCHIVE_CONTAINER_REGISTER.writers.map(function(writer) {
+      return writer.id;
+    })
+  };
+}
+
+/**
+ * Holds one observed writer profile against a registered expectation.
+ *
+ * A field the container cannot determine - directory attributes in an archive
+ * with no directories - is UNDETERMINED rather than compared against nothing,
+ * and is reported as such: it is not a pass. A field the observed profile
+ * carries and the expectation does not declare is a MISMATCH, because an
+ * unregistered field is an uncompared one.
+ *
+ * @param {(Object|null)} observed as archiveWriterProfile produces
+ * @param {(Object|null)} expected the register's `expected` block
+ * @returns {Object} {ok, mismatches, undetermined}
+ */
+function compareArchiveProfile(observed, expected) {
+  var mismatches = [];
+  var undetermined = [];
+
+  if (!observed || !expected) {
+    return {
+      ok: false,
+      mismatches: [{
+        field: 'writerProfile',
+        expected: expected ? '(a profile)' : '(no registered expectation)',
+        observed: observed ? '(a profile)' : '(no readable container)'
+      }],
+      undetermined: undetermined
+    };
+  }
+
+  ARCHIVE_PROFILE_FIELDS.forEach(function(field) {
+    var want = has(expected, field) ? expected[field] : undefined;
+    var got = has(observed, field) ? observed[field] : undefined;
+
+    if (want === undefined) {
+      mismatches.push({
+        field: field,
+        expected: '(the register declares no value for this field)',
+        observed: got === undefined ? null : got
+      });
+      return;
+    }
+
+    if (ARCHIVE_PROFILE_METHOD_FIELDS.indexOf(field) >= 0) {
+      compareArchiveMethodMap(field, want, got, mismatches, undetermined);
+      return;
+    }
+
+    if (got === undefined || got === null) {
+      undetermined.push({
+        field: field,
+        expected: want,
+        why: 'this container\'s entries do not determine the field, so it was ' +
+          'not compared. It is reported rather than counted as a pass.'
+      });
+      return;
+    }
+
+    if (want === null) {
+      mismatches.push({
+        field: field,
+        expected: '(the register declares that this writer emits none)',
+        observed: got
+      });
+      return;
+    }
+
+    if (String(got) !== String(want)) {
+      mismatches.push({ field: field, expected: want, observed: got });
+    }
+  });
+
+  return {
+    ok: !mismatches.length,
+    mismatches: mismatches,
+    undetermined: undetermined
+  };
+}
+
+/**
+ * The per-method half of the profile comparison.
+ *
+ * @param {string} field
+ * @param {(Object|null)} want the registered map
+ * @param {(Object|null)} got the observed map
+ * @param {Array.<Object>} mismatches collected in place
+ * @param {Array.<Object>} undetermined collected in place
+ * @returns {undefined}
+ */
+function compareArchiveMethodMap(field, want, got, mismatches, undetermined) {
+  var observed = got || {};
+  var expected = want || {};
+
+  if (!want) {
+    // The register carries no map for this field on this writer, which is a
+    // registration gap rather than a container fault - and an uncompared field
+    // either way, so it is reported as a mismatch.
+    mismatches.push({
+      field: field,
+      expected: '(the register declares no per-method expectation)',
+      observed: sortedKeys(observed)
+    });
+    return;
+  }
+
+  Object.keys(observed).sort().forEach(function(method) {
+    if (!has(expected, method)) {
+      mismatches.push({
+        field: field + '.' + method,
+        expected: '(the register declares no ' + field + ' for the ' + method +
+          ' method, so this container carries a method nobody registered)',
+        observed: observed[method]
+      });
+      return;
+    }
+
+    if (String(observed[method]) !== String(expected[method])) {
+      mismatches.push({
+        field: field + '.' + method,
+        expected: expected[method],
+        observed: observed[method]
+      });
+    }
+  });
+
+  Object.keys(expected).sort().forEach(function(method) {
+    if (!has(observed, method)) {
+      undetermined.push({
+        field: field + '.' + method,
+        expected: expected[method],
+        why: 'this container holds no ' + method + ' entry, so the field was ' +
+          'not compared'
+      });
+    }
+  });
+}
+
+/**
+ * Holds one observed container against a registered CONTENT pin.
+ *
+ * The content half of the register, and the counterpart to
+ * `compareArchiveProfile`: that one asks what the writing library did, this
+ * one asks what the container holds. Three fields, each compared exactly and
+ * each a mismatch on its own - the entry-table fingerprint, the entry count
+ * and the byte length.
+ *
+ * A pin field the register does not declare is reported as UNPINNED rather
+ * than passed: an undeclared pin is an uncompared one, and the startup probe
+ * `every-registered-writer-declares-a-complete-content-pin` is what keeps that
+ * report from ever being reachable through the committed register. A field the
+ * container did not produce - a fingerprint on a container that would not
+ * parse - is reported the same way, because the caller has already turned that
+ * state into a difference of its own.
+ *
+ * @param {(Object|null)} summary as readArchiveContainer produces
+ * @param {(Object|null)} pin a register writer's `pinned` block
+ * @returns {Object} {ok, compared, mismatches, unpinned}
+ */
+function compareArchivePin(summary, pin) {
+  var fields = [
+    { field: 'fingerprint', observed: summary ? summary.fingerprint : null },
+    { field: 'entryCount', observed: summary ? summary.entryCount : null },
+    { field: 'byteLength', observed: summary ? summary.byteLength : null }
+  ];
+  var mismatches = [];
+  var unpinned = [];
+  var compared = [];
+
+  fields.forEach(function(entry) {
+    var want = pin ? pin[entry.field] : null;
+
+    if (want === null || want === undefined) {
+      unpinned.push({
+        field: entry.field,
+        observed: entry.observed,
+        why: 'the register declares no ' + entry.field + ' pin for this ' +
+          'writer, so the observed value was recorded rather than compared'
+      });
+      return;
+    }
+
+    if (entry.observed === null || entry.observed === undefined) {
+      unpinned.push({
+        field: entry.field,
+        observed: null,
+        why: 'this container produced no ' + entry.field + ', so the pin had ' +
+          'nothing to compare against. The container\'s own state is reported ' +
+          'as a difference of its own'
+      });
+      return;
+    }
+
+    compared.push(entry.field);
+
+    if (entry.observed !== want) {
+      mismatches.push({
+        field: entry.field,
+        expected: want,
+        observed: entry.observed
+      });
+    }
+  });
+
+  return {
+    ok: !mismatches.length,
+    compared: compared,
+    mismatches: mismatches,
+    unpinned: unpinned
+  };
+}
+
+/**
+ * The whole archive comparison for one step, as facts rather than records.
+ *
+ * ONE implementation, two consumers: `compareArchive` turns this into
+ * difference and observation records, and `accountArchives` writes it into the
+ * artifact verbatim. A second derivation would be a second answer to the same
+ * question, and the two would drift.
+ *
+ * @param {(Object|null)} recorded the baseline body from the corpus
+ * @param {(Object|null)} observed the body this run measured
+ * @param {Object} context {contentType, routeKey}
+ * @returns {(Object|null)} null when no archive comparison applies
+ */
+function describeArchiveComparison(recorded, observed, context) {
+  var summary = observed ? observed.archive : null;
+  var recordedArchive = recorded ? recorded.archive : null;
+  var selection;
+  var verdict;
+  var pin;
+  var pinVerdict;
+  var out;
+
+  if (!isArchiveDigestExempt(context && context.contentType)) {
+    return null;
+  }
+
+  out = {
+    contentType: typeWithoutCharset(context && context.contentType) || null,
+    routeKey: (context && context.routeKey) || null,
+    container: summary ? summary.container : null,
+    byteLength: summary ? summary.byteLength : null,
+    state: 'no-summary',
+    reason: null,
+    entryCount: summary ? summary.entryCount : null,
+    recordedEntryCount: recordedArchive ? recordedArchive.entryCount : null,
+    // The recording's own byte length, so the comparison below can say which
+    // side gated it. When a recording carries one, `compareBody` has already
+    // compared the same quantity against it exactly as `body.length`, which is
+    // why the pin defers rather than reporting the same fact twice.
+    recordedByteLength: recordedArchive &&
+      recordedArchive.byteLength !== undefined
+      ? recordedArchive.byteLength
+      : null,
+    fingerprint: summary ? summary.fingerprint : null,
+    recordedFingerprint: recordedArchive ? (recordedArchive.fingerprint || null) : null,
+    // THE REGISTER PIN, carried beside the recorded values so the artifact
+    // shows what the fallback was as well as which side decided.
+    pinnedFingerprint: null,
+    pinnedEntryCount: null,
+    pinnedByteLength: null,
+    fingerprintComparison: 'not-compared',
+    // The CORPUS-side truth, reported whatever the comparison ended up using:
+    // a run that fell back to the pin must not read as a corpus comparison it
+    // did not make, and the re-capture that would supersede the pin must stay
+    // visible in the evidence.
+    recordingFingerprintState: recordedArchive
+      ? (recordedArchive.fingerprint
+        ? 'recorded'
+        : 'recording-carries-no-fingerprint')
+      : 'recording-predates-the-field',
+    // Which side each of the three content comparisons was decided against:
+    // 'recording', 'register-pin' or 'nothing'.
+    fingerprintComparedAgainst: 'nothing',
+    entryCountComparedAgainst: 'nothing',
+    byteLengthComparedAgainst: 'nothing',
+    // The pin verdict, computed whenever a pin exists - including when the
+    // recording is the authority. Recorded rather than gated in that case, so
+    // the pin can neither override nor shadow a recording.
+    pinComparison: null,
+    writer: null,
+    writerSelectedBy: null,
+    profile: summary ? summary.writerProfile : null,
+    profileComparison: null,
+    entries: summary ? summary.entries : [],
+    entriesTruncated: summary ? !!summary.entriesTruncated : false,
+    entryDivergence: []
+  };
+
+  if (!summary) {
+    // The exempt content type was served and no summary was taken, which can
+    // only mean this file did not produce one. Reported as its own state so it
+    // cannot pass for a compared container.
+    out.reason = 'the response declares an exempt archive content type and no ' +
+      'structural summary was taken, so nothing covers its digest exemption';
+    return out;
+  }
+
+  if (!summary.parsed) {
+    out.state = summary.empty
+      ? 'empty'
+      : (summary.container === 'zip' ? 'unreadable' : 'not-a-zip');
+    out.reason = summary.unparsedReason;
+    return out;
+  }
+
+  if (!summary.entryCount) {
+    // A container that read cleanly and holds nothing. Its own state, because
+    // every field of a writer profile is undetermined without entries: left as
+    // `parsed` it would pass every comparison here while comparing nothing,
+    // which is the vacuity this whole section exists to avoid. Both registered
+    // archive routes always emit at least one entry, so a route that begins
+    // serving an empty container is registered here deliberately or it is a
+    // difference.
+    out.state = 'no-entries';
+    out.reason = 'the container read cleanly and declares no entries, so ' +
+      'every field of its writer profile is undetermined and nothing about it ' +
+      'can be compared';
+    return out;
+  }
+
+  out.state = 'parsed';
+  selection = selectArchiveWriter(out.routeKey, summary.writerProfile);
+  out.writer = selection.writer ? selection.writer.id : null;
+  out.writerSelectedBy = selection.selectedBy;
+
+  if (!selection.writer) {
+    out.profileComparison = {
+      ok: false,
+      mismatches: [{
+        field: 'registered',
+        expected: 'a writer profile registered for this route in ' +
+          'ARCHIVE_CONTAINER_REGISTER (' + selection.candidates.join(', ') + ')',
+        observed: 'no registered writer for ' + (out.routeKey || '(no route)')
+      }],
+      undetermined: []
+    };
+  }
+  else {
+    verdict = compareArchiveProfile(summary.writerProfile,
+      selection.writer.expected);
+    out.profileComparison = verdict;
+  }
+
+  // THE CONTENT COMPARISON, and the precedence that governs it. A RECORDED
+  // value is the authority wherever the recording carries one: the corpus is
+  // what a baseline capture measured, and a pin that overrode it would turn a
+  // real parity difference into a pass. Where the recording carries nothing -
+  // which is every archive scenario of the committed corpus, because it
+  // records a binary body as a length and a digest and predates the archive
+  // block - the register PIN is compared instead, and the state says so.
+  pin = selection.writer ? (selection.writer.pinned || null) : null;
+  out.pinnedFingerprint = pin ? (pin.fingerprint || null) : null;
+  out.pinnedEntryCount = pin && pin.entryCount !== undefined
+    ? pin.entryCount
+    : null;
+  out.pinnedByteLength = pin && pin.byteLength !== undefined
+    ? pin.byteLength
+    : null;
+
+  if (pin) {
+    // Computed whatever decides the verdict, so a recording that disagrees
+    // with the pin is visible in the evidence without the pin gating it.
+    pinVerdict = compareArchivePin(summary, pin);
+    out.pinComparison = pinVerdict;
+  }
+
+  if (out.recordedFingerprint) {
+    out.fingerprintComparedAgainst = 'recording';
+    out.fingerprintComparison = out.recordedFingerprint === out.fingerprint
+      ? 'equal'
+      : 'differs';
+
+    if (out.fingerprintComparison === 'differs') {
+      out.entryDivergence = describeArchiveEntryDivergence(
+        recordedArchive.entries || [], summary.entries || []);
+    }
+  }
+  else if (out.pinnedFingerprint) {
+    // A DISTINCT state, deliberately not 'equal' or 'differs': the artifact
+    // must never claim a corpus comparison it did not make, and
+    // `recordingFingerprintState` beside it still says what the corpus holds.
+    out.fingerprintComparedAgainst = 'register-pin';
+    out.fingerprintComparison = out.pinnedFingerprint === out.fingerprint
+      ? 'equal-to-register-pin'
+      : 'differs-from-register-pin';
+  }
+  else {
+    // Neither side carries a fingerprint. On a REGISTERED route this is a
+    // gating failure rather than an observation - a category the comparator
+    // cannot fail in is a category it is not comparing - and `compareArchive`
+    // and `accountArchiveCheck` both hold it. On an unregistered route the
+    // missing writer is already the difference.
+    out.fingerprintComparedAgainst = 'nothing';
+    out.fingerprintComparison = 'uncompared-no-recording-and-no-pin';
+  }
+
+  if (out.recordedEntryCount !== null) {
+    out.entryCountComparedAgainst = 'recording';
+  }
+  else if (out.pinnedEntryCount !== null) {
+    out.entryCountComparedAgainst = 'register-pin';
+  }
+
+  if (out.recordedByteLength !== null) {
+    // `compareBody` compares the recorded body length exactly in this same
+    // step, so the recording is already gating this quantity.
+    out.byteLengthComparedAgainst = 'recording';
+  }
+  else if (out.pinnedByteLength !== null) {
+    out.byteLengthComparedAgainst = 'register-pin';
+  }
+
+  return out;
+}
+
+/**
+ * Where two entry tables differ, field by field, for the report.
+ *
+ * Only reached when the fingerprints already differ, so this narrows the
+ * report; it never decides the verdict. Bounded, because one re-generated
+ * archive should not fill an artifact.
+ *
+ * @param {Array.<Object>} recorded
+ * @param {Array.<Object>} observed
+ * @returns {Array.<Object>}
+ */
+function describeArchiveEntryDivergence(recorded, observed) {
+  var out = [];
+  var byName = Object.create(null);
+
+  recorded.forEach(function(entry) {
+    byName[entry.name] = entry;
+  });
+
+  observed.forEach(function(entry) {
+    var other = byName[entry.name];
+
+    if (!other) {
+      out.push({
+        entry: entry.name,
+        field: '(present)',
+        recorded: null,
+        observed: 'an entry the recording does not carry'
+      });
+      return;
+    }
+
+    delete byName[entry.name];
+
+    Object.keys(entry).sort().forEach(function(field) {
+      if (field === 'index') {
+        return;
+      }
+
+      if (String(other[field]) !== String(entry[field])) {
+        out.push({
+          entry: entry.name,
+          field: field,
+          recorded: other[field] === undefined ? null : other[field],
+          observed: entry[field]
+        });
+      }
+    });
+  });
+
+  Object.keys(byName).forEach(function(name) {
+    out.push({
+      entry: name,
+      field: '(present)',
+      recorded: 'an entry the recording carries',
+      observed: null
+    });
+  });
+
+  return out.slice(0, MAX_DIFFERENCES_PER_STEP);
+}
+
+/**
+ * The archive comparison as difference and observation records.
+ *
+ * WHAT FAILS HERE, and it is the whole reason this section exists: a container
+ * whose writer profile no longer matches the frozen register, a container
+ * served on a route the register does not name, a ZIP that cannot be read, an
+ * entry count or byte length that moved, a fingerprint that differs from a
+ * recorded one, a fingerprint that differs from the REGISTERED PIN where the
+ * recording carries none, and an archive on a registered route that ends with
+ * its fingerprint compared against nothing at all. Each is a DIFFERENCE and
+ * each exits non-zero.
+ *
+ * WHY THE PIN IS HERE. The writer profile is content-independent by design, so
+ * a container that holds different bytes on the same route matches every one
+ * of its eleven fields. While the fingerprint was compared only against a
+ * recorded value - and the committed corpus records a binary body as a length
+ * and a digest, carrying no archive block at all - content drift produced
+ * ZERO differences: measured, on two valid containers equal in byte length,
+ * entry names, entry sizes and profile and differing only in inflated content
+ * and crc32. The pin closes that, and it defers to a recording wherever one
+ * exists so a re-captured corpus supersedes it without an edit.
+ *
+ * WHAT IS AN OBSERVATION, stated rather than passed off as compared: a
+ * fingerprint compared against the register pin rather than against a
+ * recording, where the value is now gated but the corpus-side gap is real and
+ * is reported so the re-capture that would close it stays visible; a field
+ * this container's entries cannot determine; and an exempt content type this
+ * reader does not open, where the digest exemption remains uncovered.
+ *
+ * @param {(Object|null)} recorded the baseline body
+ * @param {(Object|null)} observed the measured body
+ * @param {Object} context {contentType, routeKey}
+ * @returns {Object} {differences, observations, comparison}
+ */
+function compareArchive(recorded, observed, context) {
+  var comparison = describeArchiveComparison(recorded, observed, context);
+  var differences = [];
+  var observations = [];
+
+  if (!comparison) {
+    return { differences: differences, observations: observations,
+      comparison: null };
+  }
+
+  if (comparison.state === 'no-summary' || comparison.state === 'unreadable' ||
+      comparison.state === 'no-entries') {
+    differences.push(difference('body.archive.parsed',
+      'a readable container with at least one entry', comparison.state, {
+        note: comparison.reason + '. The raw digest of this content type is ' +
+          'exempt as a clock read, so the structural read is what covers it: ' +
+          'a container that cannot be read, or that holds nothing, is not a ' +
+          'container that matched.'
+      }));
+
+    return { differences: differences, observations: observations,
+      comparison: comparison };
+  }
+
+  if (comparison.state === 'empty' || comparison.state === 'not-a-zip') {
+    observations.push(observation('body.archive.parsed', true, false,
+      comparison.reason));
+
+    return { differences: differences, observations: observations,
+      comparison: comparison };
+  }
+
+  (comparison.profileComparison.mismatches || []).forEach(function(record) {
+    differences.push(difference('body.archive.writerProfile.' + record.field,
+      record.expected, record.observed, {
+        note: 'the container\'s writer profile no longer matches the frozen ' +
+          'expectation registered for ' +
+          (comparison.writer || comparison.routeKey || 'this route') +
+          ' in ARCHIVE_CONTAINER_REGISTER. This field is decided by the ' +
+          'writing library rather than by the content, so it moves when the ' +
+          'writer changes - which is the change this comparison exists to ' +
+          'register rather than normalize away.'
+      }));
+  });
+
+  (comparison.profileComparison.undetermined || []).forEach(function(record) {
+    observations.push(observation('body.archive.writerProfile.' + record.field,
+      record.expected, null, record.why));
+  });
+
+  if (comparison.entryCountComparedAgainst === 'recording' &&
+      comparison.recordedEntryCount !== comparison.entryCount) {
+    differences.push(difference('body.archive.entryCount',
+      comparison.recordedEntryCount, comparison.entryCount, {
+        note: 'the container holds a different number of entries than the ' +
+          'recording did'
+      }));
+  }
+  else if (comparison.entryCountComparedAgainst === 'register-pin' &&
+      comparison.pinnedEntryCount !== comparison.entryCount) {
+    differences.push(difference('body.archive.entryCount',
+      comparison.pinnedEntryCount, comparison.entryCount, {
+        note: 'the recording carries no entry count, so the count was ' +
+          'compared against the `pinned.entryCount` registered for ' +
+          (comparison.writer || comparison.routeKey || 'this route') + ' in ' +
+          'ARCHIVE_CONTAINER_REGISTER, and it moved. Either the archive is ' +
+          'intended to hold a different number of entries, in which case the ' +
+          'pin is re-measured and re-approved in the register, or the seeded ' +
+          'fixtures moved and test/parity/seed.js is what needs fixing.',
+        comparedAgainst: 'register-pin'
+      }));
+  }
+
+  if (comparison.byteLengthComparedAgainst === 'register-pin' &&
+      comparison.pinnedByteLength !== comparison.byteLength) {
+    differences.push(difference('body.archive.byteLength',
+      comparison.pinnedByteLength, comparison.byteLength, {
+        note: 'the recording carries no archive byte length, so the length ' +
+          'was compared against the `pinned.byteLength` registered for ' +
+          (comparison.writer || comparison.routeKey || 'this route') + ' in ' +
+          'ARCHIVE_CONTAINER_REGISTER, and it moved. The timestamp fields of ' +
+          'a ZIP are fixed-width, so this length does NOT move with the ' +
+          'clock: it moved because the container is built from different ' +
+          'input or by a different writer. Either the change is intended and ' +
+          'the pin is re-measured and re-approved in the register, or the ' +
+          'seeded fixtures moved and test/parity/seed.js is what needs fixing.',
+        comparedAgainst: 'register-pin'
+      }));
+  }
+
+  if (comparison.fingerprintComparison === 'differs') {
+    differences.push(difference('body.archive.fingerprint',
+      comparison.recordedFingerprint, comparison.fingerprint, {
+        note: 'sha256 over the canonical entry table with the mtime fields ' +
+          'excluded and each entry\'s content taken as the sha256 of its ' +
+          'inflated bytes. Two archives of the same entries fingerprint ' +
+          'identically however far apart their clock reads are, so this ' +
+          'difference is a change in what the archive HOLDS.',
+        comparedAgainst: 'recording',
+        entryDivergence: comparison.entryDivergence
+      }));
+  }
+  else if (comparison.fingerprintComparison === 'differs-from-register-pin') {
+    // THE CONTENT-DRIFT FAILURE. The recording carries no fingerprint, so
+    // this was held against the register's pinned measurement - and it moved.
+    // The message has to say three things, because whoever reads only the
+    // failure has to be able to act on it: that the CONTENTS of the container
+    // changed, that this is not the clock, and what the two legitimate
+    // remedies are.
+    differences.push(difference('body.archive.fingerprint',
+      comparison.pinnedFingerprint, comparison.fingerprint, {
+        note: 'the container\'s CONTENTS changed. sha256 over the canonical ' +
+          'entry table with every mtime field DELIBERATELY EXCLUDED and each ' +
+          'entry\'s content taken as the sha256 of its INFLATED bytes, so ' +
+          'this value cannot move with a clock read: the raw digest of an ' +
+          'archive is exempt precisely because it IS a clock read, and this ' +
+          'fingerprint is what replaced it. The recording carries no ' +
+          'fingerprint - the committed corpus records a binary body as a ' +
+          'length and a digest and predates the field - so the comparison ' +
+          'was against the `pinned.fingerprint` registered for ' +
+          (comparison.writer || comparison.routeKey || 'this route') + ' in ' +
+          'ARCHIVE_CONTAINER_REGISTER. Two remedies, and exactly one of them ' +
+          'is right: either this archive is INTENDED to hold different ' +
+          'content, in which case the pin is re-measured from a driven run ' +
+          'and re-approved in the register with the change recorded; or the ' +
+          'seeded fixtures moved under it, in which case the pin is correct ' +
+          'and test/parity/seed.js is what needs fixing. The entry table of ' +
+          'both sides is in the artifact under passes[].archives, which is ' +
+          'where the changed entry is identified. Note that the writer ' +
+          'profile above is content-INDEPENDENT and still matches, so this ' +
+          'difference is the only thing standing between a changed archive ' +
+          'and a passing gate.',
+        comparedAgainst: 'register-pin',
+        pinnedEntryCount: comparison.pinnedEntryCount,
+        pinnedByteLength: comparison.pinnedByteLength,
+        recordingState: comparison.recordingFingerprintState
+      }));
+  }
+  else if (comparison.fingerprintComparison ===
+      'uncompared-no-recording-and-no-pin') {
+    // THE COVERAGE FAILURE, at the scenario level. On a registered route this
+    // is a gating failure and not an observation: a fingerprint compared
+    // against nothing is the exact hole this section closed, and it would
+    // otherwise reopen silently the moment a writer were registered without a
+    // pin. On an unregistered route the absent writer is already the
+    // difference, so this is reported rather than counted twice.
+    if (comparison.writer) {
+      differences.push(difference('body.archive.fingerprint',
+        'a fingerprint compared against a recording or against the ' +
+          'register pin', 'compared against nothing', {
+          note: 'the recording carries no fingerprint for this archive and ' +
+            'the writer registered for ' + comparison.writer + ' in ' +
+            'ARCHIVE_CONTAINER_REGISTER declares no `pinned.fingerprint`, so ' +
+            'nothing compares what this container HOLDS. The writer profile ' +
+            'is content-independent, so on its own it passes a container with ' +
+            'entirely different contents. Register a pin measured from a ' +
+            'driven run, or re-capture the corpus with the archive block ' +
+            'present.',
+          comparedAgainst: 'nothing',
+          recordingState: comparison.recordingFingerprintState
+        }));
+    }
+    else {
+      observations.push(observation('body.archive.fingerprint', null,
+        comparison.fingerprint, 'no writer is registered for this route, so ' +
+          'there is no pin to compare against and the recording carries no ' +
+          'fingerprint either. The unregistered route is itself the ' +
+          'difference reported above; the measured fingerprint is recorded ' +
+          'here so registering the route does not need another run.'));
+    }
+  }
+  else if (comparison.fingerprintComparison === 'equal-to-register-pin') {
+    // COMPARED, and gating - but not against the corpus, and the artifact
+    // must not read as though it were. The corpus-side gap is real and the
+    // re-capture that closes it is a sibling's work, so it is reported here
+    // rather than papered over by a passing comparison.
+    observations.push(observation('body.archive.fingerprint',
+      comparison.pinnedFingerprint, comparison.fingerprint,
+      'compared EXACTLY, and against the `pinned.fingerprint` registered for ' +
+        (comparison.writer || 'this route') + ' in ' +
+        'ARCHIVE_CONTAINER_REGISTER rather than against the recording: the ' +
+        'recording state is ' +
+        JSON.stringify(comparison.recordingFingerprintState) + ', because the ' +
+        'committed corpus records a binary body as a length and a digest and ' +
+        'predates the archive block. A mismatch against the pin is a real ' +
+        'difference that fails the run - it is not an observation - so this ' +
+        'container\'s contents ARE gated. What remains open is the corpus ' +
+        'side: a corpus captured with the archive block present would be ' +
+        'compared against the recording instead, and the pin would stand ' +
+        'aside without an edit to this file.'));
+  }
+
+  // The five branches above are exhaustive for a `parsed` container: the
+  // fingerprint state is 'equal' or 'differs' against a recording,
+  // 'equal-to-register-pin' or 'differs-from-register-pin' against a pin, or
+  // 'uncompared-no-recording-and-no-pin'. A recording that carries an archive
+  // block with no fingerprint in it reaches the pin like any other, which is
+  // why it needs no branch of its own here - `recordingFingerprintState`
+  // carries that distinction into the artifact instead.
+  return { differences: differences, observations: observations,
+    comparison: comparison };
+}
+
+/**
+ * A numeric field collected per compression method.
+ *
+ * versionNeeded is the field this exists for: a ZIP declares 10 for a stored
+ * entry and 20 for a deflated one, so a single expected number would compare
+ * one method against the other. The map is keyed by method name and a method
+ * the frozen expectation does not declare is a difference rather than a gap.
+ *
+ * @param {Array.<Object>} entries
+ * @param {function(Object): number} pick
+ * @returns {Object}
+ */
+function archiveByMethod(entries, pick) {
+  var out = {};
+
+  entries.forEach(function(entry) {
+    var key = entry.method;
+    var value = pick(entry);
+
+    if (!has(out, key)) {
+      out[key] = value;
+      return;
+    }
+
+    if (out[key] !== value && String(out[key]).indexOf('mixed:') !== 0) {
+      out[key] = 'mixed:' + out[key] + ',' + value;
+    }
+  });
+
+  return sortedKeys(out);
+}
+
+// ---------------------------------------------------------------------------
+// Body comparison
+// ---------------------------------------------------------------------------
+
+/**
+ * Compares two recorded bodies.
+ *
+ * A BINARY body is compared by length, always and exactly, and by content
+ * digest for every media type EXCEPT the six enumerated archive containers,
+ * where the digest is recorded as an OBSERVATION rather than gating. Those
+ * containers embed each entry's modification time in their own headers, so
+ * their digest is a clock read while their length is not; the exemption is
+ * declared in the timestamps category of the volatile set and nowhere else, and
+ * the archive's internal layout is asserted by ./storage and ./worker, which
+ * open it instead of hashing it. `describeBinaryBodyContract` emits both halves
+ * of that contract into every artifact. No normalization applies to a binary
+ * body either way, because there is no text to normalize.
+ *
+ * A TEXTUAL body is compared as its NORMALIZED WHOLE first. That is deliberate
+ * and it is the strongest available reading of this folder's third commitment:
+ * gating on the whole document means every byte a rendered page emits is
+ * compared unless a volatile-set rule removed it, rather than only the parts
+ * someone thought to enumerate. The named sub-fields - rendered text, form and
+ * input names and values, ids, classes, data- and ARIA attributes, inline
+ * scripts, href and src - are then extracted to SAY WHAT DIFFERED, so a
+ * reviewer can act on the report without re-running the tool. They narrow the
+ * report; they never narrow the gate.
+ *
+ * An ARCHIVE container - one of the six content types whose raw digest the
+ * timestamps category exempts - is additionally compared by its STRUCTURE, in
+ * this same step and independently of the digest: the writer profile against
+ * the frozen register and the entry-table fingerprint against the recording.
+ * That is what stands behind the exemption, and it fails the run.
+ *
+ * @param {Object} baseline recorded body
+ * @param {Object} target observed body
+ * @param {Object} context {contentType, normalizationApplied, routeKey}
+ * @returns {Object} {differences, observations}
+ */
+function compareBody(baseline, target, context) {
+  var differences = [];
+  var observations = [];
+  var archive;
+  var left;
+  var right;
+  var divergence;
+
+  if (!baseline || !target) {
+    if (!baseline !== !target) {
+      differences.push(difference('body.present', !!baseline, !!target));
+    }
+
+    return { differences: differences, observations: observations };
+  }
+
+  if (baseline.encoding !== target.encoding) {
+    differences.push(difference('body.encoding', baseline.encoding,
+      target.encoding, {
+        note: 'text or binary follows from the content type, so this is a ' +
+          'content-type consequence as much as a body one'
+      }));
+  }
+
+  if (baseline.truncated !== target.truncated) {
+    differences.push(difference('body.truncated', baseline.truncated,
+      target.truncated, {
+        note: 'both sides truncate at ' + MAX_TEXT_BYTES + ' bytes, so this ' +
+          'means the body crossed that boundary on one side only'
+      }));
+  }
+
+  if (baseline.encoding === 'binary' || target.encoding === 'binary' ||
+      baseline.text === null || target.text === null) {
+    if (baseline.length !== target.length) {
+      differences.push(difference('body.length', baseline.length, target.length));
+    }
+
+    // THE ARCHIVE COMPARISON, before the digest and independently of it. It
+    // runs whether or not the digests agree, because the digest agreeing is a
+    // coincidence of two clock reads and says nothing about the container -
+    // and it is what carries the exemption below from an assertion to a
+    // comparison. See the ARCHIVE CONTAINERS section.
+    archive = compareArchive(baseline, target, context);
+    differences = differences.concat(archive.differences);
+    observations = observations.concat(archive.observations);
+
+    if (baseline.digest === target.digest) {
+      return { differences: differences, observations: observations };
+    }
+
+    if (isArchiveDigestExempt(context.contentType)) {
+      observations.push(observation('body.digest', baseline.digest,
+        target.digest, 'this content type embeds each entry\'s modification ' +
+        'time in the entry\'s own headers, so the RAW digest is a clock read ' +
+        '- see the timestamps category of the volatile set. It is the only ' +
+        'part of this body that is not compared. The byte length is compared ' +
+        'exactly, and the container itself is compared structurally in this ' +
+        'same step: body.archive.writerProfile against the frozen ' +
+        'expectation in ARCHIVE_CONTAINER_REGISTER, and ' +
+        'body.archive.fingerprint - the canonical entry table with the mtime ' +
+        'fields excluded - against the recording where the recording carries ' +
+        'one and against the register\'s pinned measurement where it does ' +
+        'not. Either of those is a difference that fails the run.'));
+
+      return { differences: differences, observations: observations };
+    }
+
+    differences.push(difference('body.digest', baseline.digest, target.digest, {
+      note: 'sha256 over the whole body; no normalization applies to a ' +
+        'binary or stream body'
+    }));
+
+    return { differences: differences, observations: observations };
+  }
+
+  left = normalizeText(baseline.text);
+  right = normalizeText(target.text);
+
+  if (left.value === right.value) {
+    if (!left.applied.length && !right.applied.length) {
+      // Nothing was normalized, so the recorded byte count and digest are
+      // exactly comparable and are compared.
+      if (baseline.length !== target.length) {
+        differences.push(difference('body.length', baseline.length, target.length));
+      }
+
+      if (baseline.digest !== target.digest) {
+        differences.push(difference('body.digest', baseline.digest,
+          target.digest, {
+            note: 'the normalized text is identical but the raw bytes are ' +
+              'not, and no volatile rule fired - so the difference is in ' +
+              'bytes the text form does not carry, such as an encoding change'
+          }));
+      }
+    }
+    else if (baseline.digest !== target.digest) {
+      observations.push(observation('body.digest', baseline.digest,
+        target.digest, 'the normalized text is identical; the raw digest ' +
+        'differs because normalization fired (' +
+        left.applied.concat(right.applied).join(', ') + ')'));
+    }
+
+    return { differences: differences, observations: observations };
+  }
+
+  // The gate has already failed at this point. Everything below only decides
+  // how precisely the report can name what changed.
+  if (isTextualJson(context.contentType)) {
+    differences = differences.concat(compareJson(left.value, right.value));
+  }
+  else if (isTextualMarkup(context.contentType)) {
+    differences = differences.concat(compareMarkup(left.value, right.value));
+  }
+
+  if (!differences.length) {
+    divergence = firstDivergence(left.value, right.value);
+
+    differences.push(difference('body.text', windowAround(left.value, divergence),
+      windowAround(right.value, divergence), {
+        note: 'the normalized bodies differ at character ' + divergence +
+          ' and no structured sub-field accounts for it',
+        offset: divergence
+      }));
+  }
+
+  return { differences: differences, observations: observations };
+}
+
+/**
+ * Whether a content type is one the volatile set exempts from a binary digest
+ * comparison, because the container embeds modification times.
+ *
+ * The list is read from the timestamps category and from nowhere else, so the
+ * exemption cannot be widened without appearing in that list.
+ *
+ * @param {*} contentType
+ * @returns {boolean}
+ */
+function isArchiveDigestExempt(contentType) {
+  var media = String(typeWithoutCharset(contentType) || '').trim().toLowerCase();
+
+  return ARCHIVE_DIGEST_EXEMPT.indexOf(media) >= 0;
+}
+
+/**
+ * Whether a content type is JSON.
+ *
+ * @param {*} contentType
+ * @returns {boolean}
+ */
+function isTextualJson(contentType) {
+  return /json/i.test(String(contentType || ''));
+}
+
+/**
+ * Whether a content type is HTML or XML markup.
+ *
+ * @param {*} contentType
+ * @returns {boolean}
+ */
+function isTextualMarkup(contentType) {
+  return /html|xml/i.test(String(contentType || ''));
+}
+
+// ---------------------------------------------------------------------------
+// JSON comparison
+// ---------------------------------------------------------------------------
+
+/**
+ * Compares two JSON documents structurally.
+ *
+ * Structurally so that key ORDER cannot manufacture a difference, and never
+ * loosely: a scalar is compared by value AND by type, so `"1"` and `1` differ;
+ * a missing key is reported as a difference rather than skipped; and an array
+ * is compared element by element including its length.
+ *
+ * @param {string} baselineText
+ * @param {string} targetText
+ * @returns {Array.<Object>} differences
+ */
+function compareJson(baselineText, targetText) {
+  var left;
+  var right;
+  var leftFlat;
+  var rightFlat;
+  var paths;
+  var differences = [];
+
+  try {
+    left = JSON.parse(baselineText);
+  }
+  catch (err) {
+    left = undefined;
+  }
+
+  try {
+    right = JSON.parse(targetText);
+  }
+  catch (err) {
+    right = undefined;
+  }
+
+  if (left === undefined || right === undefined) {
+    // One of them is not JSON despite the content type. Reported as its own
+    // difference, because "the response stopped being parseable JSON" is a
+    // finding in its own right, and the caller falls back to a text window.
+    if ((left === undefined) !== (right === undefined)) {
+      return [difference('body.json.parseable', left !== undefined,
+        right !== undefined, {
+          note: 'the content type says JSON but one side does not parse'
+        })];
+    }
+
+    return [];
+  }
+
+  leftFlat = flattenJson(left, '$', Object.create(null));
+  rightFlat = flattenJson(right, '$', Object.create(null));
+
+  paths = Object.keys(leftFlat).concat(Object.keys(rightFlat))
+    .filter(function(value, index, all) {
+      return all.indexOf(value) === index;
+    })
+    .sort();
+
+  paths.forEach(function(pathKey) {
+    var recorded = has(leftFlat, pathKey) ? leftFlat[pathKey] : undefined;
+    var observed = has(rightFlat, pathKey) ? rightFlat[pathKey] : undefined;
+
+    if (recorded === undefined) {
+      differences.push(difference('body.json' + pathKey.slice(1),
+        '(absent)', observed, { note: 'a key the baseline did not carry' }));
+      return;
+    }
+
+    if (observed === undefined) {
+      differences.push(difference('body.json' + pathKey.slice(1),
+        recorded, '(absent)', { note: 'a key the baseline carried' }));
+      return;
+    }
+
+    if (recorded !== observed) {
+      differences.push(difference('body.json' + pathKey.slice(1),
+        recorded, observed));
+    }
+  });
+
+  return differences;
+}
+
+/**
+ * Flattens a JSON value into a path-keyed map of type-tagged scalars.
+ *
+ * The type tag is what keeps the comparison honest: `number:1` never equals
+ * `string:1`, and `null` never equals `string:`. String scalars are normalized
+ * through the volatile set, and so is the string form of a number, so a
+ * run-minted id or a run-era instant compares equal while the type it arrived
+ * as is still checked.
+ *
+ * @param {*} value
+ * @param {string} prefix
+ * @param {Object} out
+ * @returns {Object}
+ */
+function flattenJson(value, prefix, out) {
+  if (value === null) {
+    out[prefix] = 'null';
+    return out;
+  }
+
+  if (Array.isArray(value)) {
+    // The container's own kind and size are recorded, so an empty array does
+    // not compare equal to an empty object and a truncated list is a
+    // difference even when every element it kept still matches.
+    out[prefix + '.@kind'] = 'array';
+    out[prefix + '.length'] = 'number:' + value.length;
+
+    value.forEach(function(entry, index) {
+      flattenJson(entry, prefix + '[' + index + ']', out);
+    });
+
+    return out;
+  }
+
+  if (typeof value === 'object') {
+    out[prefix + '.@kind'] = 'object';
+
+    Object.keys(value).sort().forEach(function(key) {
+      flattenJson(value[key], prefix + '.' + key, out);
+    });
+
+    return out;
+  }
+
+  if (typeof value === 'number') {
+    out[prefix] = 'number:' + normalized(String(value));
+    return out;
+  }
+
+  if (typeof value === 'string') {
+    out[prefix] = 'string:' + normalized(value);
+    return out;
+  }
+
+  out[prefix] = typeof value + ':' + String(value);
+
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Markup comparison
+// ---------------------------------------------------------------------------
+
+// The tag scanner. One alternation, in priority order: a comment, a script
+// element with its content, a style element with its content, then any tag.
+// Anything between two matches is text. Written as one expression rather than
+// as nested passes so a `<` inside an attribute value cannot desynchronize the
+// two sides differently.
+var MARKUP_TOKEN = /<!--[\s\S]*?-->|<script\b([^>]*)>([\s\S]*?)<\/script\s*>|<style\b[^>]*>[\s\S]*?<\/style\s*>|<\/?([a-zA-Z][-a-zA-Z0-9:]*)((?:"[^"]*"|'[^']*'|[^>"'])*)\/?>/g;
+
+var ATTRIBUTE_TOKEN = /([a-zA-Z_:][-a-zA-Z0-9_:.]*)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s"'>]+))?/g;
+
+// The elements whose name and value pairs are the form surface.
+var FORM_CONTROLS = Object.freeze(['input', 'select', 'textarea', 'button', 'option']);
+
+/**
+ * Extracts the comparable surface of a markup document.
+ *
+ * Both sides go through this same extractor, so the extraction only has to be
+ * DETERMINISTIC to be useful - it is not trying to be a conforming HTML parser,
+ * and it does not need to be: the gate is the whole-document comparison, and
+ * this exists to name what changed within it.
+ *
+ * @param {string} text markup, already normalized
+ * @returns {Object} the surface
+ */
+function markupSurface(text) {
+  var source = String(text || '');
+  var surface = {
+    text: '',
+    forms: [],
+    controls: [],
+    ids: [],
+    classes: [],
+    dataAria: [],
+    hrefs: [],
+    srcs: [],
+    inlineScripts: 0,
+    externalScripts: [],
+    inlineScriptDigests: []
+  };
+  var textParts = [];
+  var lastIndex = 0;
+  var formIndex = -1;
+  var match;
+
+  MARKUP_TOKEN.lastIndex = 0;
+
+  while ((match = MARKUP_TOKEN.exec(source)) !== null) {
+    if (match.index > lastIndex) {
+      textParts.push(source.slice(lastIndex, match.index));
+    }
+
+    lastIndex = match.index + match[0].length;
+
+    if (match[0].slice(0, 4) === '<!--') {
+      continue;
+    }
+
+    if (match[3] === undefined && match[1] !== undefined) {
+      // A script element. Its content is not page text, and its presence is
+      // part of the compared surface.
+      recordScript(surface, match[1], match[2]);
+      continue;
+    }
+
+    if (match[3] === undefined) {
+      // A style element; its content is not page text either.
+      continue;
+    }
+
+    recordTag(surface, match[0], match[3].toLowerCase(), match[4] || '',
+      function(next) { formIndex = next; }, formIndex);
+  }
+
+  if (lastIndex < source.length) {
+    textParts.push(source.slice(lastIndex));
+  }
+
+  surface.text = textParts.join(' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return surface;
+}
+
+/**
+ * Records one script element on the surface.
+ *
+ * @param {Object} surface
+ * @param {string} attributeText
+ * @param {string} content
+ * @returns {undefined}
+ */
+function recordScript(surface, attributeText, content) {
+  var attributes = parseAttributes(attributeText);
+
+  if (attributes.src) {
+    surface.externalScripts.push(attributes.src);
+    surface.srcs.push(attributes.src);
+    return;
+  }
+
+  surface.inlineScripts++;
+  // The content is compared too, not merely counted. It has already been
+  // normalized with the rest of the document, so an inlined id or instant does
+  // not make it volatile, and an inline script IS client-visible behaviour.
+  surface.inlineScriptDigests.push(sha256Hex(String(content || '').replace(/\s+/g, ' ').trim()));
+}
+
+/**
+ * Records one tag on the surface.
+ *
+ * @param {Object} surface
+ * @param {string} raw the whole tag
+ * @param {string} name the lowercased tag name
+ * @param {string} attributeText
+ * @param {function(number): undefined} setForm
+ * @param {number} formIndex the enclosing form, or -1
+ * @returns {undefined}
+ */
+function recordTag(surface, raw, name, attributeText, setForm, formIndex) {
+  var attributes;
+
+  if (raw.slice(0, 2) === '</') {
+    if (name === 'form') {
+      setForm(-1);
+    }
+
+    return;
+  }
+
+  attributes = parseAttributes(attributeText);
+
+  if (name === 'form') {
+    surface.forms.push({
+      action: attributes.action === undefined ? null : attributes.action,
+      method: attributes.method === undefined ? null : String(attributes.method).toLowerCase(),
+      name: attributes.name === undefined ? null : attributes.name
+    });
+    setForm(surface.forms.length - 1);
+    formIndex = surface.forms.length - 1;
+  }
+
+  if (FORM_CONTROLS.indexOf(name) >= 0) {
+    surface.controls.push({
+      form: formIndex,
+      tag: name,
+      type: attributes.type === undefined ? null : attributes.type,
+      name: attributes.name === undefined ? null : attributes.name,
+      value: attributes.value === undefined ? null : attributes.value,
+      checked: has(attributes, 'checked'),
+      selected: has(attributes, 'selected'),
+      disabled: has(attributes, 'disabled')
+    });
+  }
+
+  if (attributes.id !== undefined) {
+    surface.ids.push(name + '#' + attributes.id);
+  }
+
+  if (attributes['class'] !== undefined) {
+    surface.classes.push(name + '.' + String(attributes['class']).split(/\s+/).sort().join(' '));
+  }
+
+  Object.keys(attributes).forEach(function(attribute) {
+    if (attribute === 'role' || attribute.slice(0, 5) === 'data-' ||
+        attribute.slice(0, 5) === 'aria-') {
+      surface.dataAria.push(name + '[' + attribute + '=' +
+        String(attributes[attribute]) + ']');
+    }
+  });
+
+  if (attributes.href !== undefined) {
+    surface.hrefs.push(attributes.href);
+  }
+
+  if (attributes.src !== undefined) {
+    surface.srcs.push(attributes.src);
+  }
+}
+
+/**
+ * Parses a tag's attribute text into a map, values unquoted and keys
+ * lowercased. A valueless attribute becomes boolean true.
+ *
+ * @param {string} attributeText
+ * @returns {Object}
+ */
+function parseAttributes(attributeText) {
+  var out = Object.create(null);
+  var source = String(attributeText || '');
+  var match;
+
+  ATTRIBUTE_TOKEN.lastIndex = 0;
+
+  while ((match = ATTRIBUTE_TOKEN.exec(source)) !== null) {
+    if (match[2] === undefined) {
+      out[match[1].toLowerCase()] = true;
+      continue;
+    }
+
+    out[match[1].toLowerCase()] = /^["']/.test(match[2])
+      ? match[2].slice(1, -1)
+      : match[2];
+  }
+
+  return out;
+}
+
+/**
+ * Compares the surfaces of two markup documents, field by named field.
+ *
+ * @param {string} baselineText normalized markup
+ * @param {string} targetText normalized markup
+ * @returns {Array.<Object>} differences
+ */
+function compareMarkup(baselineText, targetText) {
+  var left = markupSurface(baselineText);
+  var right = markupSurface(targetText);
+  var differences = [];
+  var divergence;
+
+  if (left.text !== right.text) {
+    divergence = firstDivergence(left.text, right.text);
+
+    differences.push(difference('html.text',
+      windowAround(left.text, divergence),
+      windowAround(right.text, divergence), {
+        note: 'the rendered text, whitespace-collapsed, with script and style ' +
+          'content excluded; differs at character ' + divergence,
+        offset: divergence
+      }));
+  }
+
+  compareLists(differences, 'html.forms', left.forms, right.forms);
+  compareLists(differences, 'html.controls', left.controls, right.controls);
+  compareLists(differences, 'html.ids', left.ids, right.ids);
+  compareLists(differences, 'html.classes', left.classes, right.classes);
+  compareLists(differences, 'html.dataAria', left.dataAria, right.dataAria);
+  compareLists(differences, 'html.href', left.hrefs, right.hrefs);
+  compareLists(differences, 'html.src', left.srcs, right.srcs);
+  compareLists(differences, 'html.externalScripts', left.externalScripts,
+    right.externalScripts);
+  compareLists(differences, 'html.inlineScriptDigests', left.inlineScriptDigests,
+    right.inlineScriptDigests);
+
+  if (left.inlineScripts !== right.inlineScripts) {
+    differences.push(difference('html.inlineScripts', left.inlineScripts,
+      right.inlineScripts, { note: 'the count of inline script elements' }));
+  }
+
+  return differences;
+}
+
+/**
+ * Compares two ordered lists element by element, in document order.
+ *
+ * Order is part of the comparison: two pages carrying the same set of links in
+ * a different order are two different pages.
+ *
+ * @param {Array.<Object>} differences accumulator
+ * @param {string} field
+ * @param {Array.<*>} left
+ * @param {Array.<*>} right
+ * @returns {undefined}
+ */
+function compareLists(differences, field, left, right) {
+  var limit = Math.max(left.length, right.length);
+  var index;
+  var recorded;
+  var observed;
+
+  if (left.length !== right.length) {
+    differences.push(difference(field + '.count', left.length, right.length));
+  }
+
+  for (index = 0; index < limit; index++) {
+    recorded = index < left.length ? left[index] : undefined;
+    observed = index < right.length ? right[index] : undefined;
+
+    if (JSON.stringify(recorded) !== JSON.stringify(observed)) {
+      differences.push(difference(field + '[' + index + ']',
+        recorded === undefined ? '(absent)' : recorded,
+        observed === undefined ? '(absent)' : observed));
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The step comparator
+// ---------------------------------------------------------------------------
+
+var OUTCOME_ANSWERED  = 'answered';
+var OUTCOME_TIMED_OUT = 'timed-out';
+var OUTCOME_TRANSPORT = 'transport-failure';
+var OUTCOME_MISSING   = 'not-recorded';
+
+/**
+ * The outcome class of a response record.
+ *
+ * The first thing compared, because the three are not degrees of one another:
+ * a route that answered where the baseline hung, or hung where the baseline
+ * answered, is a different finding from one that answered differently, and only
+ * the outcome class distinguishes them.
+ *
+ * @param {(Object|null)} record
+ * @returns {string}
+ */
+function outcomeOf(record) {
+  if (!record) {
+    return OUTCOME_MISSING;
+  }
+
+  if (record.timedOut) {
+    return OUTCOME_TIMED_OUT;
+  }
+
+  if (record.ok === false) {
+    return OUTCOME_TRANSPORT;
+  }
+
+  return OUTCOME_ANSWERED;
+}
+
+/**
+ * The error code of a transport failure, which is the comparable part of it.
+ *
+ * The message embeds the address that was dialled, and two runs on different
+ * ports would differ there without differing in behaviour. The CODE - the
+ * bracketed suffix `drive` appends - is what says what happened, so it is the
+ * gate field and the whole message is reported beside it.
+ *
+ * @param {(Object|null)} record
+ * @returns {(string|null)}
+ */
+function transportCodeOf(record) {
+  var match = /\(([A-Z][A-Z0-9_]+)\)\s*$/.exec(String((record && record.error) || ''));
+
+  return match ? match[1] : null;
+}
+
+/**
+ * Compares one step's recorded response with what was just observed.
+ *
+ * `scenario` carries the one thing a step does not know about itself and one
+ * comparator needs: the route key, which selects the registered writer profile
+ * for an archive container. It is optional - a harness comparing two records
+ * directly passes none, and the archive comparison then holds the container
+ * against every registered writer rather than against the one its route
+ * declares.
+ *
+ * @param {Object} step the planned step, carrying its baseline
+ * @param {Object} observed the response record just driven
+ * @param {Object} [expectation] {differential} for the derived secure pass
+ * @param {Object} [scenario] {routeKey} of the scenario this step belongs to
+ * @returns {Object} {outcome, baselineOutcome, differences, observations}
+ */
+function compareStep(step, observed, expectation, scenario) {
+  var baseline = step.baseline;
+  var baselineOutcome = outcomeOf(baseline);
+  var observedOutcome = outcomeOf(observed);
+  var differences = [];
+  var observations = [];
+  var contentType;
+  var normalizationApplied;
+  var headerResult;
+  var cookieResult;
+  var bodyResult;
+  var suppression;
+  var heldBack;
+
+  if (baselineOutcome === OUTCOME_MISSING) {
+    return {
+      outcome: observedOutcome,
+      baselineOutcome: baselineOutcome,
+      differences: [difference('baseline', '(no recorded response)',
+        observedOutcome, {
+          note: 'this step carries no baseline, so there is nothing to ' +
+            'compare it against. A corpus is captured by capture.js; replay ' +
+            'never records one.'
+        })],
+      observations: observations
+    };
+  }
+
+  if (baselineOutcome !== observedOutcome) {
+    differences.push(difference('outcome', baselineOutcome, observedOutcome, {
+      note: describeOutcomeChange(baselineOutcome, observedOutcome),
+      baselineDetail: baselineOutcome === OUTCOME_TRANSPORT
+        ? baseline.error
+        : (baseline.status === undefined ? null : baseline.status),
+      targetDetail: observedOutcome === OUTCOME_TRANSPORT
+        ? observed.error
+        : (observed.status === undefined ? null : observed.status)
+    }));
+
+    // The two records are not commensurable once the class differs, so nothing
+    // below would mean anything. The one difference is the whole finding.
+    return {
+      outcome: observedOutcome,
+      baselineOutcome: baselineOutcome,
+      differences: differences,
+      observations: observations
+    };
+  }
+
+  if (observedOutcome === OUTCOME_TIMED_OUT) {
+    // A recorded timeout is the EXPECTED result for the two never-settling
+    // cases, so matching it is a pass. The budget is reported when it differs,
+    // because a case that timed out under a different budget is not the same
+    // measurement even though the outcome reads the same.
+    if (baseline.timeoutMs !== observed.timeoutMs) {
+      observations.push(observation('timeoutMs', baseline.timeoutMs,
+        observed.timeoutMs, 'both sides timed out, under different budgets'));
+    }
+
+    return {
+      outcome: observedOutcome,
+      baselineOutcome: baselineOutcome,
+      differences: differences,
+      observations: observations
+    };
+  }
+
+  if (observedOutcome === OUTCOME_TRANSPORT) {
+    if (transportCodeOf(baseline) !== transportCodeOf(observed)) {
+      differences.push(difference('transport.code', transportCodeOf(baseline),
+        transportCodeOf(observed), {
+          baselineDetail: baseline.error,
+          targetDetail: observed.error
+        }));
+    }
+    else {
+      observations.push(observation('transport.error', baseline.error,
+        observed.error, 'the error code matches; the message embeds the ' +
+        'address that was dialled, which is not a behaviour'));
+    }
+
+    return {
+      outcome: observedOutcome,
+      baselineOutcome: baselineOutcome,
+      differences: differences,
+      observations: observations
+    };
+  }
+
+  if (baseline.status !== observed.status) {
+    differences.push(difference('status', baseline.status, observed.status));
+  }
+
+  if (String(baseline.statusMessage) !== String(observed.statusMessage)) {
+    differences.push(difference('statusMessage', baseline.statusMessage,
+      observed.statusMessage, {
+        note: 'the reason phrase on the status line, which is part of the ' +
+          'wire response and is deterministic per status'
+      }));
+  }
+
+  if (String(baseline.httpVersion) !== String(observed.httpVersion)) {
+    differences.push(difference('httpVersion', baseline.httpVersion,
+      observed.httpVersion));
+  }
+
+  contentType = observed.headers ? observed.headers['content-type'] : null;
+  normalizationApplied = bodyNormalization(baseline.body, observed.body);
+
+  headerResult = compareHeaders(baseline.headers, observed.headers, {
+    normalizationApplied: normalizationApplied,
+    differential: !!(expectation && expectation.differential)
+  });
+  cookieResult = compareCookies(baseline.setCookies, observed.setCookies,
+    expectation);
+  bodyResult = compareBody(baseline.body, observed.body, {
+    contentType: contentType,
+    normalizationApplied: normalizationApplied,
+    // Read by the archive comparison only, to select the registered writer for
+    // the route this response came from.
+    routeKey: (scenario && scenario.routeKey) || null
+  });
+
+  differences = differences
+    .concat(headerResult.differences)
+    .concat(cookieResult.differences)
+    .concat(bodyResult.differences);
+
+  observations = observations
+    .concat(headerResult.observations)
+    .concat(cookieResult.observations)
+    .concat(bodyResult.observations);
+
+  // The one framework-imposed difference this file recognises, registered as
+  // the single entry of docs/preserved-quirks.md section 12 and authorized by
+  // nothing else. Applied here rather than inside `compareCookies` because it
+  // is decided by the status of BOTH sides together, and it removes difference
+  // records the header and cookie comparators have already produced. It fails
+  // closed - see `frameworkCookieSuppression` for every condition, and
+  // FRAMEWORK_COOKIE_SUPPRESSION for the measurement and the register pointer.
+  suppression = frameworkCookieSuppression(baseline, observed, differences);
+
+  if (suppression.applies) {
+    differences = differences.filter(function(record) {
+      return suppression.demoted.indexOf(record.field) === -1;
+    });
+    observations = observations.concat(suppression.observations);
+  }
+
+  // The second pairwise reconciliation, applied here for the same reason as the
+  // one above: it is decided by both sides of a comparison together, so it
+  // cannot live in the single-sided volatile set, and it removes records the
+  // comparators have already produced. It fails closed on every condition in
+  // `heldBackShortCodePair`, and its observations name the scenario, the step
+  // and the field so nothing is reconciled in aggregate. See THE HELD-BACK
+  // SHORT CODE, RECONCILED PAIRWISE.
+  heldBack = heldBackShortCodeReconciliation(differences, {
+    scenario: (scenario && scenario.id) || null,
+    step: step.label,
+    stepIndex: step.index
+  });
+
+  if (heldBack.applies) {
+    differences = differences.filter(function(record) {
+      return heldBack.demoted.indexOf(record) === -1;
+    });
+    observations = observations.concat(heldBack.observations);
+  }
+
+  VOLATILE_RESPONSE_FIELDS.forEach(function(field) {
+    if (String(baseline[field]) !== String(observed[field])) {
+      observations.push(observation(field, baseline[field], observed[field],
+        'inside the volatile set, so not a gate field; reported because a ' +
+        'large timing change is worth seeing even when the response matches'));
+    }
+  });
+
+  return {
+    outcome: observedOutcome,
+    baselineOutcome: baselineOutcome,
+    differences: differences,
+    observations: observations
+  };
+}
+
+/**
+ * Which volatile text rules fired on either body, as a readable list.
+ *
+ * Used to decide whether the recorded byte count and digest are still exactly
+ * comparable for this response. It is a REPORTING and exactness decision only;
+ * it can never suppress a difference in the body itself, which is always
+ * compared in full.
+ *
+ * @param {(Object|null)} baselineBody
+ * @param {(Object|null)} targetBody
+ * @returns {(string|null)}
+ */
+function bodyNormalization(baselineBody, targetBody) {
+  var applied = [];
+
+  [baselineBody, targetBody].forEach(function(body) {
+    if (body && typeof body.text === 'string') {
+      normalizeText(body.text).applied.forEach(function(rule) {
+        if (applied.indexOf(rule) === -1) {
+          applied.push(rule);
+        }
+      });
+    }
+  });
+
+  return applied.length ? applied.join(', ') : null;
+}
+
+/**
+ * A sentence naming what an outcome change means, so the report says why it
+ * matters rather than only that it happened.
+ *
+ * @param {string} from
+ * @param {string} to
+ * @returns {string}
+ */
+function describeOutcomeChange(from, to) {
+  if (from === OUTCOME_TIMED_OUT && to === OUTCOME_ANSWERED) {
+    return 'the baseline never settled and the target answered. This is a ' +
+      'behaviour change: it is a FAILURE unless the scenario carries an ' +
+      'approved deviation marker.';
+  }
+
+  if (from === OUTCOME_ANSWERED && to === OUTCOME_TIMED_OUT) {
+    return 'the baseline answered and the target hangs. A route that stopped ' +
+      'serving is the most serious finding this gate can produce.';
+  }
+
+  if (to === OUTCOME_TRANSPORT) {
+    return 'the target could not be reached for this step. If the application ' +
+      'died mid-run, every later step reports the same thing and only the ' +
+      'first is meaningful - see the application-death report.';
+  }
+
+  if (from === OUTCOME_TRANSPORT) {
+    return 'the baseline recorded a transport failure and the target answered.';
+  }
+
+  return 'the outcome class changed';
+}
+
+// ---------------------------------------------------------------------------
+// Declared expectations
+// ---------------------------------------------------------------------------
+
+/**
+ * Rejects an expectation this file cannot fully evaluate.
+ *
+ * Called from `buildPlan` for every selected scenario, before anything is
+ * launched, and it THROWS rather than reporting. The reason is what this check
+ * was written for: four operators the corpus authors used - `statusIn`,
+ * `headerPresent`, `bodyIncludes` and `cross.bodiesDiffer` - were simply not
+ * implemented here, so sixteen authored clauses and eleven whole scenarios read
+ * as checked and asserted NOTHING. That is worse than an absent check, because
+ * a reader of the corpus sees a declared expectation and believes it. A clause
+ * this tool does not understand is therefore a reason to refuse the run, not a
+ * clause to skip: exit 2, "the comparison never happened", is the honest
+ * outcome, and it is the same treatment a corpus with no recorded baseline gets.
+ *
+ * @param {Object} plan the planned scenario, with its steps already read
+ * @returns {undefined}
+ * @throws {ToolError} On an unknown key, a malformed clause or a step index
+ *   that addresses a step the scenario does not have.
+ */
+function assertExpectationSchema(plan) {
+  var declared = plan.expectation;
+  var failures = [];
+  var stepCount = plan.steps.length;
+
+  function integer(value) {
+    return typeof value === 'number' && isFinite(value) &&
+      Math.floor(value) === value;
+  }
+
+  function text(value) {
+    return typeof value === 'string' && value.length > 0;
+  }
+
+  function addressable(index, where) {
+    if (!integer(index) || index < 0) {
+      failures.push(where + ' addresses step ' + JSON.stringify(index) +
+        ', which is not a step index');
+      return;
+    }
+
+    // A scenario with no steps is unreachable by design and is not driven, so
+    // its clauses have nothing to address; the bound is only checked where
+    // there are steps to bound it by.
+    if (stepCount && index >= stepCount) {
+      failures.push(where + ' addresses step ' + index + ' and the scenario ' +
+        'has ' + stepCount + ' step(s)');
+    }
+  }
+
+  if (declared === null || declared === undefined) {
+    return;
+  }
+
+  if (typeof declared !== 'object' || Array.isArray(declared)) {
+    throw new ToolError('the scenario ' + plan.id + ' declares an expectation ' +
+      'that is not an object, so nothing about it can be evaluated');
+  }
+
+  Object.keys(declared).forEach(function(key) {
+    if (EXPECTATION_KEYS.indexOf(key) === -1) {
+      failures.push('the expectation carries the unknown key ' +
+        JSON.stringify(key) + '; an expectation may carry ' +
+        EXPECTATION_KEYS.join(', '));
+    }
+  });
+
+  if (declared.description !== undefined && !text(declared.description)) {
+    failures.push('`description` is not a non-empty string');
+  }
+
+  if (declared.steps !== undefined && !Array.isArray(declared.steps)) {
+    failures.push('`steps` is not an array');
+  }
+
+  (Array.isArray(declared.steps) ? declared.steps : []).forEach(function(clause, position) {
+    var where = 'clause ' + position;
+    var operators = 0;
+
+    if (!clause || typeof clause !== 'object' || Array.isArray(clause)) {
+      failures.push(where + ' is not an object');
+      return;
+    }
+
+    Object.keys(clause).forEach(function(key) {
+      if (EXPECTATION_STEP_KEYS.indexOf(key) === -1) {
+        failures.push(where + ' carries the unknown operator ' +
+          JSON.stringify(key) + '; a step clause may carry ' +
+          EXPECTATION_STEP_KEYS.join(', '));
+        return;
+      }
+
+      if (key !== 'index') {
+        operators++;
+      }
+    });
+
+    addressable(clause.index, where);
+
+    if (!operators) {
+      failures.push(where + ' asserts nothing: it carries an index and no ' +
+        'operator, so it would be counted as a declared check and evaluate ' +
+        'to nothing');
+    }
+
+    if (clause.timedOut !== undefined && typeof clause.timedOut !== 'boolean') {
+      failures.push(where + ' has a non-boolean `timedOut`');
+    }
+
+    if (clause.status !== undefined && !integer(clause.status)) {
+      failures.push(where + ' has a non-integer `status`');
+    }
+
+    if (clause.notStatus !== undefined && !integer(clause.notStatus)) {
+      failures.push(where + ' has a non-integer `notStatus`');
+    }
+
+    if (clause.statusIn !== undefined) {
+      if (!Array.isArray(clause.statusIn) || !clause.statusIn.length) {
+        failures.push(where + ' has a `statusIn` that is not a non-empty array');
+      }
+      else if (!clause.statusIn.every(integer)) {
+        failures.push(where + ' has a `statusIn` holding a non-integer status');
+      }
+    }
+
+    if (clause.locationEndsWith !== undefined && !text(clause.locationEndsWith)) {
+      failures.push(where + ' has a `locationEndsWith` that is not a ' +
+        'non-empty string');
+    }
+
+    if (clause.headerPresent !== undefined && !text(clause.headerPresent)) {
+      failures.push(where + ' has a `headerPresent` that is not a non-empty ' +
+        'header name');
+    }
+
+    if (clause.contentTypeIs !== undefined && !text(clause.contentTypeIs)) {
+      failures.push(where + ' has a `contentTypeIs` that is not a non-empty ' +
+        'string');
+    }
+
+    if (clause.bodyIncludes !== undefined && !text(clause.bodyIncludes)) {
+      failures.push(where + ' has a `bodyIncludes` that is not a non-empty ' +
+        'string');
+    }
+  });
+
+  if (declared.cross !== undefined) {
+    if (!declared.cross || typeof declared.cross !== 'object' ||
+        Array.isArray(declared.cross)) {
+      failures.push('`cross` is not an object');
+    }
+    else {
+      Object.keys(declared.cross).forEach(function(key) {
+        var indexes = declared.cross[key];
+
+        if (EXPECTATION_CROSS_KEYS.indexOf(key) === -1) {
+          failures.push('`cross` carries the unknown comparison ' +
+            JSON.stringify(key) + '; it may carry ' +
+            EXPECTATION_CROSS_KEYS.join(', '));
+          return;
+        }
+
+        if (!Array.isArray(indexes) || indexes.length < 2) {
+          failures.push('`cross.' + key + '` is not an array of at least two ' +
+            'step indexes');
+          return;
+        }
+
+        indexes.forEach(function(index) {
+          addressable(index, '`cross.' + key + '`');
+        });
+      });
+    }
+  }
+
+  if (failures.length) {
+    throw new ToolError('the scenario ' + plan.id + ' declares an expectation ' +
+      'this file cannot evaluate, and a clause that cannot be evaluated must ' +
+      'not be quietly skipped - it would read as a check and assert nothing:' +
+      '\n  - ' + failures.join('\n  - ') + '\n' +
+      'Every operator this file implements is listed in EXPECTATION_STEP_KEYS ' +
+      'and EXPECTATION_CROSS_KEYS, and capture.js evaluates the same set ' +
+      'against the recording. Fix the corpus, or implement the operator in ' +
+      'both files.');
+  }
+}
+
+/**
+ * Evaluates a scenario's declared expectation against what was OBSERVED.
+ *
+ * This is a second, independent check beside the baseline comparison, and two
+ * of its clauses cannot be replaced by that comparison because they compare two
+ * steps TO EACH OTHER rather than to a recording. `cross.locationsEqual` is the
+ * cross-request fail.redirect leak - both requests redirect to the first one's
+ * interpolated target - and comparing the pair directly is what detects a build
+ * that "fixed" it. `cross.bodiesDiffer` is the OAuth existing-user
+ * differentiator: the two sign-in attempts must remain observably different
+ * responses, and neither one's recorded body says that about the other.
+ *
+ * Every operator `assertExpectationSchema` accepts is evaluated here. That
+ * correspondence is the contract between the two functions: the schema refuses
+ * what this cannot check, so nothing declared is ever skipped.
+ *
+ * @param {Object} item the planned scenario
+ * @param {Array.<Object>} observed one response record per step, in order
+ * @returns {(Object|null)} {description, met, failures} or null when none was declared
+ */
+function evaluateExpectation(item, observed) {
+  var declared = item.expectation;
+  var failures = [];
+
+  if (!declared) {
+    return null;
+  }
+
+  (declared.steps || []).forEach(function(clause) {
+    var record = observed[clause.index];
+    var location;
+    var headerName;
+    var contentType;
+    var body;
+
+    if (!record) {
+      failures.push('step ' + clause.index + ' was not driven');
+      return;
+    }
+
+    if (clause.timedOut !== undefined) {
+      if (!!record.timedOut !== !!clause.timedOut) {
+        failures.push('step ' + clause.index + ' expected timedOut=' +
+          clause.timedOut + ' and observed timedOut=' + !!record.timedOut);
+      }
+    }
+
+    if (clause.status !== undefined && record.status !== clause.status) {
+      failures.push('step ' + clause.index + ' expected status ' +
+        clause.status + ' and observed ' + describeStatus(record));
+    }
+
+    if (clause.statusIn !== undefined &&
+        clause.statusIn.indexOf(record.status) === -1) {
+      failures.push('step ' + clause.index + ' expected one of the statuses ' +
+        clause.statusIn.join('/') + ' and observed ' + describeStatus(record));
+    }
+
+    if (clause.notStatus !== undefined && record.status === clause.notStatus) {
+      failures.push('step ' + clause.index + ' expected any status other ' +
+        'than ' + clause.notStatus + ' and observed it');
+    }
+
+    if (clause.locationEndsWith !== undefined) {
+      location = String((record.headers && record.headers.location) || '');
+
+      if (location.slice(-clause.locationEndsWith.length) !== clause.locationEndsWith) {
+        failures.push('step ' + clause.index + ' expected a Location ending ' +
+          JSON.stringify(clause.locationEndsWith) + ' and observed ' +
+          JSON.stringify(location || '(none)'));
+      }
+    }
+
+    if (clause.headerPresent !== undefined) {
+      // The recorded header map is lowercased by `recordHeaders`, so the clause
+      // is matched case-insensitively rather than requiring the corpus to know
+      // that.
+      headerName = String(clause.headerPresent).toLowerCase();
+
+      if (!record.headers || record.headers[headerName] === undefined) {
+        failures.push('step ' + clause.index + ' expected the ' + headerName +
+          ' header to be present and it is not' +
+          (record.timedOut ? ' (the request timed out)' : ''));
+      }
+    }
+
+    // Compared less any charset parameter, which is how this file compares a
+    // content type everywhere else and how capture.js evaluates the same clause
+    // against the recording - the two tools may not disagree about what a
+    // content type is, or a corpus would assert one thing when it was captured
+    // and another when it is replayed.
+    if (clause.contentTypeIs !== undefined) {
+      contentType = String((record.headers && record.headers['content-type']) || '')
+        .split(';')[0].trim();
+
+      if (contentType !== clause.contentTypeIs) {
+        failures.push('step ' + clause.index + ' expected content-type ' +
+          JSON.stringify(clause.contentTypeIs) + ' and observed ' +
+          JSON.stringify(contentType || '(none)') +
+          (record.timedOut ? ' (the request timed out)' : ''));
+      }
+    }
+
+    if (clause.bodyIncludes !== undefined) {
+      body = record.body;
+
+      if (!body || typeof body.text !== 'string') {
+        failures.push('step ' + clause.index + ' has no text body to search ' +
+          'for ' + JSON.stringify(clause.bodyIncludes) +
+          (body ? ' (the body was recorded as ' + body.encoding + ')' : ''));
+      }
+      else if (body.text.indexOf(clause.bodyIncludes) === -1) {
+        failures.push('step ' + clause.index + ' expected its body to ' +
+          'contain ' + JSON.stringify(clause.bodyIncludes) + ' and it does ' +
+          'not' + (body.truncated
+            ? ' (the body was truncated at ' + MAX_TEXT_BYTES + ' bytes, so ' +
+              'the string may sit beyond the cut-off)'
+            : ''));
+      }
+    }
+  });
+
+  if (declared.cross && Array.isArray(declared.cross.locationsEqual)) {
+    failures = failures.concat(
+      compareCrossLocations(declared.cross.locationsEqual, observed));
+  }
+
+  if (declared.cross && Array.isArray(declared.cross.bodiesDiffer)) {
+    failures = failures.concat(
+      compareCrossBodies(declared.cross.bodiesDiffer, observed));
+  }
+
+  return {
+    description: declared.description || '(no description)',
+    met: !failures.length,
+    failures: failures
+  };
+}
+
+/**
+ * A status for a message, naming the outcome when there is no status.
+ *
+ * @param {(Object|null)} record
+ * @returns {(number|string)}
+ */
+function describeStatus(record) {
+  if (!record || record.status === null || record.status === undefined) {
+    return outcomeOf(record);
+  }
+
+  return record.status;
+}
+
+/**
+ * Checks that the named steps produced the SAME Location as each other.
+ *
+ * @param {Array.<number>} indexes
+ * @param {Array.<Object>} observed
+ * @returns {Array.<string>} failures
+ */
+function compareCrossLocations(indexes, observed) {
+  var values = [];
+  var failures = [];
+
+  indexes.forEach(function(index) {
+    var record = observed[index];
+
+    values.push({
+      index: index,
+      value: record && record.headers
+        ? String(record.headers.location || '(none)')
+        : '(not driven)'
+    });
+  });
+
+  values.forEach(function(entry) {
+    if (entry.value !== values[0].value) {
+      failures.push('step ' + values[0].index + ' redirected to ' +
+        values[0].value + ' and step ' + entry.index + ' to ' + entry.value +
+        '; the corpus declares these must be EQUAL, because both requests ' +
+        'consume the target the first one interpolated. A build that sent ' +
+        'them to different places fixed a documented quirk, which R-d ' +
+        'prohibits.');
+    }
+  });
+
+  return failures;
+}
+
+/**
+ * Checks that the named steps produced OBSERVABLY DIFFERENT bodies.
+ *
+ * The OAuth differentiator. `quirk.oauth.existing-user-succeeds` drives the
+ * same route twice, and the two attempts take different database branches - the
+ * first creates the account and reports failure, the second finds it and can
+ * succeed - so the two responses must remain distinguishable. Neither response's
+ * own recording says that about the other, which is why this is a cross-step
+ * comparison rather than a field comparison.
+ *
+ * The bodies are compared in their NORMALIZED form, and that is the whole
+ * correctness of this check rather than a detail. Two consecutive requests
+ * render two different `/cache-prefix-<epoch>/` values and, on the pages that
+ * carry it, two different encrypted roles tokens, so comparing raw digests
+ * would find every pair of HTML responses "different" and the check would pass
+ * without ever looking at the branch it exists to distinguish. A binary body
+ * has no text form and falls back to its digest, which for a binary response is
+ * exactly comparable.
+ *
+ * @param {Array.<number>} indexes
+ * @param {Array.<Object>} observed
+ * @returns {Array.<string>} failures
+ */
+function compareCrossBodies(indexes, observed) {
+  var failures = [];
+  var values = [];
+
+  indexes.forEach(function(index) {
+    var record = observed[index];
+    var body = record ? record.body : null;
+
+    if (!record) {
+      values.push({ index: index, comparable: false, reason: 'not driven' });
+      return;
+    }
+
+    if (record.timedOut) {
+      values.push({ index: index, comparable: false, reason: 'timed out' });
+      return;
+    }
+
+    if (!body) {
+      values.push({ index: index, comparable: false, reason: 'no body was recorded' });
+      return;
+    }
+
+    values.push({
+      index: index,
+      comparable: true,
+      form: typeof body.text === 'string' ? 'normalized text' : 'digest',
+      value: typeof body.text === 'string'
+        ? normalized(body.text)
+        : String(body.digest),
+      length: body.length
+    });
+  });
+
+  values.forEach(function(entry) {
+    if (!entry.comparable) {
+      failures.push('the body pair could not be compared because step ' +
+        entry.index + ' ' + entry.reason);
+    }
+  });
+
+  if (failures.length) {
+    return failures;
+  }
+
+  values.forEach(function(entry, position) {
+    if (position === 0) {
+      return;
+    }
+
+    if (entry.value === values[0].value) {
+      failures.push('step ' + values[0].index + ' and step ' + entry.index +
+        ' returned the SAME body (compared as ' + entry.form + ', ' +
+        entry.length + ' bytes), and the corpus declares they must differ: ' +
+        'the two requests take different branches and the responses were ' +
+        'observably different at baseline. Either the branch this scenario ' +
+        'exists to exercise is no longer reached, or the two responses now ' +
+        'differ only in a value inside the volatile set - a minted id or a ' +
+        'clock read - which is not a difference in behaviour and cannot ' +
+        'stand as the differentiator. Both are findings; the second one is ' +
+        'answered by giving the scenario a stronger differentiator in the ' +
+        'corpus.');
+    }
+  });
+
+  return failures;
+}
+
+// ---------------------------------------------------------------------------
+// The approved deviations: the closed register, and the verifier that reads it
+// ---------------------------------------------------------------------------
+
+/**
+ * The register of approved, replay-visible deviations, keyed by scenario id.
+ *
+ * This is an ALLOWLIST rather than a pattern. The register is closed - it is
+ * `docs/preserved-quirks.md` §11.0 that decides what is in it, and that list
+ * is not extensible by a tool - and only the replay-VISIBLE members of it
+ * appear here. As delivered that is five scenario ids across four deviations:
+ * the never-settling image download, the page-level course copy in both Accept
+ * modes, the payload-less roles update and the email-change request. The
+ * others change no response a replay drives - deviation 2, the retained
+ * `marked` fork, carries no scenario id at all, because it is a departure from
+ * the audit TARGET measured by `npm audit` rather than by a replay diff, and
+ * the same is true of every deviation whose evidence is an advisory, a stored
+ * artifact or a runtime probe. An id this register does not name is drift,
+ * whatever its marker says about itself.
+ *
+ * The count moves ONLY with §11.0. An earlier revision of this docblock said
+ * "exactly two", which was the register of record when it was written and is
+ * not now; a stale count here is not harmless, because it is quoted verbatim
+ * in the refusal a non-allowlisted marker produces.
+ *
+ * Keying the contract by id rather than matching a marker's own claim is what
+ * keeps this tool from minting deviations for itself. A verifier that approves
+ * whatever calls itself approved defeats the prohibition on behaviour changes
+ * that the quirk catalogue enforces, and it is reachable in practice rather
+ * than in theory: markers arrive from an external `--annotations` file as well
+ * as from the corpus, so "today's corpus carries only the canonical marker" is
+ * a fact about today's corpus and not a property of the check.
+ *
+ * Each entry is FIELD-COMPLETE - the five fields the register names - and each is
+ * derived from the seeded fixture rather than restated, so an assertion cannot
+ * drift from the object the scenario actually downloads: the legacy File
+ * document carries this mime and this byte count, and the image branch of the
+ * download deliberately omits Content-Disposition where its sibling four lines
+ * below sets one.
+ *
+ * Adding a future approved deviation is one entry here, carrying its own field
+ * contract. Nothing else in this file needs to know about it - and adding one
+ * without the argument in `docs/preserved-quirks.md` behind it is the thing
+ * this structure exists to make visible.
+ *
+ * @returns {Object} a frozen map of scenario id to frozen contract
+ */
+function approvedDeviationRegister() {
+  var legacy = (seed.fixtures && seed.fixtures.bytes && seed.fixtures.bytes.legacyPng) || {};
+  var register = {};
+
+  // Deviation 1: the never-settling image-download response is served. Where
+  // it was approved and where it is described are recorded in the entry below.
+  register[DEVIATION_SCENARIO_ID] = Object.freeze({
+    scenarioId: DEVIATION_SCENARIO_ID,
+    number: 1,
+    summary: 'the never-settling image-download response is served',
+    approvedIn: 'AAP §0.7',
+    describedIn: 'docs/preserved-quirks.md §11.1',
+    fromOutcome: OUTCOME_TIMED_OUT,
+    toOutcome: OUTCOME_ANSWERED,
+    status: 200,
+    contentType: legacy.mime || null,
+    bodyLength: legacy.size === undefined ? null : legacy.size,
+    absentHeaders: Object.freeze(['content-disposition'])
+  });
+
+  // Deviation 6's sibling in `courses.copy`: the page-level course copy
+  // answers where the baseline process EXITED. Two scenarios, because the
+  // route is negotiated in both Accept modes and answers in each mode's own
+  // idiom - the declared `fail: {redirect: '/welcome'}` for HTML, the copy's
+  // own failure payload for JSON. Both are the same approval and the same
+  // argument; what differs is the response each mode was approved to produce,
+  // which is why they are two contracts rather than one.
+  register['route.post.userSlug-courses-courseSlug-copy.html'] = Object.freeze({
+    scenarioId: 'route.post.userSlug-courses-courseSlug-copy.html',
+    number: 9,
+    summary: 'the page-level course copy answers its declared failure ' +
+      'redirect where the baseline process exited',
+    approvedIn: 'AAP §0.7, rule R-b',
+    describedIn: 'docs/preserved-quirks.md §11.13',
+    fromOutcome: OUTCOME_TRANSPORT,
+    toOutcome: OUTCOME_ANSWERED,
+    status: 302,
+    contentType: 'text/html',
+    // Zero, measured, and pinned rather than waived: a redirect carries no
+    // body, so this is a stable field and the rule against a marker
+    // compensating for a missing observation applies to it in full.
+    bodyLength: 0,
+    absentHeaders: Object.freeze([])
+  });
+
+  register['route.post.userSlug-courses-courseSlug-copy.json'] = Object.freeze({
+    scenarioId: 'route.post.userSlug-courses-courseSlug-copy.json',
+    number: 9,
+    summary: 'the page-level course copy answers its own failure payload ' +
+      'where the baseline process exited',
+    approvedIn: 'AAP §0.7, rule R-b',
+    describedIn: 'docs/preserved-quirks.md §11.13',
+    fromOutcome: OUTCOME_TRANSPORT,
+    toOutcome: OUTCOME_ANSWERED,
+    status: 200,
+    contentType: 'application/json',
+    // NOT PINNED, and the reason is measured rather than convenient: the body
+    // is the copy's own failure payload and it carries the session flash,
+    // whose membership depends on which flash values are still unread when
+    // this step runs - `request.yar.flash()` with no argument reads AND clears
+    // everything, a preserved baseline quirk (docs/preserved-quirks.md §3).
+    // The length is therefore not a property of what was approved. What was
+    // approved is that the route ANSWERS, in this status and this content
+    // type, instead of severing the socket, and those three fields are
+    // mandatory here.
+    bodyLength: null,
+    absentHeaders: Object.freeze([])
+  });
+
+  // The payload-less roles update answers through its own funnel where the
+  // baseline process exited on `request.payload.roles` with a null payload.
+  register['route.post.api-admin-user-userId.json'] = Object.freeze({
+    scenarioId: 'route.post.api-admin-user-userId.json',
+    number: 16,
+    summary: 'the payload-less roles update answers 200 `{"message":"roles ' +
+      'required"}` through the route\'s own funnel where the baseline ' +
+      'process exited',
+    approvedIn: 'AAP §0.7, rule R-b',
+    describedIn: 'docs/preserved-quirks.md §10.11 and §10.12, with the ' +
+      'argument at lib/controllers/admin.js:265-297',
+    fromOutcome: OUTCOME_TRANSPORT,
+    toOutcome: OUTCOME_ANSWERED,
+    status: 200,
+    contentType: 'application/json',
+    // Not pinned, for the flash reason recorded on the JSON copy contract
+    // above: the response is `{"message":"roles required","flash":{...}}` and
+    // the flash membership is sequence-dependent.
+    bodyLength: null,
+    absentHeaders: Object.freeze([])
+  });
+
+  // The email-change request settles instead of hanging until the budget.
+  register['route.post.api-users-email.json'] = Object.freeze({
+    scenarioId: 'route.post.api-users-email.json',
+    number: 17,
+    summary: 'the email-change request settles, answering 200 ' +
+      '`{"success":true}` where the baseline never responded at all',
+    approvedIn: 'AAP §0.7, rule R-b',
+    describedIn: 'docs/preserved-quirks.md, with the argument at ' +
+      'lib/controllers/users.js:1447-1554',
+    fromOutcome: OUTCOME_TIMED_OUT,
+    toOutcome: OUTCOME_ANSWERED,
+    status: 200,
+    contentType: 'application/json',
+    // Not pinned, for the same measured flash reason.
+    bodyLength: null,
+    absentHeaders: Object.freeze([])
+  });
+
+  return Object.freeze(register);
+}
+
+var APPROVED_DEVIATIONS = approvedDeviationRegister();
+
+// The allowlisted ids, in registration order, for the messages that have to
+// name what IS allowed beside what was rejected.
+var APPROVED_DEVIATION_IDS = Object.freeze(Object.keys(APPROVED_DEVIATIONS));
+
+/**
+ * The contract for a scenario id, or null when the id is not allowlisted.
+ *
+ * `hasOwnProperty` rather than a bare property read, because the id arrives
+ * from a corpus or an annotations file - which is to say from outside this
+ * process - and a scenario called `constructor` or `toString` must resolve to
+ * "not on the allowlist" rather than to something inherited from
+ * Object.prototype.
+ *
+ * @param {*} scenarioId
+ * @returns {(Object|null)}
+ */
+function approvedDeviationContract(scenarioId) {
+  if (typeof scenarioId !== 'string') {
+    return null;
+  }
+
+  return Object.prototype.hasOwnProperty.call(APPROVED_DEVIATIONS, scenarioId)
+    ? APPROVED_DEVIATIONS[scenarioId]
+    : null;
+}
+
+// Deviation 1's contract under its own name, because it is the one the report
+// and the gates refer to directly. Derived from the register rather than built
+// beside it, so the two cannot disagree.
+var APPROVED_DEVIATION = APPROVED_DEVIATIONS[DEVIATION_SCENARIO_ID];
+
+/**
+ * Restates a register contract as the marker shape the pipeline reads.
+ *
+ * This is a PROJECTION of the closed register, not a second register: every
+ * field it produces is read off the contract, so a marker built here cannot
+ * describe anything the register does not already say. It exists because the
+ * marker shape is what `buildPlan`, `runScenario`, the verdict and the report
+ * all consume, and giving the register path its own object keeps those four
+ * consumers on one code path rather than teaching each of them a second one.
+ *
+ * `replayDisposition` is fixed at 'approved-change' because that is the only
+ * disposition `verifyApprovedDeviation` knows how to approve and the only one
+ * a member of this register can have - the register's entire subject is a
+ * response that changed on purpose.
+ *
+ * @param {Object} contract a frozen entry from `approvedDeviationRegister`
+ * @returns {Object} the marker, with the register named as its source
+ */
+function registerMarker(contract) {
+  return {
+    replayDisposition: 'approved-change',
+    approvedBy: contract.approvedIn,
+    rule: 'approved deviation ' + contract.number,
+    baseline: 'the base commit ' +
+      (contract.fromOutcome === OUTCOME_TRANSPORT
+        ? 'severed the connection: the process exited while answering'
+        : (contract.fromOutcome === OUTCOME_TIMED_OUT
+          ? 'never settled this request'
+          : 'answered ' + contract.fromOutcome)),
+    target: contract.status + ' ' +
+      (contract.contentType || '(no content type pinned)') +
+      (contract.bodyLength === null
+        ? ''
+        : ', ' + contract.bodyLength + ' byte(s)') +
+      (contract.absentHeaders.length
+        ? ', without ' + contract.absentHeaders.join(', ')
+        : ''),
+    reason: contract.summary + '. Approved in ' + contract.approvedIn +
+      ' and described in ' + contract.describedIn +
+      '. This marker was projected from the closed register in ' +
+      'test/parity/replay.js because the corpus carries none for this ' +
+      'scenario; the contract it is checked against is the same one a ' +
+      'corpus marker would be checked against.'
+  };
+}
+
+/**
+ * Verifies that an approved deviation materialized AS APPROVED.
+ *
+ * Two independent questions, in this order, and the first one is about
+ * IDENTITY rather than about the change. A marker is not a licence for any
+ * change at all, and it is not a licence held by whichever scenario carries
+ * it: the approval attaches to a named scenario id in the closed register
+ * `approvedDeviationRegister` holds, so an id that register does not name is
+ * unapproved drift no matter how well-formed its marker looks. That is why the
+ * lookup below fails closed rather than falling back to "approved but not
+ * verified" - a verifier able to approve an id nobody argued for is a tool
+ * minting its own deviations, and behaviour changes are prohibited.
+ *
+ * For an allowlisted id the question becomes the shape of the change. The
+ * deviation was approved to be one specific response - a 200 stream response
+ * carrying the file's own mime type and byte length, and NO
+ * Content-Disposition - so a scenario that changed differently is a failure
+ * that happens to carry a marker, and a scenario whose change did not happen
+ * at all is a failure too: the route is required to serve, and a marker on a
+ * route that still hangs would leave the deviation unnoticed.
+ *
+ * `approved: true` is reachable only for an allowlisted id that satisfied its
+ * contract field by field.
+ *
+ * @param {Object} item the planned scenario
+ * @param {Array.<Object>} observed one response record per step
+ * @param {Array.<Object>} differences the differences found against baseline
+ * @returns {Object} {approved, verified, failures, described}
+ */
+function verifyApprovedDeviation(item, observed, differences) {
+  var marker = item.expectedDeviation;
+  var contract = approvedDeviationContract(item.id);
+  var record = observed[0] || null;
+  var baselineStep = (item.steps || [])[0] || null;
+  var recordedBaseline = outcomeOf(baselineStep && baselineStep.baseline);
+  var failures = [];
+  var contentType;
+
+  if (!marker) {
+    return { approved: false, verified: false, failures: [], described: null };
+  }
+
+  if (marker.replayDisposition !== 'approved-change') {
+    failures.push('the marker declares replayDisposition ' +
+      JSON.stringify(String(marker.replayDisposition)) + ', and this file ' +
+      'only knows how to approve "approved-change"');
+  }
+
+  // Identity before shape. An id off the allowlist is rejected here and does
+  // not reach the field checks, because there is no contract to check it
+  // against - and inventing one from the marker's own prose is precisely the
+  // laundering this branch exists to stop.
+  if (!contract) {
+    failures.push('the scenario id ' + JSON.stringify(String(item.id)) +
+      ' is not on the approved-deviation allowlist, so its marker approves ' +
+      'nothing. The deviation register is CLOSED - docs/preserved-quirks.md ' +
+      '§11.0 is the register of record and no tool extends it - and its ' +
+      'replay-visible members are exactly these ' +
+      APPROVED_DEVIATION_IDS.length + ' scenario id(s): ' +
+      APPROVED_DEVIATION_IDS.join(', ') + '. A deviation that changes no ' +
+      'response a replay drives carries no scenario id at all - deviation 2, ' +
+      'the retained `marked` fork, is a departure from the audit target ' +
+      'measured by npm audit rather than by a replay diff - so it can never ' +
+      'justify a marker on any scenario. A marker on ' +
+      JSON.stringify(String(item.id)) + ' is therefore unapproved drift ' +
+      'wearing an approved label, and the difference it carries is ' +
+      'UNAPPROVED. Markers reach this tool from an --annotations file as well ' +
+      'as from the corpus, so a marker appearing here is not evidence that ' +
+      'anyone approved it. If this change really is approved, argue it into ' +
+      '§11.0 with its own precedence argument and add its field contract to ' +
+      'the allowlist in this file - the register is not extensible by a tool.');
+
+    return {
+      approved: false,
+      verified: true,
+      failures: failures,
+      described: marker.target || null
+    };
+  }
+
+  // The from-outcome is checked FIRST among the shape questions, because it
+  // decides whether the others are even meaningful. A corpus that already
+  // records the DEVIATED behaviour was captured from a tree where the
+  // deviation had landed, so it is not a baseline for this scenario, and
+  // saying that once is more useful than also complaining that nothing
+  // changed.
+  if (recordedBaseline !== contract.fromOutcome) {
+    failures.push('the recorded baseline for this scenario is ' +
+      recordedBaseline + ', and the ' +
+      'deviation was approved as a change FROM ' + contract.fromOutcome +
+      '. This corpus therefore already records the deviated behaviour, which ' +
+      'means it was captured from a tree where the change had landed - it is ' +
+      'not a baseline for this scenario. Capture the baseline at the base ' +
+      'commit, or drop --annotations if you are deliberately replaying a ' +
+      'target-captured corpus against itself (--self-check does this for the ' +
+      'whole run).');
+
+    return {
+      approved: false,
+      verified: true,
+      failures: failures,
+      described: marker.target || null
+    };
+  }
+
+  if (!differences.length) {
+    failures.push('the approved deviation did NOT materialize: the target ' +
+      'reproduced the baseline exactly. AAP §0.7 decided this collision in ' +
+      'favour of the route serving, so a target that still behaves as the ' +
+      'baseline did has not implemented the decision.');
+  }
+
+  if (outcomeOf(record) !== contract.toOutcome) {
+    failures.push('the target outcome is ' + outcomeOf(record) +
+      ', and the deviation was approved as a change to ' + contract.toOutcome);
+
+    return {
+      approved: false,
+      verified: true,
+      failures: failures,
+      described: marker.target || null
+    };
+  }
+
+  // ---------------------------------------------------------------------
+  // The field checks, and the rule that makes them fail CLOSED
+  // ---------------------------------------------------------------------
+  // Every mandatory field is checked for PRESENCE before it is compared, and
+  // an unobserved field is a failure rather than a skipped check.
+  //
+  // This is not defensive padding. A byte-length comparison written
+  // `contract.bodyLength !== null && record.body && record.body.length !==
+  // contract.bodyLength` skips the comparison entirely for a response recorded
+  // with `body: null` - one the harness could not read, or a driver that
+  // recorded headers but no payload - and the scenario is APPROVED, while a
+  // body of the wrong length correctly fails. An omission would then be
+  // stronger evidence than a wrong value, which is precisely backwards.
+  //
+  // The rule, stated once because it governs every registered deviation and
+  // not just this one: a marker must never compensate for a missing
+  // observation. The deviation was approved as ONE specific response, so a
+  // field nobody measured is not that response, and `approved: true` may only
+  // be reached when every mandatory field was observed AND matched.
+  if (record.status !== contract.status) {
+    failures.push('the approved response is ' + contract.status +
+      ' and the target answered ' +
+      (record.status === undefined || record.status === null
+        ? 'no status at all (' + JSON.stringify(record.status) + '), so the ' +
+          'status was not observed - an unobserved mandatory field is not a ' +
+          'match'
+        : String(record.status)));
+  }
+
+  if (!record.headers) {
+    // Two mandatory fields are derived from the headers - the mime type and
+    // the absence of content-disposition - so a record with no headers object
+    // leaves both unverifiable. Reported once, here, rather than twice below.
+    failures.push('the target record carries no headers, so neither the ' +
+      'approved mime type ' + JSON.stringify(String(contract.contentType)) +
+      ' nor the required absence of ' + contract.absentHeaders.join(', ') +
+      ' could be verified. The deviation was approved as one specific ' +
+      'response and an unobserved header set cannot be approved by the ' +
+      'marker.');
+  }
+  else {
+    contentType = typeWithoutCharset(record.headers['content-type']);
+
+    if (contract.contentType && contentType !== contract.contentType) {
+      failures.push('the approved response carries the file\'s own mime type ' +
+        JSON.stringify(contract.contentType) + ' and the target sent ' +
+        (contentType === null
+          ? 'no content-type at all, so the mime type was not observed'
+          : JSON.stringify(String(contentType))));
+    }
+
+    contract.absentHeaders.forEach(function(name) {
+      if (record.headers[name] !== undefined) {
+        failures.push('the approved response omits ' + name +
+          ' - that omission is the purpose of the image branch, which renders ' +
+          'inline rather than downloading - and the target sent ' +
+          JSON.stringify(String(record.headers[name])));
+      }
+    });
+  }
+
+  if (contract.bodyLength !== null) {
+    if (!record.body || typeof record.body.length !== 'number') {
+      failures.push('the approved response carries the file\'s byte length ' +
+        contract.bodyLength + ' and the target\'s body was not observed at ' +
+        'all (' + JSON.stringify(record.body === undefined
+          ? undefined
+          : (record.body === null ? null : typeof record.body)) +
+        '). An absent observation is not a match: a mandatory contract field ' +
+        'that nobody measured cannot be approved by the marker.');
+    }
+    else if (record.body.length !== contract.bodyLength) {
+      failures.push('the approved response carries the file\'s byte length ' +
+        contract.bodyLength + ' and the target sent ' + record.body.length);
+    }
+  }
+
+  return {
+    approved: !failures.length,
+    verified: true,
+    failures: failures,
+    described: marker.target || null
+  };
+}
+
+// ===========================================================================
+// THE AUTHORIZED RENDERED-OUTPUT DIFFERENCE REGISTER
+// ===========================================================================
+//
+// WHAT PROBLEM IT SOLVES. The corpus was captured at base commit 2f8712a and
+// the parity contract AAP §0.9.3 states compares, for HTML, the rendered text,
+// the form and input names and values, the `id` and `class` attributes, the
+// `data-` and ARIA attributes, inline-script presence and `href`/`src`. LATER
+// QA checkpoints then mandated remediations whose whole content is exactly that
+// surface - an accessibility contract of landmarks, skip links, error outlets,
+// `role="alert"`, `aria-invalid`, `aria-describedby` and `autocomplete`;
+// colour swatches re-expressed as named buttons; a sign-up form that ships the
+// fields its own route validates; multipart parsing restored on the four upload
+// routes. So the gate has two possible readings and only one of them is a gate:
+// report FAIL forever and lose the ability to detect a real change, or account
+// for the mandated differences exactly and fail on everything else.
+//
+// Narrowing the comparison is NOT the third option. §0.9.3 enumerates
+// `id`/`class`/`data-`/ARIA/`href`/text as exactly compared, so dropping them
+// would delete the gate rather than fix it.
+//
+// WHAT IT IS NOT. It is not `approvedDeviationRegister`, and the two must never
+// merge. That register is CLOSED at the two deviations AAP §0.7 decided, is
+// hand authored in this file, and is argued in docs/preserved-quirks.md §11;
+// widening it would defeat the prohibition on behaviour changes. This one is a
+// second-generation, GENERATED record of rendered-output differences that later
+// findings authorized. `authorizeGeneratedRecords` REFUSES to emit a record for
+// a scenario carrying an approved-deviation marker, so a scenario can never be
+// covered by both.
+//
+// THE PROPERTIES THAT MAKE IT A REGISTER RATHER THAN A TOLERANCE
+//   1. One record per (pass, scenario, step index, comparison field). Not per
+//      route, not per field family, not per scenario.
+//   2. Each record carries BOTH values as the comparison reports them -
+//      `excerpt`-bounded, and with a digest of each side when the excerpt is
+//      truncated so a long value is still pinned. A change on either side, in
+//      either direction, no longer matches the record and is reported
+//      UNAUTHORIZED. There is no wildcard and no "this field may differ here".
+//   3. Each record names the finding that authorized it, and a record can only
+//      be generated where `RENDERED_CHANGE_AUTHORITIES` covers it. A difference
+//      no authority covers is not emitted and the generation run fails naming
+//      it - an unattributable difference cannot enter.
+//   4. A record that does NOT materialize is a FAILURE. If the accessibility
+//      markup regressed, or a remediation was reverted, the responses would
+//      compare clean against the recording again and a register that tolerated
+//      its own absence would hide exactly the regression it exists to account.
+//   5. Anything not in the register fails, exactly as before. `failingScenarios`
+//      keeps counting only unauthorized failures, and the report and the
+//      artifact both state "N authorized, M unauthorized" rather than PASS.
+//   6. It is REGENERABLE by a committed command:
+//        node test/parity/replay.js --app . --corpus test/parity/corpus.json \
+//          --annotations test/parity/corpus.json --pass both --authorize
+//      which rewrites the register from a measured run. That matters because
+//      several units change response shapes concurrently, and a hand-written
+//      register of this size would be unmaintainable.
+//
+// WHERE IT LIVES. test/parity/corpus.authorized.json, beside the corpus it is
+// bound to, with a provenance sidecar. It is bound to the corpus by DIGEST:
+// re-capture the corpus and the register is refused until it is regenerated,
+// because a record naming a baseline value that recording no longer holds is
+// evidence about a file nobody has.
+
+// The bound at which a value is recorded with a digest beside it. `excerpt`
+// already truncates at EXCERPT_BYTES and says so in the text it returns, so
+// this is the point at which the register stops being able to pin the whole
+// value by itself and pins its digest as well.
+var AUTHORIZED_VALUE_DIGEST_BOUND = 200;
+
+// The register document's schema. A consumer must refuse a lower version rather
+// than read it leniently.
+var AUTHORIZED_REGISTER_SCHEMA = 1;
+
+// ---------------------------------------------------------------------------
+// The authorities: which finding may authorize which difference, and where
+// each one is argued
+// ---------------------------------------------------------------------------
+//
+// A CLOSED, ORDERED list. `authorityForDifference` returns the FIRST entry that
+// covers a difference, so a page two findings both touch is filed under the
+// more specific one; an entry that covers nothing costs nothing, because it is
+// records - not authorities - that must materialize.
+//
+// An authority is deliberately unable to authorize a whole scenario. Each names
+// the field families it can explain and carries a guard, and the guards are
+// what stop a rendered-output authority from absorbing a functional regression:
+//   * `statusPreserved` - the step's status and outcome are unchanged. A markup
+//     difference on a page whose status moved is a consequence of the status
+//     change, not of a markup remediation, so no HTML authority applies to it.
+//   * `notServerError` - the target did not answer 5xx. A 500 is never the
+//     authorized outcome of any of these remediations.
+// Both are evaluated against the step's own recorded and observed responses.
+var RENDERED_CHANGE_AUTHORITIES = Object.freeze([
+  // Order-0 R1. `output: 'file'` at the payload level spooled every body class
+  // to a temp file and hapi defaults `payload.multipart` to false, so
+  // @hapi/subtext answered 415 to every multipart upload while a non-multipart
+  // body's absolute spooled path was echoed back at 200. Moving `output` onto
+  // `multipart` restored multipart parsing and stopped the path disclosure, so
+  // the four upload routes answer differently on purpose - which the o001 QA
+  // report states in as many words: R1 "is the *cause* of the F18/F19/F20 gate
+  // deltas". test/parity/manifest.js authorizes the matching route-surface
+  // change under the same finding.
+  Object.freeze({
+    finding: 'order-0 R1 (multipart accepted again on the upload routes)',
+    summary: 'multipart parsing restored with the same per-part file output, ' +
+      'so an upload answers instead of 415 and a non-multipart body no longer ' +
+      'echoes its absolute spooled path',
+    arguedIn: 'docs/baseline-parity.md, route-manifest section; ' +
+      'test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES',
+    evidence: Object.freeze(['config/routes.js', 'config/api_routes.js']),
+    routes: Object.freeze([
+      'POST /file',
+      'POST /file/avatar',
+      'POST /api/users/assets',
+      'POST /api/users/assets/{fileId}'
+    ]),
+    fields: Object.freeze([
+      /^status$/, /^statusMessage$/, /^header\./, /^cookies\./, /^cookie\[/,
+      /^body\./
+    ]),
+    guard: 'notServerError'
+  }),
+
+  // Order-0 F2 (qa/testing/o000_75576941e3f7e7ff.md, HIGH, accessibility): all
+  // 141 colour swatches on /docs/colors were `div[data-dropdown]` with no
+  // tabindex, no role and no accessible name, so the page's entire documented
+  // function was mouse-only and unnamed for assistive technology. The
+  // remediation expresses each swatch as a button, which is a form-control
+  // surface change on that one page - and it pushes the rendered body past the
+  // text cap this file and capture.js both truncate at.
+  Object.freeze({
+    finding: 'order-0 F2 (colour swatches exposed as named, focusable buttons)',
+    summary: 'the 141 /docs/colors swatches are buttons with accessible names ' +
+      'instead of unnamed divs, so the page\'s form-control surface and its ' +
+      'rendered size both change',
+    arguedIn: 'qa/testing/o000_75576941e3f7e7ff.md F2; docs/preserved-quirks.md',
+    evidence: Object.freeze(['lib/views/docs/colors.html']),
+    routes: Object.freeze(['GET /docs/colors']),
+    fields: Object.freeze([
+      /^html\./, /^body\.(truncated|text|length|digest)$/,
+      /^header\.content-length$/
+    ]),
+    guard: 'statusPreserved'
+  }),
+
+  // Order-0 F67/F68/F69 (same report): the shipped sign-up form rendered only
+  // `formName`, `email`, `password` and the submit button while `POST /users`
+  // validates and accepts `fullname` (max 50) and `username` (3-20, pattern,
+  // reserved list), so two of five validated fields could not be exercised at
+  // all; and the hidden `formName` submitted `sign-up`, which the declared
+  // `fail: {redirect: '/{formName}'}` resolved to a route that does not exist,
+  // so every validation failure landed on a bare 404 and left its flash to be
+  // mis-attributed to the visitor's next visit. The remediation ships the two
+  // fields and submits the name of the route that exists.
+  Object.freeze({
+    finding: 'order-0 F67/F68/F69 (the sign-up form ships every validated ' +
+      'field and its failure redirect resolves)',
+    summary: 'the form gains the `fullname` and `username` inputs its own ' +
+      'route validates, and the hidden `formName` submits `signup` - the ' +
+      'route that exists - instead of `sign-up`',
+    arguedIn: 'qa/testing/o000_75576941e3f7e7ff.md F67/F68/F69; ' +
+      'docs/preserved-quirks.md',
+    evidence: Object.freeze(['lib/views/signup.html']),
+    routes: Object.freeze(['GET /signup']),
+    fields: Object.freeze([
+      /^html\./, /^body\.(truncated|text|length|digest)$/,
+      /^header\.content-length$/
+    ]),
+    guard: 'statusPreserved'
+  }),
+
+  // Order-0 R8: the course comment and material projections were restored and
+  // the feedback author address added, so the comment and submission responses
+  // carry the view and metrics keys the baseline projection had dropped.
+  Object.freeze({
+    finding: 'order-0 R8 (course comment and material projections restored)',
+    summary: 'the comment and submission projections carry their view and ' +
+      'metrics keys again',
+    arguedIn: 'qa/testing/o001_ca41be2c45857013.md regression row R8; ' +
+      'docs/preserved-quirks.md',
+    evidence: Object.freeze(['lib/controllers/course.js']),
+    routes: Object.freeze([
+      'POST /api/comments/{trinketId}',
+      'POST /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/acceptSubmission'
+    ]),
+    fields: Object.freeze([
+      /^body\.json\.(?:data\.)?(?:lastView|metrics)\./,
+      /^header\.content-length$/
+    ]),
+    guard: 'statusPreserved'
+  }),
+
+  // Order-0 R8, second half: the material-move pre-handler answers again.
+  //
+  // `internals.findById` (lib/util/helpers.js:35-38) now reads a non-callback
+  // second argument as the FALLBACK VALUE the declaration means it to be - the
+  // form `parent(payload.parent,pre.lesson)` at config/api_routes.js:241 uses.
+  // On the base commit that argument was invoked as a callback, so `next`
+  // became the Lesson DOCUMENT and `next(result)` threw `TypeError: next is
+  // not a function` in the pre-handler: EVERY request to this route answered
+  // 500 `{error, message, statusCode}` before validation ran, which is what
+  // the corpus records. The remediation makes the route reachable, so it
+  // performs the move and answers 200 with the move's own payload.
+  //
+  // This is why it is a separate authority from the projection one above
+  // rather than a widening of it: the projection authority is guarded by
+  // `statusPreserved`, and the whole content of THIS remediation is that the
+  // status changed. Its guard is `notServerError`, which is the measured
+  // direction - 500 to 200 - and refuses the reverse, so a target that
+  // regressed to a 500 here fails on the guard rather than being authorized by
+  // it. Every record it generates still pins both values verbatim, so a
+  // different 200 is a different record and is not in the register.
+  Object.freeze({
+    finding: 'order-0 R8 (the material-move pre-handler answers again)',
+    summary: 'the move route reaches its handler instead of throwing in its ' +
+      'pre-handler, so it answers 200 carrying the move it performed where ' +
+      'the baseline answered 500 from the pre-handler',
+    arguedIn: 'qa/testing/o001_ca41be2c45857013.md regression row R8; ' +
+      'docs/baseline-parity.md, joi-matrix section; ' +
+      'test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard',
+    evidence: Object.freeze(['lib/util/helpers.js']),
+    routes: Object.freeze([
+      'PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move'
+    ]),
+    fields: Object.freeze([
+      /^status$/, /^statusMessage$/, /^header\.(cache-control|content-length)$/,
+      /^body\./
+    ]),
+    guard: 'notServerError'
+  }),
+
+  // Order-0 R9, on the served stylesheet. The accessibility contract is not
+  // markup alone: the skip link, the focus ring, the flash dismissal and the
+  // form error styling live in static/scss/**, which the build compiles into
+  // public/css/base.css - and that file is served through the cache-prefix
+  // asset route, so the corpus compares it as a response body.
+  Object.freeze({
+    finding: 'order-0 R9 (the accessibility contract, compiled into the ' +
+      'served stylesheet)',
+    summary: 'public/css/base.css carries the rules the accessibility markup ' +
+      'renders with - skip link, focus ring, form error and flash dismissal - ' +
+      'so the served stylesheet is larger and differs in content',
+    arguedIn: 'qa/testing/o001_ca41be2c45857013.md regression row R9; ' +
+      'docs/baseline-parity.md',
+    evidence: Object.freeze([
+      'static/scss/_forms.scss', 'static/scss/_generic.scss',
+      'static/scss/_login.scss', 'static/scss/_nav.scss',
+      'static/scss/_library.scss'
+    ]),
+    routes: Object.freeze([
+      'GET /cache-prefix-{timestamp}/{assetType}/{path*}'
+    ]),
+    fields: Object.freeze([
+      /^body\.(truncated|text|length|digest)$/, /^header\.content-length$/
+    ]),
+    guard: 'statusPreserved'
+  }),
+
+  // Order-0 R9, on the markup. LAST among the HTML authorities, deliberately:
+  // the three above name one page each and this one names the contract every
+  // page inherits from lib/views/base.html and the two standalone error
+  // templates, so a page with a specific authority is filed under it and
+  // everything else under this.
+  //
+  // Its breadth is bounded in four ways and each one matters. It reaches only
+  // the HTML markup surface - it cannot authorize a status, a redirect, a
+  // cookie, a JSON field or a binary body. It applies only where the status and
+  // the outcome are unchanged. It applies only to a response the comparison
+  // read as markup. And, decisively, it authorizes no VALUE: every record it
+  // generates pins both sides verbatim, so an accessibility regression produces
+  // a different record, which is not in the register, and fails.
+  Object.freeze({
+    finding: 'order-0 R9 (the accessibility contract)',
+    summary: 'landmarks, the skip link, `#main-content tabindex="-1"`, the ' +
+      'screen-reader page heading, error-outlet ids with `role="alert"`, ' +
+      '`aria-invalid`, `aria-describedby` and `autocomplete`, plus the ' +
+      'favicon and viewport the two standalone error templates lacked',
+    arguedIn: 'qa/testing/o001_ca41be2c45857013.md regression row R9; ' +
+      'docs/baseline-parity.md',
+    evidence: Object.freeze([
+      'lib/views/base.html', 'lib/views/404.html', 'lib/views/50x.html',
+      'lib/views/login.html', 'lib/views/users/includes/profile.html',
+      'lib/views/users/includes/password.html', 'lib/views/embed/base.html'
+    ]),
+    routes: null,
+    fields: Object.freeze([
+      /^html\./, /^header\.content-length$/, /^body\.(truncated|length|digest)$/
+    ]),
+    guard: 'markupStatusPreserved'
+  })
+]);
+
+/**
+ * Whether a step's status and outcome are unchanged.
+ *
+ * @param {Object} context {baseline, observed, contentType}
+ * @returns {boolean}
+ */
+function statusPreserved(context) {
+  return !!context.baseline && !!context.observed &&
+    outcomeOf(context.baseline) === outcomeOf(context.observed) &&
+    context.baseline.status === context.observed.status;
+}
+
+// The guards, by the name an authority declares. A name an authority uses and
+// this map does not hold is a fault in this file, and `assertAuthorityRegister`
+// refuses to start on it rather than letting the guard silently pass.
+var AUTHORITY_GUARDS = Object.freeze({
+  statusPreserved: statusPreserved,
+  notServerError: function(context) {
+    return !!context.observed && typeof context.observed.status === 'number' &&
+      context.observed.status < 500;
+  },
+  markupStatusPreserved: function(context) {
+    return statusPreserved(context) && isTextualMarkup(context.contentType);
+  }
+});
+
+/**
+ * Proves the authority table is usable before anything is driven.
+ *
+ * Three faults are possible in it and every one of them would make a
+ * generation run authorize more than it should: a guard name nothing
+ * implements, an authority with no field expression, and an authority with
+ * neither a finding nor a place it is argued. Each is a fault in this file, so
+ * it is refused at startup rather than discovered in an artifact.
+ *
+ * @returns {Array.<Object>} one record per authority, for the result document
+ * @throws {ToolError} If the table cannot be relied on.
+ */
+function assertAuthorityRegister() {
+  var failures = [];
+  var records = [];
+
+  RENDERED_CHANGE_AUTHORITIES.forEach(function(authority, index) {
+    var label = 'authority[' + index + '] ' + (authority.finding || '(unnamed)');
+
+    if (!authority.finding) {
+      failures.push(label + ': names no finding, so a record generated under ' +
+        'it would be unattributable');
+    }
+
+    if (!authority.arguedIn) {
+      failures.push(label + ': names no place it is argued, so a reviewer ' +
+        'asked to accept it has nothing to read');
+    }
+
+    if (!Array.isArray(authority.fields) || !authority.fields.length) {
+      failures.push(label + ': names no comparison field, so it would cover ' +
+        'every field of every difference it reaches');
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(AUTHORITY_GUARDS,
+      String(authority.guard))) {
+      failures.push(label + ': declares the guard ' +
+        JSON.stringify(String(authority.guard)) + ', which AUTHORITY_GUARDS ' +
+        'does not implement. An unimplemented guard is an authority with no ' +
+        'guard at all.');
+    }
+
+    records.push({
+      finding: authority.finding,
+      summary: authority.summary || null,
+      arguedIn: authority.arguedIn,
+      evidence: (authority.evidence || []).slice(),
+      routes: authority.routes ? authority.routes.slice() : null,
+      fields: authority.fields.map(String),
+      guard: authority.guard
+    });
+  });
+
+  if (failures.length) {
+    throw new ToolError('the rendered-change authority table cannot be ' +
+      'relied on, and it decides what a --authorize run is allowed to file:' +
+      '\n  - ' + failures.join('\n  - '));
+  }
+
+  return records;
+}
+
+/**
+ * The authority that covers one difference, or null.
+ *
+ * @param {Object} record the annotated difference
+ * @param {Object} item the planned scenario
+ * @param {Object} context {baseline, observed, contentType}
+ * @returns {(Object|null)}
+ */
+function authorityForDifference(record, item, context) {
+  var found = null;
+
+  RENDERED_CHANGE_AUTHORITIES.forEach(function(authority) {
+    if (found) {
+      return;
+    }
+
+    if (authority.routes &&
+        authority.routes.indexOf(String(item.routeKey)) === -1) {
+      return;
+    }
+
+    if (!authority.fields.some(function(expression) {
+      return expression.test(String(record.field));
+    })) {
+      return;
+    }
+
+    if (!AUTHORITY_GUARDS[authority.guard](context)) {
+      return;
+    }
+
+    found = authority;
+  });
+
+  return found;
+}
+
+/**
+ * One side of a difference, encoded for the register.
+ *
+ * The value is stored as the comparison reports it - `excerpt` has already
+ * bounded it - and a digest is stored beside it once it is long enough that the
+ * stored form may be a truncation. Both are compared on a read, so a value the
+ * register can only pin by digest is still pinned.
+ *
+ * @param {*} value
+ * @returns {Object} {value, digest}
+ */
+function encodeAuthorizedValue(value) {
+  var text = typeof value === 'string' ? value : null;
+
+  return {
+    value: value === undefined ? null : value,
+    digest: text !== null && text.length > AUTHORIZED_VALUE_DIGEST_BOUND
+      ? 'sha256:' + sha256Hex(text)
+      : null
+  };
+}
+
+/**
+ * Whether an encoded side still describes the value observed now.
+ *
+ * @param {Object} encoded
+ * @param {*} value
+ * @returns {boolean}
+ */
+function authorizedValueMatches(encoded, value) {
+  var normalizedValue = value === undefined ? null : value;
+  var text;
+
+  if (!encoded || typeof encoded !== 'object') {
+    return false;
+  }
+
+  if (!sameScalar(encoded.value, normalizedValue)) {
+    return false;
+  }
+
+  if (!encoded.digest) {
+    return true;
+  }
+
+  text = typeof normalizedValue === 'string' ? normalizedValue : null;
+
+  return text !== null && encoded.digest === 'sha256:' + sha256Hex(text);
+}
+
+/**
+ * Scalar equality that treats two equal JSON shapes as equal.
+ *
+ * A difference value is a string, a number, a boolean or null - `excerpt`
+ * guarantees it - so this is a strict comparison with one allowance for the
+ * number/string forms JSON round-tripping can produce.
+ *
+ * @param {*} left
+ * @param {*} right
+ * @returns {boolean}
+ */
+function sameScalar(left, right) {
+  if (left === right) {
+    return true;
+  }
+
+  if (left === null || right === null ||
+      left === undefined || right === undefined) {
+    return false;
+  }
+
+  if (typeof left === 'object' || typeof right === 'object') {
+    return JSON.stringify(left) === JSON.stringify(right);
+  }
+
+  return false;
+}
+
+/**
+ * The register key for one difference: pass, scenario, step index and field.
+ *
+ * The NUL separator is what keeps two keys from colliding through a field name
+ * that happens to contain the separator - a JSON pointer segment can contain
+ * almost anything.
+ *
+ * @param {string} passName
+ * @param {Object} record
+ * @returns {string}
+ */
+function authorizedKey(passName, record) {
+  return [
+    String(passName),
+    String(record.scenario),
+    String(record.stepIndex),
+    String(record.field)
+  ].join('\u0000');
+}
+
+/**
+ * Reads and verifies the authorized-difference register.
+ *
+ * Bound to the corpora it was generated against by DIGEST, because a record
+ * naming a baseline value is a statement about one specific recording: if the
+ * corpus is re-captured, every baseline value in the register may have moved
+ * and a record that still matched would be a coincidence. The remedy is named
+ * in the refusal, and it is one command.
+ *
+ * A MISSING register is not a failure. The gate has to keep working on a tree
+ * that carries none - and on such a tree it behaves exactly as it did before
+ * this mechanism existed: every difference is unauthorized and fails.
+ *
+ * @param {string} target the register path
+ * @param {Object} digests {corpus, secureCorpus} artifact digests in this run
+ * @returns {Object} the register document, or an absent marker
+ * @throws {ToolError} If it exists and cannot be relied on.
+ */
+function readAuthorizedRegister(target, digests) {
+  var text;
+  var parsed;
+  var failures = [];
+
+  if (!target || !fs.existsSync(target)) {
+    return {
+      present: false,
+      path: target || null,
+      records: [],
+      authorities: [],
+      note: 'no authorized-difference register was read, so every difference ' +
+        'in this run is unauthorized and fails'
+    };
+  }
+
+  try {
+    text = fs.readFileSync(target, 'utf8');
+  }
+  catch (err) {
+    throw new ToolError('the authorized-difference register ' + target +
+      ' could not be read: ' + reasonOf(err));
+  }
+
+  try {
+    parsed = JSON.parse(text);
+  }
+  catch (err) {
+    throw new ToolError('the authorized-difference register ' + target +
+      ' is not JSON: ' + reasonOf(err) + '. Regenerate it with --authorize.');
+  }
+
+  if (parsed.schema !== AUTHORIZED_REGISTER_SCHEMA) {
+    failures.push('it declares schema ' + JSON.stringify(parsed.schema) +
+      ' and this tool reads ' + AUTHORIZED_REGISTER_SCHEMA);
+  }
+
+  if (!Array.isArray(parsed.records)) {
+    failures.push('it carries no `records` array, so it authorizes nothing ' +
+      'and cannot be read as a register');
+  }
+
+  if (!parsed.sources || !parsed.sources.corpus ||
+      !parsed.sources.corpus.digest) {
+    failures.push('it does not record the digest of the corpus it was ' +
+      'generated against, so nothing binds its recorded baseline values to ' +
+      'the recording this run is comparing against');
+  }
+  else if (digests.corpus && parsed.sources.corpus.digest !== digests.corpus) {
+    failures.push('it was generated against a corpus digesting ' +
+      String(parsed.sources.corpus.digest).slice(0, 16) + ' and this run ' +
+      'reads one digesting ' + String(digests.corpus).slice(0, 16) +
+      '. Every baseline value it records is a statement about the other ' +
+      'recording');
+  }
+
+  if (digests.secureCorpus) {
+    if (!parsed.sources.secureCorpus || !parsed.sources.secureCorpus.digest) {
+      failures.push('this run replays a secure-pass corpus and the register ' +
+        'records none, so it cannot authorize anything in that pass');
+    }
+    else if (parsed.sources.secureCorpus.digest !== digests.secureCorpus) {
+      failures.push('it was generated against a secure-pass corpus digesting ' +
+        String(parsed.sources.secureCorpus.digest).slice(0, 16) +
+        ' and this run reads one digesting ' +
+        String(digests.secureCorpus).slice(0, 16));
+    }
+  }
+
+  (Array.isArray(parsed.records) ? parsed.records : []).forEach(
+    function(record, index) {
+      var label = 'record[' + index + ']';
+
+      if (!record || typeof record !== 'object') {
+        failures.push(label + ' is not an object');
+        return;
+      }
+
+      ['pass', 'scenario', 'field', 'finding'].forEach(function(key) {
+        if (typeof record[key] !== 'string' || !record[key]) {
+          failures.push(label + ' (' + (record.scenario || '?') + ' ' +
+            (record.field || '?') + ') carries no `' + key + '`, and a ' +
+            'record that does not say ' +
+            (key === 'finding'
+              ? 'which finding authorized it cannot be reviewed'
+              : 'what it authorizes cannot be matched'));
+        }
+      });
+
+      if (typeof record.stepIndex !== 'number') {
+        failures.push(label + ' (' + (record.scenario || '?') +
+          ') carries no numeric `stepIndex`, so it is not bound to one step');
+      }
+
+      if (!record.baseline || typeof record.baseline !== 'object' ||
+          !record.target || typeof record.target !== 'object') {
+        failures.push(label + ' (' + (record.scenario || '?') + ' ' +
+          (record.field || '?') + ') does not carry both encoded values, so ' +
+          'it would authorize any change to that field');
+      }
+    });
+
+  if (failures.length) {
+    throw new ToolError('the authorized-difference register ' + target +
+      ' cannot be relied on, and it is what decides which differences fail:' +
+      '\n  - ' + failures.join('\n  - ') +
+      '\nRegenerate it from a measured run with `node ' +
+      'test/parity/replay.js --app . --corpus test/parity/corpus.json ' +
+      '--annotations test/parity/corpus.json --pass both --authorize`.');
+  }
+
+  return {
+    present: true,
+    path: target,
+    schema: parsed.schema,
+    sources: parsed.sources,
+    authorities: Array.isArray(parsed.authorities) ? parsed.authorities : [],
+    records: parsed.records,
+    summary: parsed.summary || null,
+    generatedBy: parsed.tool || null,
+    note: parsed.records.length + ' authorized difference record(s), each ' +
+      'naming the finding that authorized it and pinning both values'
+  };
+}
+
+/**
+ * Builds the per-pass matcher over a register.
+ *
+ * One matcher per pass, because a record names its pass: the secure pass is a
+ * different recording and a record from one pass must not authorize a
+ * difference in the other. It tracks which records matched, which is what makes
+ * a record that did not materialize reportable as the failure it is.
+ *
+ * @param {Object} register as `readAuthorizedRegister` returns
+ * @param {string} passName
+ * @returns {Object} {authorize, matched, stale, records}
+ */
+function authorizedRegisterFor(register, passName) {
+  var index = Object.create(null);
+  var matched = Object.create(null);
+  var mine = (register.records || []).filter(function(record) {
+    return record.pass === passName;
+  });
+
+  mine.forEach(function(record) {
+    index[authorizedKey(passName, record)] = record;
+  });
+
+  return {
+    pass: passName,
+    records: mine,
+
+    /**
+     * Partitions one scenario's annotated differences.
+     *
+     * @param {Array.<Object>} differences
+     * @returns {Object} {authorized, unauthorized}
+     */
+    authorize: function(differences) {
+      var authorized = [];
+      var unauthorized = [];
+
+      differences.forEach(function(record) {
+        var key = authorizedKey(passName, record);
+        var entry = Object.prototype.hasOwnProperty.call(index, key)
+          ? index[key]
+          : null;
+
+        if (entry &&
+            authorizedValueMatches(entry.baseline, record.baselineValue) &&
+            authorizedValueMatches(entry.target, record.targetValue)) {
+          matched[key] = true;
+          authorized.push(Object.assign({}, record, {
+            finding: entry.finding,
+            authorizedBy: entry.finding,
+            arguedIn: entry.arguedIn || null
+          }));
+          return;
+        }
+
+        unauthorized.push(entry
+          // Named on the record, because the report has to be able to say WHY
+          // a difference on a registered field is still a failure: the register
+          // pins one specific pair of values and this is not that pair.
+          ? Object.assign({}, record, {
+            registered: true,
+            registeredFinding: entry.finding,
+            registeredBaseline: entry.baseline.value,
+            registeredTarget: entry.target.value
+          })
+          : record);
+      });
+
+      return { authorized: authorized, unauthorized: unauthorized };
+    },
+
+    /**
+     * The records that never matched. Every one is a FAILURE.
+     *
+     * @returns {Array.<Object>}
+     */
+    stale: function() {
+      return mine.filter(function(record) {
+        return !matched[authorizedKey(passName, record)];
+      });
+    },
+
+    matchedCount: function() {
+      return Object.keys(matched).length;
+    }
+  };
+}
+
+/**
+ * Generates register records from a measured scenario, refusing what it cannot
+ * attribute.
+ *
+ * This is the whole of `--authorize`. It runs on the FULL in-memory difference
+ * set rather than on the bounded listing the artifact carries, so a scenario
+ * with three hundred differences is registered completely or not at all.
+ *
+ * Two refusals are absolute. A scenario carrying an approved-deviation marker
+ * generates nothing, because that scenario belongs to the closed §0.7 register
+ * and nothing here may widen it. And a difference no authority covers generates
+ * nothing and is returned as `unattributable`, which makes the generation run
+ * fail: a register entry nobody can trace to a finding is exactly the
+ * rubber stamp this shape exists to prevent.
+ *
+ * @param {Object} item the planned scenario, driven
+ * @param {string} passName
+ * @returns {Object} {records, unattributable, skipped}
+ */
+function authorizeGeneratedRecords(item, passName) {
+  var records = [];
+  var unattributable = [];
+  var result = item.result;
+
+  if (!result || !result.driven) {
+    return { records: records, unattributable: unattributable, skipped: null };
+  }
+
+  if (item.expectedDeviation) {
+    return {
+      records: records,
+      unattributable: unattributable,
+      skipped: 'the scenario carries an approved-deviation marker, so it ' +
+        'belongs to the closed AAP §0.7 register in approvedDeviationRegister ' +
+        'and the generated register may not also cover it'
+    };
+  }
+
+  (result.unauthorizedDifferences || result.differences || []).forEach(
+    function(record) {
+      var step = (item.steps || [])[record.stepIndex] || null;
+      var observedStep = (result.steps || [])[record.stepIndex] || null;
+      var observed = observedStep ? observedStep.observed : null;
+      var context = {
+        baseline: step ? step.baseline : null,
+        observed: observed,
+        contentType: observed && observed.headers
+          ? observed.headers['content-type']
+          : null
+      };
+      var authority = authorityForDifference(record, item, context);
+
+      if (!authority) {
+        unattributable.push({
+          pass: passName,
+          scenario: item.id,
+          route: item.routeKey,
+          step: record.step,
+          stepIndex: record.stepIndex,
+          field: record.field,
+          baseline: excerpt(record.baselineValue),
+          target: excerpt(record.targetValue),
+          reason: 'no entry in RENDERED_CHANGE_AUTHORITIES covers this ' +
+            'route and field with its guard satisfied, so this difference ' +
+            'cannot be traced to a finding that authorized it and is NOT ' +
+            'registered'
+        });
+        return;
+      }
+
+      records.push({
+        pass: passName,
+        scenario: item.id,
+        group: item.group || null,
+        route: item.routeKey,
+        identity: item.identity || null,
+        step: record.step,
+        stepIndex: record.stepIndex,
+        field: record.field,
+        baseline: encodeAuthorizedValue(record.baselineValue),
+        target: encodeAuthorizedValue(record.targetValue),
+        finding: authority.finding,
+        arguedIn: authority.arguedIn
+      });
+    });
+
+  return { records: records, unattributable: unattributable, skipped: null };
+}
+
+/**
+ * The pass-level accounting check over the harness-origin reconciliation.
+ *
+ * The reconciliation replaces the application's own scheme and host whatever
+ * port follows it, which is what makes the corpus replayable at any port. The
+ * property that keeps it honest is that the ports it replaced are COUNTED: a
+ * pass in which the reconciled occurrences carry more than one port besides the
+ * one this pass answered on has seen the application name two different ports
+ * for itself, and that is a behaviour difference rather than a harness
+ * artifact. One "other" port is the capture port and is expected; two are not,
+ * and the check fails rather than absorbing them.
+ *
+ * @param {Object} accounting as `harnessOriginAccounting` returns
+ * @returns {Object} a check document
+ */
+function accountHarnessOrigin(accounting) {
+  var record = accounting || harnessOriginAccounting();
+  var others = record.otherPorts || [];
+
+  return {
+    name: 'harness-origin-reconciliation',
+    ok: others.length <= 1,
+    // The shape every check in this file carries, so `renderChecks` and the
+    // artifact read one structure: how many assertions it made, and the
+    // failures by name.
+    asserted: (record.ports || []).length,
+    failures: others.length > 1
+      ? ['the reconciled occurrences carry ' + others.length + ' ports other ' +
+        'than the one this pass drove (' + others.join(', ') + '). One is the ' +
+        'port the corpus was captured at; a second means the application ' +
+        'emitted a self-URL on a port neither run chose, and that is a ' +
+        'behaviour difference this reconciliation must not absorb.']
+      : [],
+    entries: [],
+    what: 'the application named ONE address for itself besides the port this ' +
+      'pass drove it on, so the only prefix reconciled away was the one this ' +
+      'tool\'s own --port decided',
+    detail: record.installed
+      ? record.occurrences + ' occurrence(s) of ' + record.origin +
+        '\'s scheme and host replaced with ' + record.token +
+        ' across both sides; ' + record.portlessOccurrences +
+        ' of them carried no port at all, which the application composes from ' +
+        'a port-less configuration and spells identically on both sides; ' +
+        'ports seen: ' +
+        (record.ports.length
+          ? record.ports.map(function(entry) {
+            return entry.port + ' x' + entry.occurrences;
+          }).join(', ')
+          : 'none') + '; this pass drove port ' + record.livePort +
+        (others.length > 1
+          ? '. FAILURE: ' + others.length + ' ports other than this pass\'s ' +
+            'own appear (' + others.join(', ') + '). One is the port the ' +
+            'corpus was captured at; more than one means the application ' +
+            'emitted a self-URL on a port neither run chose, which is a ' +
+            'behaviour difference this reconciliation must not absorb.'
+          : '')
+      : record.note,
+    origin: record.origin,
+    token: record.token,
+    rule: record.rule,
+    occurrences: record.occurrences,
+    livePort: record.livePort,
+    ports: record.ports,
+    otherPorts: others,
+    note: record.note
+  };
+}
+
+/**
+ * The pass-level accounting check over the pairwise short-code reconciliation.
+ *
+ * RE-AUDITS rather than reports. Every entry the pass recorded is put back
+ * through `heldBackShortCodePair` here, against the two values the entry
+ * itself carries, so an entry that does not satisfy the firing conditions on
+ * re-examination fails the pass. That is what makes the mechanism auditable
+ * from the artifact alone: a reader does not have to trust that the filter was
+ * applied correctly during the run, because the artifact carries the values
+ * and this check re-derives the verdict from them.
+ *
+ * An entry missing a scenario, a step or a field fails for the same reason -
+ * a reconciliation nobody can point at is one nobody can review.
+ *
+ * @param {Object} accounting as `heldBackShortCodeAccounting` returns
+ * @returns {Object} a check document
+ */
+function accountHeldBackShortCodes(accounting) {
+  var record = accounting || heldBackShortCodeAccounting();
+  var entries = record.entries || [];
+  var failures = [];
+
+  entries.forEach(function(entry) {
+    var verdict = heldBackShortCodePair(entry.baseline, entry.target);
+
+    if (!entry.scenario || !entry.field || entry.stepIndex === null ||
+        entry.stepIndex === undefined) {
+      failures.push('a reconciled difference does not name where it happened ' +
+        '(scenario ' + JSON.stringify(entry.scenario) + ', step index ' +
+        JSON.stringify(entry.stepIndex) + ', field ' +
+        JSON.stringify(entry.field) + '). Every reconciliation has to be ' +
+        'attributable to one field of one step of one scenario.');
+    }
+
+    if (!verdict.reconciled) {
+      failures.push(entry.scenario + ' ' + entry.field + ' was reconciled ' +
+        'during the run but does not satisfy the firing conditions on ' +
+        're-examination' + (verdict.reason ? ' (' + verdict.reason + ')' : '') +
+        ': baseline ' + JSON.stringify(entry.baseline) + ', target ' +
+        JSON.stringify(entry.target) + '. A difference removed on conditions ' +
+        'that do not hold is a deleted difference.');
+
+      return;
+    }
+
+    if (verdict.tokens !== entry.tokens) {
+      failures.push(entry.scenario + ' ' + entry.field + ' recorded ' +
+        entry.tokens + ' reconciled token(s) and re-examination counts ' +
+        verdict.tokens + '.');
+    }
+  });
+
+  return {
+    name: 'held-back-short-code-reconciliation',
+    ok: !failures.length,
+    asserted: entries.length,
+    failures: failures,
+    entries: entries.map(function(entry) {
+      return {
+        scenario: entry.scenario,
+        step: entry.step,
+        stepIndex: entry.stepIndex,
+        field: entry.field,
+        baseline: entry.baseline,
+        target: entry.target,
+        tokens: entry.tokens
+      };
+    }),
+    what: 'every difference removed as a held-back short code still ' +
+      'satisfies the firing conditions when re-derived from the two values ' +
+      'the artifact carries, and names the scenario, step and field it came ' +
+      'from',
+    detail: entries.length
+      ? entries.length + ' difference(s) across ' + record.steps +
+        ' step(s) reconciled as a held-back short code, ' + record.tokens +
+        ' token pair(s) in total, on field(s) ' + record.fields.join(', ') +
+        '. Each one was the committed `generated trinket short code` rule ' +
+        'normalizing one side to ' + record.placeholder + ' while its ' +
+        'all-digit exemption held the other side back, with every literal ' +
+        'character around the code identical.'
+      : record.note,
+    rule: record.rule,
+    placeholder: record.placeholder,
+    steps: record.steps,
+    tokens: record.tokens,
+    fields: record.fields
+  };
+}
+
+/**
+ * The pass-level accounting check over the register.
+ *
+ * `ok` is false when a record did not materialize, which is the property that
+ * keeps the register from making the gate easier to pass by going stale.
+ *
+ * @param {Object} matcher as `authorizedRegisterFor` returns
+ * @param {Object} register
+ * @param {number} authorizedRecords how many differences were authorized
+ * @param {number} unauthorizedRecords how many were not
+ * @returns {Object} a check document
+ */
+function accountAuthorizedRegister(matcher, register, authorizedRecords,
+  unauthorizedRecords) {
+  var stale = matcher ? matcher.stale() : [];
+  var byFinding = {};
+
+  if (matcher) {
+    matcher.records.forEach(function(record) {
+      byFinding[record.finding] = (byFinding[record.finding] || 0) + 1;
+    });
+  }
+
+  return {
+    name: 'authorized-difference-register',
+    ok: !stale.length,
+    asserted: matcher ? matcher.records.length : 0,
+    failures: stale.map(function(record) {
+      return 'the registered difference ' + record.scenario + ' ' +
+        record.field + ', authorized by ' + record.finding +
+        ', did NOT materialize (' + JSON.stringify(
+          record.baseline ? record.baseline.value : null) + ' -> ' +
+        JSON.stringify(record.target ? record.target.value : null) +
+        '). Either the remediation it accounts for was reverted - which the ' +
+        'response comparing clean against the baseline recording again is ' +
+        'exactly how it would otherwise go unnoticed - or the entry is stale ' +
+        'and the register belongs regenerated with --authorize.';
+    }),
+    entries: [],
+    what: 'every registered rendered-output difference still materializes, ' +
+      'and nothing outside the register was authorized',
+    detail: (register.present
+      ? register.records.length + ' record(s) in ' + register.path + ', ' +
+        (matcher ? matcher.records.length : 0) + ' for this pass, ' +
+        authorizedRecords + ' difference(s) authorized and ' +
+        unauthorizedRecords + ' unauthorized'
+      : 'no register was read, so all ' + unauthorizedRecords +
+        ' difference(s) are unauthorized') +
+      (stale.length
+        ? '. ' + stale.length + ' registered record(s) did NOT materialize, ' +
+          'which means the remediation each accounts for was reverted - and ' +
+          'the response comparing clean against the baseline recording again ' +
+          'is exactly how that would otherwise go unnoticed'
+        : ''),
+    registerPresent: !!register.present,
+    registerPath: register.path || null,
+    registered: matcher ? matcher.records.length : 0,
+    matched: matcher ? matcher.matchedCount() : 0,
+    authorizedDifferences: authorizedRecords,
+    unauthorizedDifferences: unauthorizedRecords,
+    byFinding: sortedKeys(byFinding),
+    stale: stale.map(function(record) {
+      return {
+        scenario: record.scenario,
+        route: record.route,
+        step: record.step,
+        stepIndex: record.stepIndex,
+        field: record.field,
+        finding: record.finding,
+        baseline: record.baseline ? record.baseline.value : null,
+        target: record.target ? record.target.value : null
+      };
+    })
+  };
+}
+
+/**
+ * Generates the register from the passes this run measured, and writes it.
+ *
+ * The command that regenerates the artifact, and the reason the register can be
+ * this large and stay maintainable. It refuses in two directions:
+ *   * a difference no authority covers is NOT filed, is returned in full, and
+ *     makes this run exit non-zero - so the artifact can never hold an entry
+ *     nobody can trace to a finding;
+ *   * a scenario carrying an approved-deviation marker is skipped entirely, so
+ *     the closed AAP §0.7 register stays the only thing that covers it.
+ *
+ * Nothing is written when anything was unattributable. A partially regenerated
+ * register is worse than none: it would authorize part of a tree's differences
+ * while reading as a complete account of them.
+ *
+ * @param {Object} options
+ * @param {Object} plans by pass name, each carrying its driven scenarios
+ * @param {Array.<string>} passNames the passes that ran
+ * @param {Object} inputs {corpus, secureCorpus, authorities}
+ * @returns {Object} {path, written, records, unattributable, skipped, summary}
+ */
+function generateAuthorizedRegister(options, plans, passNames, inputs) {
+  var target = path.resolve(options.authorizedDifferences ||
+    DEFAULT_AUTHORIZED_DIFFERENCES);
+  var records = [];
+  var unattributable = [];
+  var skipped = [];
+  var byFinding = {};
+  var byField = {};
+  var byPass = {};
+  var scenarios = Object.create(null);
+  var document;
+  var text;
+
+  passNames.forEach(function(passName) {
+    var plan = plans[passName];
+
+    if (!plan) {
+      return;
+    }
+
+    plan.scenarios.forEach(function(item) {
+      var generated = authorizeGeneratedRecords(item, passName);
+
+      if (generated.skipped) {
+        if (item.result && (item.result.allDifferences || []).length) {
+          skipped.push({
+            pass: passName,
+            scenario: item.id,
+            route: item.routeKey,
+            differences: item.result.allDifferences.length,
+            reason: generated.skipped
+          });
+        }
+
+        return;
+      }
+
+      generated.records.forEach(function(record) {
+        records.push(record);
+        byFinding[record.finding] = (byFinding[record.finding] || 0) + 1;
+        // Collapsed on the index, so a 300-element ordered list reports as one
+        // field family rather than as 300 rows nobody can read.
+        byField[String(record.field).replace(/\[[0-9]+\]/g, '[]')] =
+          (byField[String(record.field).replace(/\[[0-9]+\]/g, '[]')] || 0) + 1;
+        byPass[passName] = (byPass[passName] || 0) + 1;
+        scenarios[passName + '\u0000' + record.scenario] = true;
+      });
+
+      generated.unattributable.forEach(function(record) {
+        unattributable.push(record);
+      });
+    });
+  });
+
+  document = {
+    schema: AUTHORIZED_REGISTER_SCHEMA,
+    artifact: path.basename(target),
+    tool: 'test/parity/replay.js --authorize',
+    what: 'A CLOSED allowlist of the rendered-output differences that later ' +
+      'order-0 remediations mandated, keyed by pass, scenario, step and ' +
+      'comparison field, pinning both values and naming the finding that ' +
+      'authorized each. It is not the approved-deviation register: that one ' +
+      'is closed at the two deviations AAP 0.7 decided and is argued in ' +
+      'docs/preserved-quirks.md 11. A record here that no longer ' +
+      'materializes FAILS the run, and any difference not here fails.',
+    sources: {
+      corpus: {
+        artifact: path.basename(inputs.corpus.path),
+        digest: inputs.corpus.digest
+      },
+      secureCorpus: inputs.secureCorpus
+        ? {
+          artifact: path.basename(inputs.secureCorpus.path),
+          digest: inputs.secureCorpus.digest
+        }
+        : null
+    },
+    authorities: inputs.authorities,
+    summary: {
+      records: records.length,
+      scenarios: Object.keys(scenarios).length,
+      passes: passNames.slice(),
+      byPass: sortedKeys(byPass),
+      byFinding: sortedKeys(byFinding),
+      byField: sortedKeys(byField),
+      skippedScenarios: skipped,
+      // THE RESIDUE, CARRIED IN THE REGISTER ITSELF. The register is a record
+      // of what was authorized and it must not read as a complete account of
+      // the tree's differences when it is not one. Every difference below was
+      // measured on the generating run, could not be traced to any authority,
+      // was NOT filed, and still fails every replay - and it is written here
+      // so a reader of the artifact alone can see what the register does not
+      // cover, without re-running the tool.
+      unattributableAtGeneration: unattributable
+    },
+    records: records
+  };
+
+  // The same provenance contract every other artifact in this folder carries:
+  // a block naming the generator blob, the analysed tree and the delivered
+  // head, hash-linked to the bytes it sits in. Role `analysis`, because the
+  // register is not a recording of either tree - it is a derived account of the
+  // difference between them.
+  manifest.provenance.attach(document, manifest.provenance.build({
+    artifact: target,
+    role: 'analysis',
+    generatorFile: __filename,
+    toolRoot: TOOL_ROOT,
+    analysedRoot: path.resolve(options.appRoot),
+    detail: {
+      registerSchema: AUTHORIZED_REGISTER_SCHEMA,
+      records: records.length,
+      authorities: (inputs.authorities || []).length,
+      corpusDigest: inputs.corpus.digest,
+      secureCorpusDigest: inputs.secureCorpus
+        ? inputs.secureCorpus.digest
+        : null
+    }
+  }));
+
+  text = serialize(document);
+
+  writeArtifact(target, text);
+
+  // The sidecar, for the same reason capture.js writes one beside the corpus: a
+  // digest over the exact bytes that reached disk, so a register edited after
+  // it was generated is detectable without parsing it.
+  writeArtifact(target + PROVENANCE_SUFFIX, serialize(
+    manifest.provenance.sidecar(document.provenance, text)));
+
+  return {
+    path: target,
+    written: true,
+    records: records,
+    unattributable: unattributable,
+    skipped: skipped,
+    summary: document.summary,
+    // A residue is not a reason to write nothing - the entries that ARE
+    // attributable are exactly what the gate needs, and withholding them would
+    // leave the whole surface failing and unaccounted. It IS a reason for the
+    // generation run to exit non-zero: an operator who regenerates the
+    // register has to be told what it does not cover, and each of these is
+    // either a real regression that belongs failing or a change some finding
+    // authorized, in which case that finding belongs in the authority table
+    // with the place it is argued.
+    reason: unattributable.length
+      ? unattributable.length + ' difference(s) across ' +
+        Object.keys(unattributable.reduce(function(seen, entry) {
+          seen[entry.scenario] = true;
+          return seen;
+        }, {})).length + ' scenario(s) could not be traced to any entry in ' +
+        'RENDERED_CHANGE_AUTHORITIES. They were NOT filed and they still ' +
+        'fail every replay. Either each is a real regression - in which case ' +
+        'it belongs failing - or a finding authorized it, in which case add ' +
+        'that finding to the authority table in test/parity/replay.js with ' +
+        'the place it is argued, and re-run.'
+      : null
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Coverage accounting
+// ---------------------------------------------------------------------------
+
+/**
+ * Accounts every route in the manifest against the scenarios that were
+ * replayed, and every scenario against the manifest.
+ *
+ * Coverage IS part of the gate. A replay that compared every scenario cleanly
+ * while never touching a route cannot support the claim that the surface was
+ * verified, so it fails rather than reporting a pass that overstates itself.
+ * An entry that genuinely cannot be driven is listed
+ * with its stated reason - never silently omitted - which is the difference
+ * between an explained gap and a hidden one.
+ *
+ * Success and failure paths are accounted separately, because one minimal
+ * request per route exercises success paths only, and the error-to-response
+ * mappings are the other half of the surface; the changed-error-edge checklist
+ * in docs/error-edge-inventory.md is what supplies the rest. A route with no failure-path scenario is reported
+ * so the gap is visible, not failed - the corpus decides which routes have
+ * error edges worth driving.
+ *
+ * @param {Array.<Object>} entries the manifest entries
+ * @param {Array.<Object>} scenarios the planned scenarios, after replay
+ * @returns {Object} the coverage document
+ */
+function accountCoverage(entries, scenarios) {
+  var byRoute = {};
+  var known = Object.create(null);
+  var unknown = [];
+  var unrepresented = [];
+  var unreachable = [];
+  var successOnly = [];
+  var order = [];
+
+  entries.forEach(function(entry) {
+    var key = manifest.routeKey(entry.method, entry.path);
+
+    known[key] = true;
+    order.push(key);
+    byRoute[key] = {
+      method: entry.method,
+      path: entry.path,
+      handlerKind: entry.handlerKind,
+      auth: entry.auth,
+      scenarios: [],
+      driven: 0,
+      compared: 0,
+      differing: 0,
+      successPath: false,
+      failurePath: false,
+      unreachable: null
+    };
+  });
+
+  scenarios.forEach(function(item) {
+    item.covers.forEach(function(key) {
+      var route = byRoute[key];
+
+      if (!route) {
+        if (unknown.indexOf(key) === -1) {
+          unknown.push(key);
+        }
+        return;
+      }
+
+      route.scenarios.push(item.id);
+
+      if (item.unreachableReason) {
+        route.unreachable = { id: item.id, reason: item.unreachableReason };
+        unreachable.push({
+          route: key,
+          id: item.id,
+          reason: item.unreachableReason
+        });
+        return;
+      }
+
+      if (item.result && item.result.driven) {
+        route.driven++;
+      }
+
+      if (item.result && item.result.compared) {
+        route.compared++;
+      }
+
+      if (item.result && item.result.differences.length) {
+        route.differing++;
+      }
+
+      if (isFailurePathScenario(item)) {
+        route.failurePath = true;
+      }
+      else {
+        route.successPath = true;
+      }
+    });
+  });
+
+  order.forEach(function(key) {
+    var route = byRoute[key];
+
+    if (!route.scenarios.length) {
+      unrepresented.push(key);
+      return;
+    }
+
+    if (!route.failurePath && !route.unreachable) {
+      successOnly.push(key);
+    }
+  });
+
+  return {
+    routes: entries.length,
+    represented: entries.length - unrepresented.length,
+    unrepresented: unrepresented,
+    unknownRoutes: unknown,
+    unreachable: unreachable,
+    successPathOnly: successOnly,
+    byRoute: sortedKeys(byRoute)
+  };
+}
+
+/**
+ * Whether a scenario drives a failure path.
+ *
+ * Taken from the corpus's own declared intent and group rather than inferred
+ * from a status, so the accounting says what the corpus MEANT to exercise. A
+ * redirect is a success path: it is the route working.
+ *
+ * @param {Object} item
+ * @returns {boolean}
+ */
+function isFailurePathScenario(item) {
+  return item.intent === 'failure' ||
+    item.intent === 'timeout' ||
+    String(item.group).slice(0, 11) === 'error-edge.';
+}
+
+// ---------------------------------------------------------------------------
+// The five auth-scheme outcomes
+// ---------------------------------------------------------------------------
+
+/**
+ * Every outcome of the session auth scheme that has to be asserted
+ * independently, and the corpus scenario expected to assert each one.
+ *
+ * The list is closed and explicit here because a set derived from whatever
+ * scenarios happen to sit in the `auth-outcome` group would report four out of
+ * four for a group of four and one out of one for a group of one, and neither
+ * says anything about the contract. With the required set named, a missing
+ * scenario is a failure rather than a smaller denominator.
+ *
+ * @type {Array.<{id: string, outcome: string}>}
+ */
+var REQUIRED_AUTH_OUTCOMES = [
+  { id: 'auth.outcome.not-logged-in',   outcome: 'no userId in the session -> "Not logged in"' },
+  { id: 'auth.outcome.valid-user',      outcome: 'a valid user -> h.authenticated' },
+  { id: 'auth.outcome.user-not-found',  outcome: 'a session whose record is gone -> session cleared, "User not found"' },
+  { id: 'auth.outcome.account-disabled',outcome: 'a disabled user -> session cleared, "Account disabled"' },
+  { id: 'auth.outcome.lookup-error',    outcome: 'the lookup itself fails -> "Auth error"' }
+];
+
+/**
+ * The outcomes permitted to go undriven, keyed by scenario id.
+ *
+ * DELIBERATELY EMPTY. It exists so that the decision to stop driving one of
+ * the five is a code change in this file, carrying the reference that allows it
+ * and reviewed like any other, rather than a sentence written into an artifact
+ * by the tool that produces the artifact: a corpus declaring an outcome
+ * unreachable would otherwise be taken at its word, and the outcome would be
+ * reported as asserted while nothing drove it.
+ *
+ * An entry must carry `{reason, aap}` - what makes the outcome undrivable, and
+ * the reference that permits leaving it so. Nothing else counts.
+ *
+ * @type {Object.<string, {reason: string, aap: string}>}
+ */
+var AUTH_OUTCOMES_EXEMPT_FROM_DRIVING = {};
+
+/**
+ * Asserts the five outcomes of the session auth scheme, each independently.
+ *
+ * The scheme has five distinct outcomes and they are asserted one by one rather
+ * than through an aggregate, because an aggregate cannot tell a missing-record
+ * refusal from a disabled-account refusal - both are 401-shaped, and only the
+ * message and the session clearing distinguish them.
+ *
+ * ALL FIVE ARE DRIVEN, the fifth included: 'Auth error' needs the `User`
+ * lookup ITSELF to fail, which no request can cause, so fixtures/model.js
+ * injects that fault and `auth.outcome.lookup-error` drives the outcome for
+ * real. A stated `unreachableReason` is a description of a gap and not an
+ * assertion, and it is not counted as one - an unreachable entry in this group
+ * is a FAILURE unless its id appears in `AUTH_OUTCOMES_EXEMPT_FROM_DRIVING`,
+ * which is empty and which exists so that adding one takes a deliberate edit
+ * here rather than a sentence in an artifact.
+ *
+ * @param {Array.<Object>} scenarios the planned scenarios, after replay
+ * @param {boolean} selectionComplete Whether every corpus scenario ran. It
+ *   decides whether a missing outcome is a FAILURE or a scenario the `--only`
+ *   filter excluded from a run already labelled non-qualifying.
+ * @param {(Object|null)} evidence The pass's collected evidence, whose
+ *   `modelFault` record is what `checkInjectedFaults` reconciles a scenario's
+ *   armed steps against.
+ * @returns {Object} the check document
+ */
+function accountAuthOutcomes(scenarios, selectionComplete, evidence) {
+  var outcomes = scenarios.filter(function(item) {
+    return item.group === AUTH_OUTCOME_GROUP;
+  });
+  var present = Object.create(null);
+  var entries = [];
+  var failures = [];
+  var asserted = 0;
+  var missing;
+  var drivenAndCompared = 0;
+
+  outcomes.forEach(function(item) {
+    present[item.id] = true;
+  });
+
+  missing = AUTH_OUTCOME_IDS.filter(function(id) {
+    return !present[id];
+  });
+
+  if (!outcomes.length) {
+    // A skipped check that reports ok is only honest for a NARROWED run, where
+    // the group was deliberately outside the selection. Under a complete
+    // selection an empty group means the five outcomes were never asserted, and
+    // reporting that as a pass is exactly how a gate comes to certify nothing.
+    return {
+      name: 'auth-scheme outcomes',
+      asserted: 0,
+      minimum: AUTH_OUTCOME_IDS.length,
+      required: AUTH_OUTCOME_IDS.slice(),
+      missing: missing,
+      ok: !selectionComplete,
+      skipped: !selectionComplete,
+      reason: selectionComplete
+        ? null
+        : 'no scenario in the ' + AUTH_OUTCOME_GROUP + ' group was selected ' +
+          'by this narrowed run, so the outcomes were not exercised here and ' +
+          'this run is not the gate',
+      entries: entries,
+      failures: selectionComplete
+        ? ['not one of the ' + AUTH_OUTCOME_IDS.length + ' auth-scheme ' +
+           'outcomes was exercised, although this run replayed the whole ' +
+           'corpus. AAP §0.9.3 requires all five independently: ' +
+           AUTH_OUTCOME_IDS.join(', ')]
+        : []
+    };
+  }
+
+  if (selectionComplete && missing.length) {
+    failures.push(missing.length + ' of the ' + AUTH_OUTCOME_IDS.length +
+      ' auth-scheme outcomes have no scenario in this replay: ' +
+      missing.join(', ') + '. AAP §0.9.3 requires each independently, ' +
+      'because an aggregate cannot tell a missing-record refusal from a ' +
+      'disabled-account refusal - both are 401-shaped, and only the message ' +
+      'and the session clearing distinguish them.');
+  }
+
+  outcomes.forEach(function(item) {
+    present[item.id] = item;
+  });
+
+  REQUIRED_AUTH_OUTCOMES.forEach(function(required) {
+    var item = present[required.id];
+    var exempt = AUTH_OUTCOMES_EXEMPT_FROM_DRIVING[required.id] || null;
+    var entry;
+
+    if (!item) {
+      // What the required list is for: on a COMPLETE run a scenario that is
+      // simply absent fails the check rather than shrinking the denominator.
+      // On a narrowed run it is absent because the filter excluded it,
+      // which is what `--only` is for - and such a run is already labelled
+      // gateQualifying: false, so it cannot stand as the gate whatever this
+      // check says about it.
+      entries.push({
+        id: required.id,
+        outcome: required.outcome,
+        present: false,
+        filteredOut: !selectionComplete,
+        driven: false,
+        compared: false,
+        asserted: false,
+        differences: 0,
+        expectation: null
+      });
+
+      if (selectionComplete) {
+        failures.push(required.id + ' is not in the corpus, so the auth ' +
+          'outcome "' + required.outcome + '" is not asserted by anything');
+      }
+
+      return;
+    }
+
+    entry = {
+      id: item.id,
+      outcome: required.outcome,
+      present: true,
+      route: item.routeKey,
+      identity: item.identity,
+      description: describeScenario(item),
+      steps: item.steps ? item.steps.length : 0,
+      // An `unreachableReason` is reported so a reviewer can see the claim, but
+      // it no longer excuses anything on its own.
+      unreachableReason: item.unreachableReason || null,
+      exempt: exempt,
+      driven: !!(item.result && item.result.driven),
+      compared: !!(item.result && item.result.compared),
+      asserted: false,
+      differences: item.result ? item.result.differences.length : 0,
+      expectation: item.result ? item.result.expectation : null,
+      armedSteps: (item.steps || []).filter(function(step) {
+        return step && step.modelFault;
+      }).length,
+      // The document ids the armed steps name, so the evidence can be
+      // reconciled against the intended lookup rather than against any fault.
+      armedIds: (item.steps || []).filter(function(step) {
+        return step && step.modelFault && step.modelFault.id;
+      }).map(function(step) {
+        return String(step.modelFault.id);
+      }),
+      faultCheck: null
+    };
+
+    entry.faultCheck = checkInjectedFaults(entry, evidence);
+
+    entries.push(entry);
+
+    if (!entry.driven) {
+      if (exempt) {
+        // The only way an outcome escapes being driven, and it takes an edit to
+        // the exemption table carrying the reference that permits it.
+        note(required.id + ' is exempt from being driven: ' + exempt.reason +
+          ' (' + exempt.aap + ')');
+        return;
+      }
+
+      failures.push(required.id + ' was not driven, so the auth outcome "' +
+        required.outcome + '" was not asserted. ' +
+        (entry.unreachableReason
+          ? 'It carries an unreachableReason - "' +
+            String(entry.unreachableReason).slice(0, 120) +
+            '" - and that is a description of the gap, not an assertion: an ' +
+            'outcome AAP 0.9.3 requires is either driven or exempted in ' +
+            'AUTH_OUTCOMES_EXEMPT_FROM_DRIVING with the section that permits it.'
+          : 'It has ' + entry.steps + ' step(s) and produced no result.'));
+      return;
+    }
+
+    if (!entry.compared) {
+      failures.push(required.id + ' was driven but has no recorded baseline to ' +
+        'be compared against, so nothing establishes that this outcome is ' +
+        'unchanged');
+      return;
+    }
+
+    drivenAndCompared++;
+
+    if (entry.differences) {
+      failures.push(required.id + ' differs from its baseline in ' +
+        entry.differences + ' field(s), so this auth outcome changed');
+      return;
+    }
+
+    if (!entry.expectation) {
+      failures.push(required.id + ' carries no declared expectation, so the ' +
+        'only thing checked was that it matched its baseline - which a ' +
+        'baseline captured from the same defect would also do');
+      return;
+    }
+
+    if (!entry.expectation.met) {
+      failures.push(required.id + ' did not meet its declared expectation: ' +
+        entry.expectation.failures.join('; '));
+      return;
+    }
+
+    if (entry.faultCheck && !entry.faultCheck.ok) {
+      failures.push(required.id + ' met its expectation but its injected ' +
+        'fault evidence does not support it: ' + entry.faultCheck.reason);
+      return;
+    }
+
+    entry.asserted = true;
+    asserted = asserted + 1;
+  });
+
+  outcomes.forEach(function(item) {
+    var known = REQUIRED_AUTH_OUTCOMES.some(function(required) {
+      return required.id === item.id;
+    });
+
+    if (!known) {
+      // Not a failure - extra coverage of this scheme is welcome - but it is
+      // reported, so that a scenario renamed out of the required set cannot
+      // quietly become "an extra" while its outcome goes unasserted.
+      entries.push({
+        id: item.id,
+        outcome: 'not one of the five required outcomes',
+        present: true,
+        driven: !!(item.result && item.result.driven),
+        compared: !!(item.result && item.result.compared),
+        asserted: false,
+        differences: item.result ? item.result.differences.length : 0,
+        expectation: item.result ? item.result.expectation : null
+      });
+    }
+  });
+
+  // Four of the five are reachable over HTTP, so four is the floor for a
+  // complete run. Without it, a corpus that had lost three outcome scenarios
+  // would report "2 asserted, ok" - a true statement about a gate that is no
+  // longer the gate.
+  if (selectionComplete && drivenAndCompared < MIN_AUTH_OUTCOMES_DRIVEN) {
+    failures.push('only ' + drivenAndCompared + ' auth-scheme outcome(s) were ' +
+      'driven and compared, and ' + MIN_AUTH_OUTCOMES_DRIVEN + ' of the ' +
+      AUTH_OUTCOME_IDS.length + ' are reachable over HTTP. The fifth needs ' +
+      'the user lookup itself to fail, which no request can cause, so it ' +
+      'carries a stated reason and is asserted by the server-level gate that ' +
+      'can inject the fault.');
+  }
+
+  return {
+    name: 'auth-scheme outcomes',
+    // `asserted` is the STRICT count - an outcome driven, compared, matching
+    // its baseline, and meeting its declared expectation - and `exercised`
+    // counts the ones driven and compared at all. These were one number
+    // before, and that is how four could read as five. `accountedFor` is how
+    // many the closed list resolved to a scenario, which is a different
+    // statement again, and none of the three is a substitute for another.
+    // `unexercised` names each gap, and `auth-outcomes-exercised` in
+    // `qualifyGate` refuses gate status while the list is non-empty - so the
+    // fifth outcome, which needs the user lookup itself to reject and
+    // therefore needs a fault injector no HTTP request can stand in for,
+    // blocks the gate instead of passing inside a count of five.
+    asserted: asserted,
+    accountedFor: entries.length,
+    exercised: drivenAndCompared,
+    minimum: AUTH_OUTCOME_IDS.length,
+    required: AUTH_OUTCOME_IDS.slice(),
+    missing: missing,
+    unexercised: entries.filter(function(entry) {
+      return !(entry.driven && entry.compared);
+    }).map(function(entry) {
+      return {
+        id: entry.id,
+        reason: entry.reason ||
+          (entry.driven ? 'driven with no recorded baseline' : 'not driven')
+      };
+    }),
+    drivenAndCompared: drivenAndCompared,
+    ok: !failures.length,
+    skipped: false,
+    reason: null,
+    entries: entries,
+    failures: failures
+  };
+}
+
+/**
+ * Reconciles an auth-outcome scenario's armed steps against what was faulted.
+ *
+ * The expectation alone is not sufficient evidence, and the gap is not
+ * hypothetical: a `302 /login` is what outcomes 2 and 3 produce as well, and a
+ * step whose fault silently failed to arm would drive an ordinary
+ * authenticated request. It would then either pass the expectation for the
+ * wrong reason or report a difference against the application for a fault the
+ * harness never injected. So a scenario that declares armed steps must have
+ * the fixture's own record of the same number of faults, on the id it armed.
+ *
+ * A scenario with no armed steps is not checked - four of the five outcomes are
+ * reachable without a fault and must stay that way. Absent evidence is reported
+ * as not-ok rather than waved through: "no fault was injected" and "the record
+ * of the injection could not be read" are different findings, and neither
+ * supports the claim.
+ *
+ * @param {Object} entry The per-outcome entry under construction.
+ * @param {(Object|null)} evidence The pass's collected evidence.
+ * @returns {(Object|null)} {ok, reason, expected, observed} or null when N/A.
+ */
+function checkInjectedFaults(entry, evidence) {
+  var record = evidence && evidence.modelFault ? evidence.modelFault : null;
+  var expectedId;
+  var observedForId;
+
+  if (!entry.armedSteps) {
+    return null;
+  }
+
+  if (!record) {
+    return {
+      ok: false,
+      reason: 'the scenario arms ' + entry.armedSteps + ' model-boundary ' +
+        'fault(s), and this pass collected no fault evidence at all, so ' +
+        'nothing establishes that any of them was injected',
+      expected: entry.armedSteps,
+      observed: null
+    };
+  }
+
+  if (!record.available) {
+    return {
+      ok: false,
+      reason: 'the scenario arms ' + entry.armedSteps + ' model-boundary ' +
+        'fault(s) and the fixture\'s evidence log could not be read (' +
+        (record.reason || 'no reason given') + '), so whether they were ' +
+        'injected is unknown rather than confirmed',
+      expected: entry.armedSteps,
+      observed: null
+    };
+  }
+
+  if (record.faulted < entry.armedSteps) {
+    return {
+      ok: false,
+      reason: 'the scenario arms ' + entry.armedSteps + ' model-boundary ' +
+        'fault(s) and the fixture recorded ' + record.faulted + '. A step ' +
+        'whose fault did not arm drove an ordinary request, so its result ' +
+        'says nothing about the outcome under test',
+      expected: entry.armedSteps,
+      observed: record.faulted
+    };
+  }
+
+  // The id every armed step names. A single scenario arming two different
+  // documents would be a scenario doing two things, so the first is the one
+  // reconciled and a divergence is reported rather than averaged.
+  expectedId = null;
+  (entry.armedIds || []).forEach(function(id) {
+    if (expectedId === null) {
+      expectedId = id;
+    }
+  });
+
+  if (expectedId !== null && record.byId) {
+    observedForId = record.byId[expectedId] || 0;
+
+    if (observedForId < entry.armedSteps) {
+      return {
+        ok: false,
+        reason: 'the scenario arms ' + entry.armedSteps + ' fault(s) on id ' +
+          expectedId + ' and the fixture recorded ' + observedForId +
+          ' fault(s) on that id (' + record.faulted + ' in total), so the ' +
+          'faults that were injected were not the ones this scenario armed',
+        expected: entry.armedSteps,
+        observed: observedForId
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    reason: null,
+    expected: entry.armedSteps,
+    observed: record.faulted
+  };
+}
+
+/**
+ * A one-line description of a scenario, from its own declarations.
+ *
+ * @param {Object} item
+ * @returns {string}
+ */
+function describeScenario(item) {
+  if (item.expectation && item.expectation.description) {
+    return item.expectation.description;
+  }
+
+  if (item.notes && item.notes.length) {
+    return String(item.notes[0]);
+  }
+
+  return item.intent + ' on ' + item.routeKey + ' as ' + item.identity;
+}
+
+// ---------------------------------------------------------------------------
+// The remaining named checks
+// ---------------------------------------------------------------------------
+
+/**
+ * Asserts that the four header-resolved reply chains are UNCHANGED.
+ *
+ * These four are the collateral-damage guard on the one approved deviation.
+ * Each continues to `.header(...)`, which settled the deferred response at
+ * baseline, so each returned a real response then and must return the
+ * identical one now. The never-settling chain beside one of them was
+ * deliberately changed; these were not, they carry no marker, and a difference
+ * in any of them means the approved change reached further than it was
+ * approved to.
+ *
+ * @param {Array.<Object>} scenarios the planned scenarios, after replay
+ * @param {boolean} selectionComplete Whether every corpus scenario ran; the
+ *   chain COUNT is asserted only when it did, because a filtered run
+ *   legitimately replays fewer.
+ * @returns {Object} the check document
+ */
+function accountHeaderResolvedChains(scenarios, selectionComplete) {
+  var chains = scenarios.filter(function(item) {
+    return item.group === HEADER_RESOLVED_GROUP;
+  });
+  var failures = [];
+  var entries = [];
+
+  // The count is part of the assertion. Four chains are enumerated, and
+  // a run that checked three of them left one unlooked-at while reporting a
+  // pass - which is precisely the collateral damage this check exists to catch.
+  if (selectionComplete && chains.length !== HEADER_RESOLVED_CHAIN_COUNT) {
+    failures.push(chains.length + ' scenario(s) in the ' +
+      HEADER_RESOLVED_GROUP + ' group were replayed and AAP §0.6.6 ' +
+      'enumerates ' + HEADER_RESOLVED_CHAIN_COUNT + ' header-resolved reply ' +
+      'chains (files.js:102-105, courses.js:269-272, trinket.js:1383-1386 and ' +
+      'trinket.js:1548-1551). A chain with no scenario is a chain nobody ' +
+      'checked, and these four were NOT approved to change.');
+  }
+
+  chains.forEach(function(item) {
+    var differences = item.result ? item.result.differences.length : 0;
+
+    entries.push({
+      id: item.id,
+      route: item.routeKey,
+      differences: differences,
+      driven: !!(item.result && item.result.driven),
+      compared: !!(item.result && item.result.compared),
+      marked: !!item.expectedDeviation
+    });
+
+    if (item.expectedDeviation) {
+      failures.push(item.id + ' carries an expectedDeviation marker. These ' +
+        'four chains were NOT approved to change - only the never-settling ' +
+        'one was - so a marker here would launder exactly the collateral ' +
+        'damage this check exists to catch.');
+    }
+
+    // Driven AND compared, both required. "Unchanged" is a claim about a
+    // response, so a chain that was never driven supports no claim at all -
+    // and a check that counted four records while none of them ran would
+    // report the strongest sentence in this file about the weakest evidence.
+    if (!(item.result && item.result.driven)) {
+      failures.push(item.id + ' was not driven, so "unchanged" was not ' +
+        'established for this chain. These four are the collateral-damage ' +
+        'guard on the AAP §0.7 decision and a chain nobody drove is a chain ' +
+        'nobody checked.');
+    }
+    else if (!item.result.compared) {
+      failures.push(item.id + ' has no recorded baseline, so "unchanged" ' +
+        'could not be established');
+    }
+
+    if (differences) {
+      failures.push(item.id + ' differs from its baseline in ' + differences +
+        ' field(s)');
+    }
+  });
+
+  return {
+    name: 'header-resolved reply chains unchanged',
+    asserted: entries.length,
+    minimum: HEADER_RESOLVED_CHAIN_COUNT,
+    ok: !failures.length,
+    skipped: !chains.length && !selectionComplete,
+    reason: chains.length || selectionComplete
+      ? null
+      : 'no scenario in the ' + HEADER_RESOLVED_GROUP + ' group was selected ' +
+        'by this narrowed run',
+    entries: entries,
+    failures: failures
+  };
+}
+
+/**
+ * Asserts that guest browsing still works on the routes that inherit the
+ * default auth mode.
+ *
+ * The default strategy runs in `try` mode, which is why most routes carry no
+ * explicit auth and why an unauthenticated request to them is served rather
+ * than refused. The assertion is framed against the BASELINE rather than
+ * against 401 outright, because a handful of those routes legitimately refuse
+ * an anonymous caller through their own logic, and that refusal is preserved
+ * behaviour too: what must not happen is a route that served a guest at
+ * baseline refusing one now.
+ *
+ * @param {Array.<Object>} entries manifest entries
+ * @param {Array.<Object>} scenarios the planned scenarios, after replay
+ * @param {boolean} selectionComplete Whether every corpus scenario ran; a run
+ *   that drove no eligible route fails only when it did, and is reported as a
+ *   skipped check otherwise.
+ * @returns {Object} the check document
+ */
+function accountGuestBrowsing(entries, scenarios, selectionComplete) {
+  var inherited = Object.create(null);
+  var failures = [];
+  var checked = 0;
+  var eligible = 0;
+  var refusedNow = [];
+
+  entries.forEach(function(entry) {
+    if (entry.auth && entry.auth.inherited) {
+      inherited[manifest.routeKey(entry.method, entry.path)] = true;
+    }
+  });
+
+  scenarios.forEach(function(item) {
+    var observed;
+    var baseline;
+
+    if (item.identity !== IDENTITY_ANONYMOUS || !inherited[item.routeKey]) {
+      return;
+    }
+
+    // The eligible population, counted from the plan and the manifest rather
+    // than from what happened to be compared. It is what turns "0 asserted,
+    // ok" into a failure: this run selected anonymous scenarios on
+    // auth-inheriting routes, and if none of them reached a comparison then
+    // guest browsing was not checked at all.
+    if (item.steps.length) {
+      eligible++;
+    }
+
+    if (!item.result || !item.result.compared || !item.result.steps.length) {
+      return;
+    }
+
+    observed = item.result.steps[0].observed;
+    baseline = item.steps[0] ? item.steps[0].baseline : null;
+
+    if (!observed || !baseline) {
+      return;
+    }
+
+    checked++;
+
+    if (observed.status === 401 && baseline.status !== 401) {
+      refusedNow.push(item.id + ' (' + item.routeKey + ')');
+      failures.push(item.id + ' on ' + item.routeKey + ' answered 401 to an ' +
+        'anonymous request where the baseline answered ' + baseline.status +
+        '. The default strategy runs in try mode, so guest browsing on an ' +
+        'auth-inheriting route is preserved behaviour.');
+    }
+  });
+
+  if (!checked && eligible) {
+    failures.push(eligible + ' anonymous scenario(s) on auth-inheriting ' +
+      'routes were selected and not one of them reached a comparison, so ' +
+      'guest browsing was not checked. The default strategy runs in try mode, ' +
+      'which is why 126 of the 233 routes carry no explicit auth and why an ' +
+      'unauthenticated request to them is served rather than refused - if ' +
+      'that stopped being true, this check is what would have said so.');
+  }
+
+  if (!checked && !eligible && selectionComplete) {
+    failures.push('this run replayed the whole corpus and found no anonymous ' +
+      'scenario on any auth-inheriting route, so guest browsing has no ' +
+      'coverage at all. 126 of the 233 routes inherit the default try-mode ' +
+      'strategy.');
+  }
+
+  return {
+    name: 'guest browsing on auth-inheriting routes',
+    asserted: checked,
+    eligible: eligible,
+    minimum: eligible ? 1 : 0,
+    ok: !failures.length,
+    skipped: !checked && !eligible && !selectionComplete,
+    reason: checked
+      ? null
+      : 'no anonymous scenario on an auth-inheriting route was compared in ' +
+        'this run',
+    entries: refusedNow,
+    failures: failures
+  };
+}
+
+/**
+ * Asserts that each scenario's fixture profile was actually IN FORCE, rather
+ * than assuming that writing it was enough.
+ *
+ * Two independent pieces of evidence, because either alone is weak. The profile
+ * file is read back after it is written, which proves the channel the fixture
+ * re-reads on every intercepted call carries the right name. And for a scenario
+ * that actually crossed the module boundary, the fixture's own JSONL evidence
+ * log records the profile it served under, so the records appended DURING the
+ * scenario are checked to carry that profile. A mismatch in either invalidates
+ * the comparison - the response would have been produced under a different
+ * external outcome than the recorded one - so it is a failure, not a note.
+ *
+ * @param {Array.<Object>} scenarios the planned scenarios, after replay
+ * @param {boolean} selectionComplete Whether every corpus scenario ran; with
+ *   no profile confirmed, that is a failure on a complete run and a skipped
+ *   check on a filtered one.
+ * @returns {Object} the check document
+ */
+function accountFixtureProfiles(scenarios, selectionComplete) {
+  var failures = [];
+  var entries = [];
+  var checked = 0;
+  var driven = 0;
+  var declared = [];
+  var confirmedProfiles = Object.create(null);
+  var unconfirmed;
+
+  scenarios.forEach(function(item) {
+    if (declared.indexOf(item.fixtureProfile) === -1 && item.steps.length) {
+      declared.push(item.fixtureProfile);
+    }
+
+    if (item.result && item.result.driven) {
+      driven++;
+    }
+  });
+
+  scenarios.forEach(function(item) {
+    var evidence = item.result ? item.result.profileEvidence : null;
+
+    if (!evidence) {
+      return;
+    }
+
+    checked++;
+    confirmedProfiles[item.fixtureProfile] = true;
+
+    entries.push({
+      id: item.id,
+      profile: item.fixtureProfile,
+      fileConfirmed: evidence.fileConfirmed,
+      interceptedCalls: evidence.interceptedCalls,
+      profileChanges: evidence.profileChanges,
+      profilesSeen: evidence.profilesSeen
+    });
+
+    if (!evidence.fileConfirmed) {
+      failures.push(item.id + ' requested the fixture profile ' +
+        JSON.stringify(item.fixtureProfile) + ' but the profile file did not ' +
+        'read back as that profile' +
+        (evidence.fileReason ? ': ' + evidence.fileReason : ''));
+    }
+
+    evidence.profilesSeen.forEach(function(seen) {
+      if (seen !== item.fixtureProfile) {
+        failures.push(item.id + ' ran under the fixture profile ' +
+          JSON.stringify(item.fixtureProfile) + ' but the fixture served an ' +
+          'intercepted call under ' + JSON.stringify(seen) + ', so the ' +
+          'external outcome behind this response was not the one the ' +
+          'scenario declares');
+      }
+    });
+
+    // The fixture's own adoption record. A change to a profile other than the
+    // requested one means the file and the fixture disagree, which the
+    // read-back alone cannot see.
+    evidence.profileChangeMismatch.forEach(function(seen) {
+      failures.push(item.id + ' requested the fixture profile ' +
+        JSON.stringify(item.fixtureProfile) + ' but the fixture recorded ' +
+        'adopting ' + JSON.stringify(seen));
+    });
+  });
+
+  unconfirmed = declared.filter(function(profile) {
+    return !confirmedProfiles[profile];
+  });
+
+  // Two cardinalities, and they catch different things. Every DRIVEN scenario
+  // must carry profile evidence, because a response produced under an unknown
+  // external outcome is not comparable against a recording made under a known
+  // one. And every DECLARED profile must appear among the confirmed ones, which
+  // is what catches the specific case of a provider-branch scenario - the
+  // OAuth and asset-transport profiles - never reaching the fixture at all.
+  if (checked !== driven) {
+    failures.push(driven + ' scenario(s) were driven and ' + checked +
+      ' carry fixture-profile evidence, so ' + (driven - checked) +
+      ' response(s) were produced under an external outcome this run did not ' +
+      'establish');
+  }
+
+  if (unconfirmed.length) {
+    failures.push(unconfirmed.length + ' declared fixture profile(s) were ' +
+      'never confirmed in force: ' + unconfirmed.join(', ') + '. A scenario ' +
+      'exists to drive each of them, so an unconfirmed profile means that ' +
+      'provider branch was not the one behind the response.');
+  }
+
+  if (!checked && selectionComplete) {
+    failures.push('this run replayed the whole corpus and established no ' +
+      'fixture profile at all, so no comparison in it rests on a known ' +
+      'external outcome');
+  }
+
+  return {
+    name: 'fixture profiles in force',
+    asserted: checked,
+    driven: driven,
+    declaredProfiles: declared.slice().sort(),
+    unconfirmedProfiles: unconfirmed,
+    minimum: driven,
+    ok: !failures.length,
+    skipped: !checked && !driven && !selectionComplete,
+    reason: checked ? null : 'no scenario was driven in this run',
+    entries: entries,
+    failures: failures
+  };
+}
+
+/**
+ * Scans the application child's captured stderr for notices.
+ *
+ * This belongs here rather than in a boot check because two internal
+ * re-entrant injections put a deprecation on the LIVE REQUEST PATH, and a
+ * boot that never serves a request never reveals them. A
+ * full replay over the whole route surface is exactly the exercise that does,
+ * so the stream is scanned here, and it is scanned on every run rather than
+ * only when the deprecation flags were passed - a warning is a finding whether
+ * or not anyone asked to see it.
+ *
+ * WHAT counts as a notice, WHICH flags the measurement requires, and the fact
+ * that THERE ARE NO ALLOWANCES are all decided in test/parity/warning-policy.js
+ * and are not restated here. Three consequences of using that policy rather
+ * than a local predicate are worth naming:
+ *
+ *   * a local predicate is easy to get silently wrong - a `Warning:\b`
+ *     alternative can never match, because `:` and the space after it are both
+ *     non-word characters - and it knows nothing of Mongoose's console.warn
+ *     notices or the AWS SDK banner;
+ *   * a stream measured WITHOUT --pending-deprecation is not evidence, because
+ *     a pending deprecation is silent without it, so the flag audit is part of
+ *     the check rather than a detail of the invocation;
+ *   * a run against a worktree that is not this one is a MEASUREMENT of that
+ *     tree - a baseline install legitimately emits the AWS notice, which only
+ *     the target's config/aws.js suppresses - and is forced non-qualifying so
+ *     it can never be presented as the gate.
+ *
+ * The breadth requirements on this exercise - every registered route, more
+ * than one identity, methods beyond GET, and the worker - are added by
+ * `qualifyWarningEvidence` once the pass has been accounted, because only then
+ * is the coverage known.
+ *
+ * The `context` argument is what stops this from passing on nothing. A pass
+ * that LAUNCHED the application and then produced no stderr to read, or drove
+ * no scenario, has no warning evidence at all, and reporting that as "zero
+ * warnings" would be a claim about a stream nobody looked at. The flags the
+ * child actually received are recorded here too, because a scan taken without
+ * `--pending-deprecation` sees a strictly smaller set of warnings than the gate
+ * requires - that does not weaken this check, but it does mean the run is not
+ * the gate, which `qualifyGate` enforces separately.
+ *
+ * @param {(string|null)} stderrPath
+ * @param {Object} [context]
+ * @param {Array.<string>} [context.nodeFlags] The flags the child was given.
+ * @param {string} [context.appRoot] The tree that was served.
+ * @returns {Object} the check document
+ */
+function accountWarnings(fold, context) {
+  var settings = context || {};
+  // A string is still accepted, because a single-segment caller has no fold to
+  // describe; a document is what `combineStderrLogs` returns and is the form
+  // that can say the evidence is incomplete.
+  var folded = (fold && typeof fold === 'object') ? fold : null;
+  var stderrPath = folded ? folded.path : (fold || null);
+  // Rule 4 is decided by the policy, not here, so that all four gates treat a
+  // foreign --app tree identically.
+  var tree = warningPolicy.gateAppliesTo(settings.appRoot || null);
+  var inputs = {
+    // Everything `judge` needs, kept beside the check so that
+    // `qualifyWarningEvidence` can re-judge the SAME evidence with this
+    // exercise's breadth requirements added, rather than reconstructing the
+    // inputs from the rendered check and getting one of them subtly wrong.
+    notices: [],
+    flags: warningPolicy.auditFlags(settings.nodeFlags || []),
+    subject: 'the application\'s stderr over this pass',
+    gateApplies: tree.applies,
+    treeNote: tree.treeNote,
+    launched: !!stderrPath,
+    unlaunchedReason: 'the application was not launched by this run, so its ' +
+      'captured stderr belongs to whoever started it, and this run cannot ' +
+      'stand as the warning gate'
+  };
+  var check;
+  var text;
+
+  if (stderrPath) {
+    try {
+      text = fs.readFileSync(stderrPath, 'utf8');
+    }
+    catch (err) {
+      check = warningPolicy.judge(inputs);
+      check.ok = false;
+      check.qualifying = false;
+      check.failures = ['the captured stderr at ' + stderrPath + ' could not ' +
+        'be read, so the warning gate could not be evaluated: ' + reasonOf(err)];
+      check.stderrPath = stderrPath;
+      check.evidenceInputs = inputs;
+      check.unreadable = true;
+
+      return check;
+    }
+
+    inputs.notices = warningPolicy.noticesFromText(text, {
+      ignorePrefixes: [LOG_PREFIX],
+      source: stderrPath
+    });
+  }
+
+  check = warningPolicy.judge(inputs);
+  check.stderrPath = stderrPath || null;
+  check.stderrSegments = folded ? folded.segments.slice() : (stderrPath
+    ? [stderrPath]
+    : []);
+  check.evidenceInputs = inputs;
+
+  // Incomplete evidence cannot qualify, whatever the readable part says. The
+  // flag is STICKY for the same reason `unreadable` is: `qualifyWarningEvidence`
+  // re-judges this document from its inputs, and a re-judgement of a fragment
+  // is a clean verdict on the wrong stream.
+  if (folded && folded.complete === false) {
+    check.ok = false;
+    check.qualifying = false;
+    check.incompleteEvidence = true;
+    check.failures = (check.failures || []).concat([folded.reason +
+      '. AAP 0.9.3 measures the zero-warning condition over THIS exercise, ' +
+      'so a pass that cannot vouch for its whole stderr stream has not ' +
+      'measured it; re-run the pass.']);
+  }
+
+  return check;
+}
+
+/**
+ * Adds this exercise's breadth requirements to the warning check.
+ *
+ * A clean stderr proves nothing about the routes nobody requested: a sweep of
+ * anonymous GETs leaves the mutating routes, the authenticated identities and
+ * the worker unexercised under the tracing flags. The gate is the whole
+ * surface, so each part of "the whole surface" is a named requirement here,
+ * and an unmet one fails the check on the tree it gates rather than being
+ * noted.
+ *
+ * The requirements are deliberately about the DRIVEN scenarios, not the planned
+ * ones: a scenario that never reached the application contributed nothing to
+ * the stream being judged.
+ *
+ * @param {Object} check The document `accountWarnings` produced.
+ * @param {Object} coverage The pass's coverage document.
+ * @param {Array.<Object>} scenarios The planned scenarios, after replay.
+ * @param {boolean} selectionComplete Whether every corpus scenario ran.
+ * @param {Object} workerEvidence As `readWorkerEvidence` produced.
+ * @returns {Object} the same check, re-judged with its requirements
+ */
+function qualifyWarningEvidence(check, coverage, scenarios, selectionComplete,
+  workerEvidence) {
+  var driven = scenarios.filter(function(item) {
+    return item.result && item.result.driven;
+  });
+  var methods = {};
+  var identities = {};
+  var identifiedRoutes = {};
+  var routesDriven = 0;
+  var authRequired = 0;
+  var authDriven = 0;
+  var authMissing = [];
+  var anonymousOnly;
+  var requirements = [];
+  var judged;
+
+  driven.forEach(function(item) {
+    var identified = isIdentified(item.identity);
+
+    identities[String(item.identity)] = true;
+
+    item.covers.forEach(function(key) {
+      var entry = coverage.byRoute[key];
+
+      if (!entry) {
+        return;
+      }
+
+      methods[String(entry.method).toUpperCase()] = true;
+
+      if (identified) {
+        identifiedRoutes[key] = true;
+      }
+    });
+  });
+
+  anonymousOnly = !Object.keys(identities).some(isIdentified);
+
+  Object.keys(coverage.byRoute).forEach(function(key) {
+    if (coverage.byRoute[key].driven > 0) {
+      routesDriven++;
+    }
+  });
+
+  requirements.push(warningPolicy.requirement('whole-route-surface',
+    selectionComplete && !coverage.unrepresented.length &&
+      !coverage.unknownRoutes.length && routesDriven === coverage.routes,
+    routesDriven + ' of ' + coverage.routes + ' manifest route(s) were ' +
+    'actually driven in this pass' +
+    (selectionComplete ? '' : ', and the selection was narrowed') +
+    (coverage.unrepresented.length
+      ? ', and ' + coverage.unrepresented.length + ' route(s) have no ' +
+        'scenario at all'
+      : '') +
+    '. AAP 0.9.3 measures the warning gate over a full pass across all ' +
+    coverage.routes + ' routes, and an unrequested route emits nothing.'));
+
+  requirements.push(warningPolicy.requirement('methods-beyond-get',
+    Object.keys(methods).some(function(method) {
+      return method !== 'GET';
+    }),
+    'every driven scenario in this pass was a GET (' +
+    Object.keys(methods).sort().join(', ') + '). A mutating handler is where ' +
+    'the upload, archive and mail paths run, so a GET-only sweep leaves the ' +
+    'code most likely to warn unmeasured.'));
+
+  // Identity coverage is accounted PER ROUTE, not as a global count. A run that
+  // drove one authenticated request anywhere and met a global "more than one
+  // identity" test would leave every other session-required handler measured
+  // only through its own 401, which is the branch that runs BEFORE the handler
+  // and therefore emits nothing the handler would have emitted. So each route
+  // whose effective auth mode is `required` must have been driven by a
+  // non-anonymous identity, and the ones that were not are named.
+  Object.keys(coverage.byRoute).forEach(function(key) {
+    var entry = coverage.byRoute[key];
+    var mode = entry.auth && entry.auth.mode;
+
+    if (mode !== 'required') {
+      return;
+    }
+
+    authRequired++;
+
+    if (identifiedRoutes[key]) {
+      authDriven++;
+      return;
+    }
+
+    authMissing.push(key);
+  });
+
+  requirements.push(warningPolicy.requirement('identities-per-route',
+    authRequired > 0 && !authMissing.length && anonymousOnly === false,
+    (authRequired
+      ? authDriven + ' of ' + authRequired + ' route(s) whose auth mode is ' +
+        '`required` were driven by a non-anonymous identity' +
+        (authMissing.length
+          ? '; not driven under an identity: ' +
+            authMissing.slice(0, 12).join(', ') +
+            (authMissing.length > 12
+              ? ' and ' + (authMissing.length - 12) + ' more'
+              : '')
+          : '')
+      : 'no route whose auth mode is `required` appears in this coverage ' +
+        'document at all, so the manifest and the pass disagree') +
+    '. Identities seen: ' + (Object.keys(identities).sort().join(', ') ||
+      '(none)') + '. An authenticated request reaches handlers a guest cannot, ' +
+    'and a 401 is answered before the handler runs, so an anonymous-only ' +
+    'sweep measures the refusal rather than the code.'));
+
+  // Named for what it asserts - that the worker third of the exercise has
+  // warning evidence AND that the evidence is clean - because all three ways it
+  // can be unmet are different: no artifact was supplied, one was supplied but
+  // produced without the flags, or one was supplied and carries notices. The
+  // detail says which; a requirement called `worker-measured` would have read
+  // as "unmeasured" in the third case, which is the one where it was measured
+  // and failed.
+  requirements.push(warningPolicy.requirement('worker-warning-evidence',
+    workerEvidence.qualifying, workerEvidence.detail));
+
+  if (check.unreadable || check.incompleteEvidence) {
+    // The stream could not be read at all, or only part of it could. Re-judging
+    // would replace a stated read failure - or a stated hole in the evidence -
+    // with a clean verdict on an empty string or on a fragment, which is the
+    // one outcome that must not happen here.
+    check.requirements = requirements;
+    check.workerEvidence = workerEvidence;
+    delete check.evidenceInputs;
+
+    return check;
+  }
+
+  judged = warningPolicy.judge(mergeEvidenceInputs(check.evidenceInputs, {
+    requirements: requirements
+  }));
+
+  judged.stderrPath = check.stderrPath || null;
+  judged.workerEvidence = workerEvidence;
+
+  // The inputs were a carrier between the two judgements and are not part of
+  // the record: everything they held - the notices, the flags, the tree - is on
+  // the judged document already, and a second copy in the artifact would be one
+  // more thing that can disagree with the first.
+  return judged;
+}
+
+/**
+ * Whether a scenario's identity is an authenticated one.
+ *
+ * The corpus names identities in words - `anonymous`, a seeded user, a seeded
+ * admin - so anything that is not the anonymous one, and not an absent value
+ * spelled as a word by `String()`, is an identity a session was established
+ * for.
+ *
+ * @param {*} identity
+ * @returns {boolean}
+ */
+function isIdentified(identity) {
+  var name = String(identity);
+
+  return name !== 'anonymous' && name !== 'null' && name !== 'undefined' &&
+    name !== '';
+}
+
+/**
+ * The evidence inputs plus one override, as a new object.
+ *
+ * A copy rather than a mutation, because the inputs are also the record of what
+ * was measured and a second call must not see the first call's additions.
+ *
+ * @param {Object} inputs As `accountWarnings` stashed them.
+ * @param {Object} extra
+ * @returns {Object}
+ */
+function mergeEvidenceInputs(inputs, extra) {
+  var merged = {};
+
+  Object.keys(inputs || {}).forEach(function(key) {
+    merged[key] = inputs[key];
+  });
+
+  Object.keys(extra || {}).forEach(function(key) {
+    merged[key] = extra[key];
+  });
+
+  return merged;
+}
+
+/**
+ * Reads the worker's warning evidence, if the caller supplied it.
+ *
+ * The gate's exercise is the server, the full route surface AND the
+ * standalone worker. This file cannot drive the worker - the in-memory queue
+ * lives in the process that registered the processor - so the worker's own
+ * artifact is read instead of re-measured, and its absence is a stated
+ * shortfall rather than a silent one.
+ *
+ * @param {(string|null)} target The path the caller passed, if any.
+ * @returns {Object} `{supplied, qualifying, detail, path, summary}`
+ */
+/**
+ * Authenticates the worker artifact before its contents are read.
+ *
+ * The same contract the corpus and the route manifest are held to, with one
+ * requirement dropped and one added, both for stated reasons.
+ *
+ * DROPPED: `payload`, which recomputes the embedded `payloadDigest` from the
+ * artifact minus its provenance. test/parity/worker.js digests its own stable
+ * subset rather than the whole document - measured, the recorded digest
+ * matches neither the document, nor the document minus `provenance`, nor
+ * minus `provenance` and `tool` - and that canonicalization belongs to the
+ * tool that wrote it. Recomputing it here would either fail every honest
+ * artifact or force a second copy of a definition this file does not own.
+ *
+ * ADDED: the sidecar is REQUIRED rather than optional. For a committed
+ * artifact absence is legitimate, because no delivery commits a run output;
+ * the worker artifact is different in kind - it is written by worker.js
+ * beside its own sidecar, in the same run, and the sidecar's digest over the
+ * artifact's verbatim bytes is what replaces the dropped payload check. An
+ * absent sidecar is therefore a missing binding rather than a normal state.
+ *
+ * What remains is what makes the evidence attributable: a role, a generator
+ * whose blob and commit resolve as objects in THIS repository and whose
+ * commit is verified to hold the source that ran, and bytes that reconcile
+ * with the sidecar beside them.
+ *
+ * @param {(Object|null)} block the artifact's embedded provenance
+ * @param {string} target its path
+ * @param {boolean} diagnostic whether the run already cannot be the gate
+ * @returns {Object} {artifactDigest, verdict}
+ * @throws {ToolError} When a requirement is not met.
+ */
+function authenticateWorkerEvidence(block, target, diagnostic) {
+  var beside;
+  var verdict;
+
+  if (!block || typeof block !== 'object') {
+    throw new ToolError('it carries no provenance block, so nothing ' +
+      'attributes it to a tool or a tree. Regenerate it with `npm run ' +
+      'verify:worker` on the tree under test.');
+  }
+
+  beside = sidecarBeside(target, 'worker evidence');
+
+  if (!beside) {
+    throw new ToolError('it has no provenance sidecar at ' + target +
+      '.provenance.json. The sidecar\'s digest over the artifact\'s own ' +
+      'bytes is what binds this evidence to these bytes, and worker.js ' +
+      'writes one beside every artifact it produces - so an artifact ' +
+      'without one was not produced by the run it claims, or was moved ' +
+      'away from it.');
+  }
+
+  verdict = manifest.provenance.validate(block, {
+    artifact                : target,
+    roles                   : ['target'],
+    requireGeneratorVerified: !diagnostic,
+    repositoryRoot          : TOOL_ROOT,
+    allowUncommitted        : diagnostic,
+    sidecar                 : beside.sidecar,
+    artifactText            : beside.artifactText
+  });
+
+  if (!verdict.ok) {
+    throw new ToolError('it does not carry provenance this replay can rely ' +
+      'on:\n  - ' + verdict.failures.join('\n  - ') +
+      '\nRegenerate it with `npm run verify:worker` on the tree under test, ' +
+      'from a worktree whose generators are committed.' +
+      (diagnostic ? '' : ' Or run this replay with --diagnostic, which ' +
+        'cannot stand as the gate.'));
+  }
+
+  return {
+    artifactDigest: (beside.sidecar.artifactDigest &&
+      beside.sidecar.artifactDigest.value) || null,
+    sidecar: pathLabelFor(beside.path, TOOL_ROOT),
+    verdict: verdict
+  };
+}
+
+function readWorkerEvidence(target, expectedHead, diagnostic) {
+  var document;
+  var warnings;
+  var shortfalls;
+  var provenanceBlock;
+  var provenanceVerdict;
+  var measuredHead;
+
+  if (!target) {
+    return {
+      supplied: false,
+      qualifying: false,
+      path: null,
+      summary: null,
+      detail: 'the worker\'s warning evidence was not supplied. AAP 0.9.3 ' +
+        'measures this gate over the listening server, the full route ' +
+        'surface AND the standalone worker; this tool drives the first two. ' +
+        'Run test/parity/worker.js under ' +
+        warningPolicy.REQUIRED_FLAGS.join(' ') + ' and pass its --out ' +
+        'artifact as --worker-evidence.'
+    };
+  }
+
+  try {
+    document = JSON.parse(fs.readFileSync(target, 'utf8'));
+  }
+  catch (err) {
+    return {
+      supplied: true,
+      qualifying: false,
+      path: target,
+      summary: null,
+      detail: 'the worker evidence at ' + target + ' could not be read: ' +
+        reasonOf(err)
+    };
+  }
+
+  warnings = document && document.warnings;
+
+  if (!warnings || !warnings.flags) {
+    return {
+      supplied: true,
+      qualifying: false,
+      path: target,
+      summary: null,
+      detail: 'the worker evidence at ' + target + ' carries no warning ' +
+        'section with a flag audit, so it cannot say what it measured. ' +
+        'Regenerate it with a current test/parity/worker.js.'
+    };
+  }
+
+  // AUTHENTICATED BEFORE IT IS READ FOR CONTENT, by the same validator the
+  // corpus and the route manifest go through. Reading the fields and trusting
+  // them was a hole with a name: a hand-written six-key document carrying
+  // `verdict: "PASS"`, nominal flags, no failures and one empty job satisfied
+  // AAP 0.9.3's worker third outright - measured, `{qualifying: true,
+  // shortfalls: []}`. The same hole accepted a REAL artifact from another
+  // commit, which matters because the verify:corpus row reuses an existing
+  // worker-result.json rather than regenerating one. So the artifact must
+  // carry a provenance block naming a generator this repository can retrieve,
+  // its payload digest must recompute, any sidecar beside it must agree, and
+  // the tree it measured must be the tree under test.
+  provenanceBlock = document.provenance === undefined ? null : document.provenance;
+
+  try {
+    provenanceVerdict = authenticateWorkerEvidence(provenanceBlock, target,
+      !!diagnostic);
+  }
+  catch (err) {
+    return {
+      supplied: true,
+      qualifying: false,
+      path: target,
+      summary: null,
+      detail: 'the worker evidence at ' + target + ' is not authenticated: ' +
+        reasonOf(err)
+    };
+  }
+
+  measuredHead = (provenanceBlock.analysedTree &&
+    provenanceBlock.analysedTree.head) || null;
+
+  if (expectedHead && measuredHead && measuredHead !== expectedHead) {
+    return {
+      supplied: true,
+      qualifying: false,
+      path: target,
+      summary: null,
+      detail: 'the worker evidence at ' + target + ' measured ' +
+        String(measuredHead).slice(0, 7) + ' and the tree under test is ' +
+        String(expectedHead).slice(0, 7) + '. Evidence from another commit ' +
+        'says nothing about this one, and the verify:corpus row reuses an ' +
+        'existing worker artifact rather than regenerating it - delete it ' +
+        'and re-run `npm run verify:worker`.'
+    };
+  }
+
+  // Fail-closed, condition by condition, and the reason it is spelled out this
+  // way is that a shorter test let a FAILED worker run satisfy this
+  // requirement: an artifact with `verdict: "FAIL"`, complete flags and an
+  // empty notice list is a worker that did not do its job while emitting
+  // nothing, and AAP §0.9.3's worker third is not satisfied by silence. So the
+  // artifact must be the current shape, measured under the flags, clean, AND a
+  // run that actually completed its contract - which for test/parity/worker.js
+  // means verdict PASS with no failed check and its jobs driven.
+  shortfalls = [];
+
+  if (warnings.policy !== warningPolicy.POLICY.id) {
+    shortfalls.push('it was judged against policy ' +
+      JSON.stringify(warnings.policy || null) + ' rather than ' +
+      JSON.stringify(warningPolicy.POLICY.id) + ', so the two runs did not ' +
+      'apply the same bar');
+  }
+
+  if (!warnings.flags.complete) {
+    shortfalls.push('it was produced without ' +
+      (warnings.flags.missing || []).join(' ') +
+      ((warnings.flags.suppressors || []).length
+        ? ' and with ' + warnings.flags.suppressors.join(' ')
+        : '') +
+      ', so it is not a measurement of the worker under the required flags');
+  }
+
+  if (warnings.ok === false || (warnings.failures || []).length) {
+    shortfalls.push('its own warning gate did not pass');
+  }
+
+  if (warnings.qualifying === false) {
+    shortfalls.push('it reports itself as not qualifying');
+  }
+
+  if ((warnings.notices || []).length) {
+    shortfalls.push((warnings.notices || []).length + ' notice(s) were ' +
+      'recorded by that run: ' +
+      (warnings.notices || []).map(function(entry) {
+        return entry && entry.summary ? entry.summary : String(entry);
+      }).join(' | '));
+  }
+
+  if (document.verdict !== 'PASS') {
+    shortfalls.push('its verdict is ' +
+      JSON.stringify(document.verdict || null) + ' rather than "PASS", so the ' +
+      'worker did not complete the contract AAP 0.9.3 requires of it - a ' +
+      'blocked or failing worker run measures nothing about the worker path');
+  }
+
+  if (document.checks && (document.checks.failures || []).length) {
+    shortfalls.push((document.checks.failures || []).length + ' of its ' +
+      'checks failed: ' + (document.checks.failures || []).map(function(entry) {
+        return entry && entry.name ? entry.name : String(entry);
+      }).join(', '));
+  }
+
+  if (!(document.jobs || []).length) {
+    shortfalls.push('it drove no job, so it exercised no worker code path');
+  }
+
+  return {
+    supplied: true,
+    qualifying: !shortfalls.length,
+    path: target,
+    summary: {
+      verdict: document.verdict || null,
+      policy: warnings.policy || null,
+      flags: warnings.flags,
+      // The IDENTITY of the artifact this qualification rests on, carried
+      // into the retained attestation so a corpus that cites clean worker
+      // evidence names WHICH artifact was clean - by digest, by generator
+      // blob and by the commit it measured. Without these three a reader
+      // has the claim and no way to reach the thing claimed about.
+      artifactDigest: (provenanceVerdict && provenanceVerdict.artifactDigest) ||
+        (provenanceBlock.artifactDigest && provenanceBlock.artifactDigest.value) ||
+        (provenanceBlock.payloadDigest && provenanceBlock.payloadDigest.value) ||
+        null,
+      generator: {
+        path: provenanceBlock.generator.path,
+        blob: provenanceBlock.generator.blob,
+        commit: provenanceBlock.generator.commit
+      },
+      measuredTree: measuredHead,
+      jobs: (document.jobs || []).length,
+      failedChecks: document.checks
+        ? (document.checks.failures || []).length
+        : null,
+      notices: (warnings.notices || []).map(function(entry) {
+        return entry && entry.summary ? entry.summary : String(entry);
+      })
+    },
+    shortfalls: shortfalls,
+    detail: shortfalls.length
+      ? 'the worker evidence at ' + target + ' does not stand: ' +
+        shortfalls.join('; ')
+      : 'the worker evidence at ' + target + ' is clean under the required ' +
+        'flags'
+  };
+}
+
+/**
+ * Asserts the route manifest IS the registered surface, independently.
+ *
+ * Coverage accounting is only as good as the surface it is accounted against.
+ * A short manifest would let a replay report every one of its entries
+ * represented and pass, having never noticed the routes nobody drove, and
+ * printing the number in a header line is not an assertion. So the cardinality
+ * is checked against the figure manifest.js itself publishes
+ * (`manifest.EXPECTED.routes`) rather than against a second copy kept here.
+ *
+ * Key equality is checked in both directions, ALWAYS: a manifest key with no
+ * corpus entry is a route the corpus does not cover, and a corpus key with no
+ * manifest entry is a scenario driving a route that no longer exists. The
+ * corpus key set is read from its declared `coverage.byRoute` when it has one
+ * and DERIVED from the scenarios themselves when it does not - every scenario
+ * carries the routes it covers - so there is no shape of corpus for which this
+ * comparison is skipped. It was skippable once, and a corpus without a coverage
+ * block could then satisfy the gate having been compared key-for-key against
+ * nothing.
+ *
+ * `accountCoverage` catches the same drift for the SELECTED scenarios; this
+ * catches it for the whole artifact, so a narrowed run still reports a corpus
+ * and a manifest that have drifted apart.
+ *
+ * @param {Object} manifestDocument
+ * @param {Object} corpus
+ * @param {boolean} selectionComplete
+ * @returns {Object} the check document
+ */
+function accountManifestCardinality(manifestDocument, corpus, selectionComplete) {
+  // Strict when the caller says nothing. An omitted argument must not be the
+  // lenient case in a gate tool: the softening exists for a --only run and
+  // has to be asked for.
+  var complete = selectionComplete === undefined ? true : !!selectionComplete;
+  var expected = (manifest.EXPECTED && manifest.EXPECTED.routes) || null;
+  var entries = manifestDocument.entries || [];
+  var seen = Object.create(null);
+  var duplicates = [];
+  var keys = [];
+  var corpusKeys = corpusRouteKeys(corpus);
+  var declared = corpusKeys.keys;
+  var missingFromCorpus = [];
+  var missingFromManifest = [];
+  var failures = [];
+
+  entries.forEach(function(entry) {
+    var key = manifest.routeKey(entry.method, entry.path);
+
+    if (seen[key]) {
+      duplicates.push(key);
+      return;
+    }
+
+    seen[key] = true;
+    keys.push(key);
+  });
+
+  if (expected === null) {
+    failures.push('test/parity/manifest.js publishes no expected route count, ' +
+      'so the manifest\'s cardinality cannot be checked against the measured ' +
+      'surface');
+  }
+  else if (entries.length !== expected) {
+    failures.push('the route manifest holds ' + entries.length + ' entr(ies) ' +
+      'and the registered surface is ' + expected + ' routes (AAP §0.9.1, ' +
+      'reconciled as 178 literal declarations + 50 language expansions + 2 ' +
+      'static pages + 3 static routes). Coverage was therefore accounted ' +
+      'against the wrong surface, and "every route represented" says nothing ' +
+      'about the routes this manifest does not list.');
+  }
+
+  if (duplicates.length) {
+    failures.push(duplicates.length + ' route key(s) appear more than once in ' +
+      'the manifest (' + duplicates.slice(0, 5).join(', ') + '), so the ' +
+      'entry count and the surface size are not the same number');
+  }
+
+  missingFromCorpus = keys.filter(function(key) {
+    return declared.indexOf(key) === -1;
+  });
+  missingFromManifest = declared.filter(function(key) {
+    return !seen[key];
+  });
+
+  // A corpus driving a route the manifest does not hold is unambiguously wrong
+  // whatever the selection: the corpus and the tree disagree about what exists.
+  if (missingFromManifest.length) {
+    failures.push(missingFromManifest.length + ' route(s) the corpus covers ' +
+      'are absent from the manifest (' +
+      missingFromManifest.slice(0, 5).join(', ') + '), so the corpus drives ' +
+      'routes this tree no longer registers');
+  }
+
+  // The other direction is conditioned the way `accountCoverage` conditions
+  // its own: under a complete selection an uncovered route is a hole in the
+  // gate, and under --only it is outside what this run claims to cover.
+  if (missingFromCorpus.length) {
+    if (complete) {
+      failures.push(missingFromCorpus.length + ' of ' + entries.length +
+        ' manifest route(s) are absent from the corpus (' +
+        missingFromCorpus.slice(0, 5).join(', ') + '), so this corpus does ' +
+        'not describe the registered surface and cannot be compared against ' +
+        'it key for key');
+    }
+  }
+
+  return {
+    name: 'route manifest is the registered surface',
+    asserted: entries.length,
+    minimum: expected,
+    corpusKeySource: corpusKeys.source,
+    corpusKeys: declared.length,
+    missingFromCorpus: missingFromCorpus.length,
+    missingFromManifest: missingFromManifest.length,
+    ok: !failures.length,
+    skipped: false,
+    reason: missingFromCorpus.length && !complete
+      ? missingFromCorpus.length + ' manifest route(s) are outside this ' +
+        'narrowed selection\'s corpus and are therefore not failed here. A ' +
+        'narrowed run cannot stand as the key-equality gate.'
+      : null,
+    entries: duplicates.concat(missingFromCorpus).concat(missingFromManifest),
+    failures: failures
+  };
+}
+
+/**
+ * Asserts that every declared expectation is one the RECORDING satisfies.
+ *
+ * This is the last way a declared clause could end up asserting nothing about
+ * the target. A declared expectation describes the BASELINE, so this file
+ * evaluates it twice - against the observation and against the recording - and
+ * `classifyScenario` fails the scenario only where the recording met it and the
+ * target did not. That order is right: an expectation the corpus itself does not
+ * meet is a finding about the CAPTURE, and failing the scenario for it would
+ * blame the target for the corpus's own fault.
+ *
+ * The finding is still reported. Dropping a clause the recording does not
+ * satisfy would be the same outcome as not implementing the operator - the
+ * corpus tells its reader the check exists while nothing ever evaluates it
+ * against the tree under test - so it is reported here, as a named check that
+ * FAILS, attributed to the corpus rather than to the target. The remedy is a re-capture or a corrected clause;
+ * either way the gate does not pass while a declared check is inert.
+ *
+ * @param {Array.<Object>} scenarios
+ * @returns {Object} the check document
+ */
+function accountDeclaredExpectations(scenarios) {
+  var failures = [];
+  var entries = [];
+  var asserted = 0;
+
+  scenarios.forEach(function(item) {
+    var result = item.result;
+    var baseline;
+    var target;
+
+    if (!item.expectation || !result || !result.driven || !result.compared) {
+      return;
+    }
+
+    baseline = result.baselineExpectation;
+    target = result.expectation;
+    asserted++;
+
+    entries.push({
+      id: item.id,
+      description: item.expectation.description || null,
+      recordingMet: baseline ? !!baseline.met : null,
+      targetMet: target ? !!target.met : null
+    });
+
+    if (baseline && !baseline.met) {
+      failures.push(item.id + ' declares an expectation its own RECORDING ' +
+        'does not meet, so it could not be held against the target and the ' +
+        'clause asserted nothing about this tree' +
+        (target && target.met
+          ? ' - note that the target DOES meet it'
+          : ' - the target does not meet it either') + '. The recording ' +
+        'fails it because: ' + baseline.failures.join('; ') + '. This is a ' +
+        'finding about the corpus: re-capture the scenario, or correct the ' +
+        'clause so it describes what the baseline actually does.');
+    }
+  });
+
+  return {
+    name: 'declared expectations are met by the recording',
+    asserted: asserted,
+    ok: !failures.length,
+    skipped: !asserted,
+    reason: asserted
+      ? null
+      : 'no compared scenario in this run carries a declared expectation',
+    entries: entries,
+    failures: failures
+  };
+}
+
+/**
+ * The route keys a corpus covers, from its own declarations.
+ *
+ * Two sources and neither is optional. A corpus written by capture.js carries a
+ * `coverage.byRoute` block, and that is read when it is there. A corpus that
+ * does not is not exempt from the comparison: every scenario declares the
+ * routes it covers - `covers` when it has one, its own route otherwise - so the
+ * set is derived from the scenarios instead. Which source was used is recorded,
+ * because a derived set is an inference about the artifact while a declared one
+ * is the artifact's own statement.
+ *
+ * @param {Object} corpus
+ * @returns {Object} {keys, source}
+ */
+function corpusRouteKeys(corpus) {
+  var out = [];
+  var byRoute = corpus && corpus.coverage && corpus.coverage.byRoute;
+
+  if (byRoute && typeof byRoute === 'object') {
+    return { keys: Object.keys(byRoute), source: 'coverage.byRoute' };
+  }
+
+  ((corpus && corpus.scenarios) || []).forEach(function(item) {
+    var covers = item && Array.isArray(item.covers) && item.covers.length
+      ? item.covers
+      : (item && item.route && item.route.method && item.route.path
+        ? [manifest.routeKey(item.route.method, item.route.path)]
+        : []);
+
+    covers.forEach(function(key) {
+      if (out.indexOf(key) === -1) {
+        out.push(key);
+      }
+    });
+  });
+
+  return { keys: out, source: 'derived from the scenarios' };
+}
+
+/**
+ * Decides whether this run is the GATE, and records why it is not.
+ *
+ * `gateQualifying` is the flag every downstream document reads to tell a
+ * diagnostic from the parity gate, and the gate is more than a complete
+ * selection and both cookie passes. Deciding it on those two alone would label
+ * as the gate a run that produced no warning evidence, compared coverage
+ * against a manifest of any size, or asserted the secure cookie contract by
+ * DERIVING it from the non-secure recording rather than measuring it.
+ *
+ * Each requirement below is checked and reported by name, met or unmet, so the
+ * label carries its own justification instead of a boolean nobody can audit.
+ * None of them fails the run: a narrowed diagnostic is a legitimate thing to
+ * run and exits 0 when it matches. What they decide is whether this run may be
+ * cited as the gate.
+ *
+ * @param {Object} options
+ * @param {Object} manifestDocument
+ * @param {Array.<Object>} passes the accounted passes
+ * @param {boolean} selectionComplete
+ * @param {Object} [evidence] {corpus, secureCorpus, appHead} - the validated
+ *   provenance records and the commit of the tree under test
+ * @returns {Object} {qualifying, requirements, unmet}
+ */
+function qualifyGate(options, manifestDocument, passes, selectionComplete,
+  evidence) {
+  var provenance = evidence || {};
+  var corpusProvenance = provenance.corpus || null;
+  var secureProvenance = provenance.secureCorpus || null;
+  var flags = flattenNodeFlags(options.nodeFlags);
+  var missingFlags = REQUIRED_NODE_FLAGS.filter(function(flag) {
+    return flags.indexOf(flag) === -1;
+  });
+  var childFlagFailures = [];
+  var warningEvidence = [];
+  var manifestCheck = null;
+  var authCheck = null;
+  var unexercisedOutcomes = [];
+  var authFailures = [];
+  var authenticationFailures = [];
+  var requirements;
+  var unmet;
+
+  passes.forEach(function(entry) {
+    var passFlags = flattenNodeFlags(entry.pass.nodeFlags);
+    var missingHere = REQUIRED_NODE_FLAGS.filter(function(flag) {
+      return passFlags.indexOf(flag) === -1;
+    });
+    var warnings = entry.pass.warnings;
+
+    if (missingHere.length) {
+      childFlagFailures.push(entry.pass.name + ' ran the application without ' +
+        missingHere.join(' and '));
+    }
+
+    if (!warnings || warnings.skipped || !warnings.asserted) {
+      warningEvidence.push(entry.pass.name + ' produced no warning evidence');
+    }
+    else if (!warnings.qualifying) {
+      // Qualified is stricter than non-empty: a stream measured without the
+      // tracing flags, against a foreign --app tree, or over a sweep that
+      // touched a fraction of the surface is evidence about something other
+      // than this gate. `warningShortfalls` names which of those it was.
+      warningEvidence.push(entry.pass.name + ' produced warning evidence that ' +
+        'does not qualify as this gate\'s measurement');
+    }
+
+    entry.checks.forEach(function(check) {
+      if (check.name === 'route manifest is the registered surface') {
+        manifestCheck = check;
+      }
+
+      if (check.name === 'auth-scheme outcomes') {
+        authCheck = check;
+
+        // An outcome with no scenario at all and one with a scenario that was
+        // not driven are the same gap from the gate's point of view, and both
+        // are named rather than summarized: which outcome is unproven is the
+        // whole of the information here.
+        (check.missing || []).forEach(function(id) {
+          var line = entry.pass.name + ': ' + id + ' (no scenario)';
+
+          if (unexercisedOutcomes.indexOf(line) === -1) {
+            unexercisedOutcomes.push(line);
+          }
+        });
+
+        (check.unexercised || []).forEach(function(gap) {
+          var line = entry.pass.name + ': ' + gap.id + ' (' + gap.reason + ')';
+
+          if (unexercisedOutcomes.indexOf(line) === -1) {
+            unexercisedOutcomes.push(line);
+          }
+        });
+      }
+    });
+  });
+
+  // The specific shortfall, alongside the categorical one above.
+  warningEvidence = warningEvidence.concat(warningShortfalls(passes));
+
+  // What makes a corpus AUTHENTICATED, as opposed to merely present with a
+  // sidecar beside it. Each of these three is a way a corpus can fail to be a
+  // baseline recording of the frozen tree, and none of them fails the run: a
+  // corpus with no digest is still worth replaying, it just cannot be shown to
+  // be the file that was captured.
+  if (!corpusProvenance) {
+    authenticationFailures.push('no corpus provenance was established');
+  }
+  else {
+    if (!corpusProvenance.digestVerified) {
+      authenticationFailures.push('the corpus sidecar declares no artifact ' +
+        'digest, so an edit made to the corpus after it was captured - a ' +
+        'baseline adjusted to match the target - cannot be detected. Its ' +
+        'digest as read is ' + corpusProvenance.artifactDigest.slice(0, 16) +
+        '; a sidecar carrying `artifactDigest` is what makes that checkable');
+    }
+
+    if (!corpusProvenance.generatorIsCapture) {
+      authenticationFailures.push('the corpus sidecar names the generator ' +
+        JSON.stringify(corpusProvenance.generator.path) + ' and a baseline ' +
+        'recording is ' + CAPTURE_GENERATOR + '\'s artifact');
+    }
+
+    if (!corpusProvenance.frozenBaselineChecked) {
+      authenticationFailures.push('the captured tree was not checked against ' +
+        'the frozen R-f reference ' + BASELINE_COMMIT.slice(0, 7) +
+        ' (AAP §0.10.3)' + (options.selfCheck
+          ? ' because --self-check declares the corpus to come from the tree ' +
+            'under test'
+          : ', because --baseline-head named ' +
+            JSON.stringify(String(options.baselineHead)) + ' instead'));
+    }
+  }
+
+  if (secureProvenance && !secureProvenance.digestVerified) {
+    authenticationFailures.push('the secure-pass corpus sidecar declares no ' +
+      'artifact digest');
+  }
+
+  // The diagnostic escape belongs to this requirement rather than to a
+  // requirement of its own: what it waives IS corpus authentication. Under it
+  // the block's identity checks are recorded as waived instead of refused, and
+  // a waived identity check is exactly what a payload digest cannot stand in
+  // for - a fabricated artifact hashes to whatever it claims.
+  if (options.allowUnreviewedCorpus) {
+    authenticationFailures.push('--allow-unreviewed-corpus was in force, so ' +
+      'the corpus was accepted without establishing that it records the base ' +
+      'commit ' + manifest.provenance.BASELINE_HEAD.slice(0, 7) + ', and any ' +
+      'identity check that could not be resolved was recorded as waived');
+  }
+
+  if (authCheck && !authCheck.ok) {
+    authFailures.push('the auth-outcome check itself failed');
+  }
+
+  requirements = [
+    {
+      id: 'complete-selection',
+      requirement: 'every scenario in the corpus was replayed (no --only)',
+      met: selectionComplete,
+      detail: selectionComplete
+        ? null
+        : '--only narrowed the selection to ' + options.only.join(' ') +
+          ', so route coverage cannot be accounted over the whole surface'
+    },
+    {
+      id: 'both-cookie-passes',
+      requirement: 'both cookie configurations were driven (--pass ' + PASS_BOTH + ')',
+      met: options.pass === PASS_BOTH,
+      detail: options.pass === PASS_BOTH
+        ? null
+        : '--pass ' + options.pass + ' ran one cookie configuration; AAP ' +
+          '§0.9.3 runs the overlay twice, once with isSecure unset and once ' +
+          'in secure mode'
+    },
+    {
+      id: 'measured-secure-pass',
+      requirement: 'the secure pass compared against a secure baseline of its ' +
+        'own, attested as a secure capture by its provenance',
+      // The PATH is not the evidence. `validateCorpusProvenance` refuses a
+      // recording whose sidecar attests a non-secure capture for this role and
+      // refuses the same artifact in both roles, so what qualifies the gate is
+      // the validated record rather than the flag having been passed.
+      met: !!(options.secureCorpus && secureProvenance &&
+        secureProvenance.cookieMode && secureProvenance.cookieMode.known &&
+        secureProvenance.cookieMode.secure === true),
+      detail: options.secureCorpus
+        ? (secureProvenance && secureProvenance.cookieMode &&
+           secureProvenance.cookieMode.known &&
+           secureProvenance.cookieMode.secure === true
+          ? null
+          : 'the --secure-corpus provenance does not attest a secure capture, ' +
+            'so the secure cookie contract would be compared against a ' +
+            'recording made with isSecure unset')
+        : 'without --secure-corpus the secure pass DERIVES its expected ' +
+          'cookie attributes from the non-secure recording, so the secure ' +
+          'cookie contract - Secure on every session cookie, SameSite ' +
+          'unmoved at Lax (deviation 7, docs/preserved-quirks.md §11.11), ' +
+          'and the Expires horizon - is asserted against a value this tool ' +
+          'computed rather than one the baseline produced. Capture a corpus ' +
+          'against a --secure server and pass --secure-corpus'
+    },
+    {
+      id: 'deprecation-flags',
+      requirement: 'the application ran under ' + REQUIRED_NODE_FLAGS.join(' and '),
+      met: !missingFlags.length && !childFlagFailures.length,
+      detail: missingFlags.length || childFlagFailures.length
+        ? (missingFlags.length
+          ? '--node-flags did not carry ' + missingFlags.join(' and ') + '. '
+          : '') + (childFlagFailures.length
+          ? childFlagFailures.join('; ') + '. '
+          : '') + 'AAP §0.9.3 runs the whole exercise under both, and §0.6.4 ' +
+          'is why: two internal re-entrant injections put a deprecation on ' +
+          'the live request path that boot never reveals'
+        : null
+    },
+    {
+      id: 'warning-evidence',
+      requirement: 'every pass scanned the application\'s own stderr over ' +
+        'driven scenarios',
+      met: !!passes.length && !warningEvidence.length,
+      detail: passes.length
+        ? (warningEvidence.length ? warningEvidence.join('; ') : null)
+        : 'no pass was accounted, so there is no stderr to have scanned'
+    },
+    {
+      id: 'manifest-cardinality',
+      requirement: 'the route manifest is the ' +
+        ((manifest.EXPECTED && manifest.EXPECTED.routes) || 233) +
+        '-entry registered surface, key for key',
+      met: !!(manifestCheck && manifestCheck.ok),
+      detail: manifestCheck
+        ? (manifestCheck.ok ? null : manifestCheck.failures.join('; '))
+        : 'the manifest cardinality check did not run, so coverage was ' +
+          'accounted against an unverified surface'
+    },
+    {
+      id: 'not-self-check',
+      requirement: 'the run compares the migrated tree against a baseline ' +
+        'recording, rather than a tree against its own recording',
+      met: !options.selfCheck,
+      detail: options.selfCheck
+        ? '--self-check declares the tree under test to be the tree the ' +
+          'corpus came from. That is the self-consistency rehearsal and it is ' +
+          'stricter than the gate, but it is not evidence of parity between ' +
+          'two trees'
+        : null
+    },
+    {
+      id: 'authenticated-corpus',
+      requirement: 'the corpus is authenticated as ' + CAPTURE_GENERATOR +
+        '\'s recording of the frozen R-f baseline ' +
+        BASELINE_COMMIT.slice(0, 7) + ', by digest',
+      met: !authenticationFailures.length,
+      detail: authenticationFailures.length
+        ? authenticationFailures.join('; ')
+        : null
+    },
+    {
+      id: 'known-target-identity',
+      requirement: 'the commit of the tree under test is established',
+      met: !!provenance.appHead,
+      detail: provenance.appHead
+        ? null
+        : 'git could not name the HEAD of ' + options.appRoot + ', so the ' +
+          'result would say which corpus it compared and not which tree it ' +
+          'compared it against. R-f identifies both sides by commit'
+    },
+    {
+      id: 'auth-outcomes-exercised',
+      requirement: 'all ' + AUTH_OUTCOME_IDS.length + ' auth-scheme outcomes ' +
+        'were driven and compared, not explained',
+      met: !unexercisedOutcomes.length && !authFailures.length &&
+        !!passes.length,
+      detail: passes.length
+        ? (unexercisedOutcomes.length || authFailures.length
+          ? (unexercisedOutcomes.length
+            ? unexercisedOutcomes.join('; ') + '. A stated reason explains a ' +
+              'gap and does not close it: the "Auth error" outcome needs ' +
+              'User.findById itself to reject, which no HTTP request can ' +
+              'cause, so it needs a bounded fault injector in the parity ' +
+              'server and a scenario that records its result. '
+            : '') + authFailures.join('; ')
+          : null)
+        : 'no pass was accounted, so no outcome was exercised'
+    }
+  ];
+
+  unmet = requirements.filter(function(entry) {
+    return !entry.met;
+  });
+
+  return {
+    qualifying: !unmet.length,
+    requirements: requirements,
+    unmet: unmet.map(function(entry) {
+      return entry.id;
+    })
+  };
+}
+
+/**
+ * Flattens `--node-flags` into individual tokens.
+ *
+ * One value may be space-separated - the usage text says so - so
+ * `["--pending-deprecation --trace-deprecation"]` and
+ * `["--pending-deprecation", "--trace-deprecation"]` are the same thing, and a
+ * requirement that only understood the second form would fail a run that did
+ * exactly what the documentation asked for.
+ *
+ * @param {(Array.<string>|null)} flags
+ * @returns {Array.<string>}
+ */
+function flattenNodeFlags(flags) {
+  var out = [];
+
+  (flags || []).forEach(function(value) {
+    String(value).split(/\s+/).forEach(function(token) {
+      if (token && out.indexOf(token) === -1) {
+        out.push(token);
+      }
+    });
+  });
+
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Children: the manifest, the object-store manifest and the seeder
+// ---------------------------------------------------------------------------
+
+/**
+ * The git HEAD of a worktree, or null when it is not a checkout.
+ *
+ * A missing git or a non-zero exit yields null rather than throwing:
+ * provenance is evidence about a run, and a run that produced a correct
+ * comparison must not be failed for being unable to name its own commit.
+ * `spawnSync` with an argument array, so nothing goes through a shell.
+ *
+ * @param {string} root
+ * @returns {(string|null)}
+ */
+function gitHead(root) {
+  var result = childProcess.spawnSync('git', ['rev-parse', 'HEAD'], {
+    cwd: root,
+    encoding: 'utf8',
+    // Finite because this child is SYNCHRONOUS: it blocks this process's event
+    // loop outright, so a `git` waiting on an index lock would stall a replay
+    // that is holding a mongod and up to two application servers open, for the
+    // sake of one provenance string.
+    timeout: GIT_TIMEOUT_MS,
+    killSignal: 'SIGKILL'
+  });
+
+  if (result.error && result.error.code === 'ETIMEDOUT') {
+    note('warning: `git rev-parse HEAD` in ' + root + ' did not finish ' +
+      'within ' + GIT_TIMEOUT_MS + 'ms and was killed; this artifact records ' +
+      'no commit for that tree.');
+    return null;
+  }
+
+  if (result.status !== 0 || !result.stdout) {
+    return null;
+  }
+
+  return result.stdout.trim() || null;
+}
+
+/**
+ * Resolves the route manifest, generating it in a CHILD when it is not there.
+ *
+ * Read as an artifact rather than generated in this process, because the
+ * generator loads the application's route modules and controllers - which is
+ * the one thing this file must not put in its own module graph. When the
+ * artifact is missing the generator is spawned instead, with both of its
+ * streams discarded: loading the controllers prints the in-memory-queue line on
+ * stdout and a baseline tree prints the AWS notice on stderr, and the artifact
+ * is the only output that matters.
+ *
+ * Where a GENERATED manifest lands is not where a read one is looked for. The
+ * committed artifact is read when it exists, but generating one is a WRITE, and
+ * a write nobody asked for does not go into the worktree: unless --manifest
+ * named the path, the generated copy goes to scratch space.
+ *
+ * @param {Object} options
+ * @returns {Object} the parsed manifest
+ * @throws {ToolError} If it can be neither read nor generated.
+ */
+function resolveManifest(options) {
+  var generated;
+  var env;
+  var target;
+  var refused = null;
+
+  if (options.manifestPath && fs.existsSync(options.manifestPath)) {
+    try {
+      return verifiedManifest(options.manifestPath, options.appRoot);
+    }
+    catch (err) {
+      // An explicitly named manifest is an instruction. Counting coverage
+      // against a different file than the one the caller named would be the
+      // same substitution the tree binding exists to prevent, so it is fatal.
+      if (options.manifestExplicit) {
+        throw err;
+      }
+
+      // The IMPLICIT default is the shared artifact path, and a delivered
+      // artifact reaches this point unbound for ordinary reasons: another
+      // checkout generated it, or the generator itself has since changed. A
+      // manifest measured from the tree under replay is better evidence than
+      // one that cannot be shown to describe it, so the refusal is reported and
+      // a replacement is generated below.
+      refused = reasonOf(err);
+    }
+  }
+
+  target = manifestDestination(options);
+  note(refused === null
+    ? 'no route manifest at ' + options.manifestPath + '; generating one at ' +
+      target
+    : 'the route manifest at ' + options.manifestPath + ' does not describe ' +
+      options.appRoot + ', so it is NOT being used: ' + refused +
+      ' Generating one for that tree at ' + target);
+
+  env = Object.assign({}, process.env, {
+    NODE_ENV: 'test',
+    NODE_CONFIG: JSON.stringify({ db: { redis: { enabled: false } } })
+  });
+
+  // The manifest is the route inventory this replay's coverage gate is
+  // measured against, so it must describe the tree under test and nothing
+  // else. See mongo.PRELOAD_ENV_VARS.
+  mongo.scrubPreloadVars(env);
+
+  // The whole isolation contract, not just its runtime-layer half: the child is
+  // spawned with TOOL_ROOT as its working directory, so that is the tree whose
+  // config/ it must read, and an inherited NODE_CONFIG_DIR naming another tree
+  // is replaced rather than honoured. (This child is ./manifest, which
+  // reconciles the directory again from its own `--app`.)
+  mongo.applyConfigIsolation(env, { appRoot: TOOL_ROOT, configDir: 'set' });
+
+  generated = childProcess.spawnSync(process.execPath, [
+    path.join(__dirname, 'manifest.js'),
+    '--app', options.appRoot,
+    '--out', target
+  ], {
+    cwd: TOOL_ROOT,
+    stdio: ['ignore', 'ignore', 'ignore'],
+    env: env,
+    timeout: CHILD_TIMEOUT_MS,
+    killSignal: 'SIGKILL'
+  });
+
+  // A timeout names a budget; a non-zero exit names a fault in the generator.
+  // Reported separately, because they send a reader to different places.
+  if (generated.error && generated.error.code === 'ETIMEDOUT') {
+    throw new ToolError('the route manifest generator did not finish within ' +
+      CHILD_TIMEOUT_MS + 'ms and was killed. It loads every route module and ' +
+      'controller in ' + options.appRoot + '; run `node ' +
+      'test/parity/manifest.js --app ' + options.appRoot + ' --out ' +
+      options.manifestPath + '` to see where it stops.');
+  }
+
+  if (generated.status !== 0) {
+    throw new ToolError('the route manifest could not be generated (exit ' +
+      generated.status + '). Run `node test/parity/manifest.js --app ' +
+      options.appRoot + ' --out ' + target + '` to see why.');
+  }
+
+  // Recorded so the provenance names the file that was actually read rather
+  // than the path that was looked for and found missing or unbound.
+  options.manifestPath = target;
+
+  // Verified even though this run generated it: the check is over the artifact
+  // that reached disk, and a generator that wrote something unattributable, or
+  // attributable to a tree other than the one it was pointed at, is exactly
+  // what it exists to catch.
+  return verifiedManifest(target, options.appRoot);
+}
+
+
+/**
+ * Reads the route manifest and verifies its provenance the same way.
+ *
+ * The coverage gate is only as good as the surface it counts against, and the
+ * default manifest path is a shared artifact any run may have written. So the
+ * same contract applies: schema, the artifact it claims to be, a role that
+ * follows from a tree somebody identified, a generator whose blob and verified
+ * commit resolve in this repository, and a payload digest recomputed over the
+ * entries themselves. `unreviewed` is not accepted - manifest.js does not emit
+ * it, and a route surface nobody can attribute to a tree cannot decide whether
+ * a route was represented.
+ *
+ * There is no escape here, and that is deliberate: this is the surface the
+ * coverage gate counts against, and a manifest whose generator cannot be
+ * retrieved from this repository cannot be reproduced from it either. The
+ * remedy is to regenerate it, which the refusal names.
+ *
+ * TWO CHECKS, ANSWERING TWO DIFFERENT QUESTIONS, AND NEITHER SUBSUMES THE
+ * OTHER. `validateArtifactProvenance` asks whether the artifact is evidence at
+ * all: schema, a role somebody stood behind, a generator whose blob and commit
+ * resolve in THIS repository, a payload digest recomputed over the entries, and
+ * a sidecar that agrees with the bytes beside it. It accepts role `baseline`,
+ * `target` and `analysis`, because all three are legitimate artifacts - which
+ * is precisely why it cannot answer the second question. `readManifestForApp`
+ * asks whether this manifest describes THE TREE THIS REPLAY IS DRIVING, by
+ * digesting every input that determines the manifest in `appRoot` and comparing
+ * it with what the sidecar recorded. A baseline manifest is valid evidence
+ * about the baseline tree and passes the first check while being the wrong
+ * surface for a target replay; the coverage gate then counts 233 routes against
+ * the wrong tree and reports a pass. That gap is what this second call closes.
+ *
+ * BOTH CHECKS ARE APPLIED TO ONE SNAPSHOT, AND THAT SNAPSHOT IS WHAT IS
+ * RETURNED. The file is read ONCE, by `verifyManifestIntegrity`, and the
+ * embedded contract and the tree binding are then both evaluated over the
+ * object that read produced. Composing the two by calling `readManifest` for
+ * the value and `readManifestForApp` for the binding does not work, however
+ * natural it looks: it reads the file twice, so the bytes the caller consumes
+ * are not the bytes the binding passed, and an artifact pair replaced between
+ * the two reads could have a baseline manifest satisfy the embedded contract, a
+ * target manifest satisfy the binding, and the BASELINE object be handed back -
+ * route coverage judged against the wrong HTTP surface, by the function whose
+ * whole purpose is to prevent exactly that. It is the same check/use gap
+ * `readManifestForApp` was itself rewritten to close, and it must not be
+ * reintroduced one level up by composition.
+ *
+ * @param {string} target
+ * @param {string} appRoot The tree under replay, which the manifest must
+ *   describe. Required: a coverage surface nobody bound to a tree is not a
+ *   coverage surface.
+ * @returns {Object} the parsed manifest - the same object both checks passed
+ * @throws {ToolError} If it cannot be read, verified, or bound to `appRoot`.
+ */
+function verifiedManifest(target, appRoot) {
+  var verified;
+  var parsed;
+  var block;
+
+  if (typeof appRoot !== 'string' || !appRoot) {
+    throw new ToolError('verifiedManifest was called without the tree the ' +
+      'manifest ' + target + ' has to describe. The coverage gate is measured ' +
+      'against this manifest, so it cannot be accepted without being bound to ' +
+      'the tree under replay.');
+  }
+
+  // The one read. `verifyManifestIntegrity` parses the manifest to check it
+  // against its sidecar - basename, schema and a digest over the exact bytes -
+  // and hands back both halves, so the verified value is already in hand and
+  // nothing needs to open the path again.
+  verified = manifest.verifyManifestIntegrity(target);
+  parsed = verified.manifest;
+
+  if (!parsed || !Array.isArray(parsed.entries)) {
+    throw new ToolError('manifest ' + target + ' has no `entries` array');
+  }
+
+  block = parsed.provenance === undefined ? null : parsed.provenance;
+
+  validateArtifactProvenance(block, parsed, target, 'route manifest', {
+    roles: ['baseline', 'target', 'analysis'],
+    regenerate: 'Regenerate it with `node test/parity/manifest.js --app ' +
+      '<worktree> --out ' + target + '`'
+  });
+
+  // The tree binding, over the sidecar THAT read produced, on top of the
+  // contract above rather than instead of it.
+  manifest.verifyTreeBinding(target, verified.sidecar, appRoot);
+
+  note('route manifest: provenance verified - role ' + block.role +
+    ', analysed tree ' + ((block.analysedTree && block.analysedTree.headShort) ||
+      'not recorded') + ', generator ' + block.generator.path + ' blob ' +
+    String(block.generator.blob).slice(0, 12));
+
+  return parsed;
+}
+
+/**
+ * Where a manifest this tool has to generate is written.
+ *
+ * `--manifest <path>` is an explicit destination and is honoured as given.
+ * Without it the manifest is a side artifact of this run and belongs in scratch
+ * space: ARTIFACT_DIR_ENV when the caller named one, otherwise a fresh
+ * directory under the system temp - which is where this tool's per-run files
+ * already go.
+ *
+ * @param {Object} options
+ * @returns {string} An absolute path.
+ * @throws {ToolError} If no scratch directory can be created.
+ */
+function manifestDestination(options) {
+  var configured = process.env[ARTIFACT_DIR_ENV];
+
+  if (options.manifestExplicit && options.manifestPath) {
+    return path.resolve(options.manifestPath);
+  }
+
+  if (typeof configured === 'string' && configured.trim()) {
+    return path.resolve(configured.trim(), ARTIFACT_NAMES.manifest);
+  }
+
+  try {
+    return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'parity-manifest-')),
+      ARTIFACT_NAMES.manifest);
+  }
+  catch (err) {
+    throw new ToolError('no route manifest at ' + options.manifestPath +
+      ' and no scratch directory could be created for a generated one (' +
+      reasonOf(err) + '). Pass --manifest <path>, or set ' + ARTIFACT_DIR_ENV +
+      ' to a writable directory.');
+  }
+}
+
+/**
+ * The destination for an artifact the caller did not name.
+ *
+ * Resolves inside ARTIFACT_DIR_ENV when it is set, and otherwise fails naming
+ * both ways to supply one. It never falls back to a path inside this
+ * repository: see the comment on ARTIFACT_DIR_ENV.
+ *
+ * @param {string} basename The artifact's filename.
+ * @param {string} flag The flag that would have named it, for the message.
+ * @returns {string} An absolute path.
+ * @throws {ToolError} A usage fault, if no destination was supplied.
+ */
+function resolveArtifactPath(basename, flag) {
+  var configured = process.env[ARTIFACT_DIR_ENV];
+
+  if (typeof configured === 'string' && configured.trim()) {
+    return path.resolve(configured.trim(), basename);
+  }
+
+  throw usageError(flag + ' is required: this tool has no repository default, ' +
+    'so that a replay cannot leave artifacts in tracked source without being ' +
+    'asked to. Pass ' + flag + ' <path>, or set ' + ARTIFACT_DIR_ENV + ' to a ' +
+    'scratch directory and the artifact goes to <dir>/' + basename + '.');
+}
+
+/**
+ * Writes the object-store pre-population manifest and returns its path.
+ *
+ * Not optional, and its omission is not survivable. The seeder plants a File
+ * document whose hash, url and name describe a PRE-MIGRATION object that has to
+ * already exist inside the server child, and an environment variable is the
+ * only channel that reaches a preload. Without it a download route asks the
+ * store for a key it does not hold, the fixture raises NoSuchKey on the
+ * returned stream, nothing in the application listens for `error` on that
+ * stream, and the unhandled error event takes the whole server down mid-run -
+ * after which every remaining case records a meaningless transport failure.
+ *
+ * Built in a CHILD because the seeder resolves bucket names through the
+ * configuration, and requiring the configuration here is exactly what this file
+ * must not do. It runs BEFORE the launcher, because the fixture reads the
+ * manifest once at load.
+ *
+ * @param {Object} options
+ * @param {string} scratchDir a directory this tool owns
+ * @returns {Object} {path, entries, reason}
+ */
+function prepareS3Seed(options, scratchDir) {
+  var target = path.join(scratchDir, 's3-seed.json');
+  var overlayPath = options.overlay === undefined
+    ? mongo.DEFAULT_OVERLAY
+    : options.overlay;
+  var overlay = null;
+  var script;
+  var result;
+  var entries;
+  var env;
+
+  if (overlayPath) {
+    try {
+      overlay = fs.readFileSync(overlayPath, 'utf8');
+    }
+    catch (err) {
+      return {
+        path: null,
+        entries: 0,
+        reason: 'the overlay ' + overlayPath + ' could not be read, so the ' +
+          'bucket names the manifest needs cannot be resolved: ' + reasonOf(err)
+      };
+    }
+  }
+
+  script = [
+    'var fs = require("fs");',
+    'var seeder = require(' + JSON.stringify(path.join(__dirname, 'seed.js')) + ');',
+    'fs.writeFileSync(process.env.PARITY_SEED_MANIFEST_OUT,',
+    '  JSON.stringify(seeder.s3Manifest(), null, 2));'
+  ].join('\n');
+
+  env = Object.assign({}, process.env, {
+    NODE_ENV: 'test',
+    NODE_CONFIG: overlay === null ? '{}' : overlay,
+    PARITY_SEED_MANIFEST_OUT: target
+  });
+
+  // This child resolves the bucket names the pre-migration objects are placed
+  // under; a redirected module resolution would put them in the wrong bucket
+  // and every download comparison would be made against a not-found.
+  mongo.scrubPreloadVars(env);
+
+  // This child requires test/parity/seed.js, which requires `config`, so
+  // without the isolation it creates config/runtime.json in the tree it runs in
+  // - gitignored, hence invisible to `git status`, and layered over every other
+  // configuration source on the next run. `appRoot: TOOL_ROOT` is what makes it
+  // read THIS tree's config/ rather than an inherited NODE_CONFIG_DIR belonging
+  // to another one.
+  mongo.applyConfigIsolation(env, { appRoot: TOOL_ROOT, configDir: 'set' });
+
+  result = childProcess.spawnSync(process.execPath, ['-e', script], {
+    cwd: TOOL_ROOT,
+    encoding: 'utf8',
+    env: env,
+    timeout: CHILD_TIMEOUT_MS,
+    killSignal: 'SIGKILL'
+  });
+
+  if (result.error && result.error.code === 'ETIMEDOUT') {
+    return {
+      path: null,
+      entries: 0,
+      reason: 'the object-store manifest child did not finish within ' +
+        CHILD_TIMEOUT_MS + 'ms and was killed; it resolves bucket names ' +
+        'through `config`, so a wedged child usually means configuration ' +
+        'that blocks on load'
+    };
+  }
+
+  if (result.status !== 0) {
+    return {
+      path: null,
+      entries: 0,
+      reason: 'the object-store manifest generator exited ' + result.status +
+        ': ' + String(result.stderr || '').trim().split('\n').slice(-3).join(' | ')
+    };
+  }
+
+  try {
+    entries = JSON.parse(fs.readFileSync(target, 'utf8'));
+  }
+  catch (err) {
+    return {
+      path: null,
+      entries: 0,
+      reason: 'the generated manifest at ' + target + ' is unreadable: ' +
+        reasonOf(err)
+    };
+  }
+
+  if (!Array.isArray(entries) || !entries.length) {
+    return {
+      path: null,
+      entries: 0,
+      reason: 'the generated manifest holds no entries, so no pre-migration ' +
+        'object would exist in the store'
+    };
+  }
+
+  return { path: target, entries: entries.length, reason: null };
+}
+
+/**
+ * Seeds the fixtures, in a child process, AWAITED.
+ *
+ * Fixture creation belongs to the seeder, and this file must not require the
+ * models to invoke it. The child runs with the tool root as its working
+ * directory, deliberately, so one consistent module tree resolves: the tool's
+ * mongoose, the tool's models and the tool's configuration together. Writing
+ * fixtures with the target tree's model code into the database a baseline
+ * server reads is sound because the model layer is unchanged across the two
+ * commits and because what crosses between the trees is BSON, not JavaScript.
+ *
+ * AWAITED, NEVER `spawnSync`, and that is not a stylistic preference. By the
+ * time this runs, the launcher has provisioned the database IN THIS PROCESS -
+ * mongodb-memory-server runs mongod as a child of this one and reads its piped
+ * stdout - and has spawned the application as a second piped child. A
+ * `spawnSync` here blocks this event loop for the whole seeding window, neither
+ * pipe is drained, mongod blocks on its own log writes and stops completing
+ * handshakes, and the seeder dies of server selection against a database that
+ * is running and reachable.
+ *
+ * @param {Object} info the launcher's start result
+ * @returns {Promise<Object>} {ok, reason, summary}
+ */
+function seedFixtures(info, options) {
+  // `force` is what the destructive phase needs: the seeder deletes the
+  // selected fixtures and recreates them, restoring anything an earlier
+  // mutation changed. Safe between cases with no request in flight, and the
+  // fixed `_id`s mean an established session still resolves to its user
+  // afterwards - which is why the sessions established once at the top of the
+  // pass survive every reseed. ./capture does exactly this while recording, so
+  // omitting it here would replay a different run from the one captured.
+  var force = !!(options && options.force);
+  var script = [
+    'var mongoose = require("mongoose");',
+    'var seeder = require(' + JSON.stringify(path.join(__dirname, 'seed.js')) + ');',
+    'mongoose.set("strictQuery", true);',
+    // The disconnect runs on EVERY path. One `finish` both branches call is
+    // the ES5 shape of a `finally`, and it is what the earlier chain lacked:
+    // it disconnected only after a successful seed, so a rejection AFTER
+    // connect - a duplicate key, a validation error, a dropped write - left
+    // this child holding an open connection whose socket kept its event loop
+    // alive. The child never exited, `close` never fired, and the parent below
+    // waited on it forever while owning a mongod and live application servers.
+    'function finish(code) {',
+    '  process.exitCode = code;',
+    '  return mongoose.disconnect().catch(function(err) {',
+    '    process.stderr.write("seed disconnect failed: " + ((err && err.message) || String(err)) + "\\n");',
+    // A disconnect that fails is a FAILED seed run, not a successful one with a
+    // note attached: the connection is in an unknown state, the parent treats
+    // status 0 as "seeded" and drops this stderr, and a run whose cleanup did
+    // not complete would be recorded as clean. The existing code is preserved
+    // when there is one, so a seed failure is never masked by a cleanup
+    // failure that followed it.
+    '    process.exitCode = code || 1;',
+    '  });',
+    '}',
+    'mongoose.connect(process.env.PARITY_SEED_URI)',
+    '  .then(function() { return seeder.seed(' +
+      (force ? '{ force: true }' : '') + '); })',
+    '  .then(function(summary) {',
+    '    process.stderr.write("seeded: " + JSON.stringify(summary.created) + "\\n");',
+    '    return finish(0);',
+    '  })',
+    '  .catch(function(err) {',
+    '    process.stderr.write("seed failed: " + (err && err.message ? err.message : String(err)) + "\\n");',
+    '    return finish(1);',
+    '  });'
+  ].join('\n');
+
+  var uri = 'mongodb://' + info.mongo.host + ':' + info.mongo.port + '/' +
+    info.mongo.database;
+
+  var env = Object.assign({}, process.env, {
+    NODE_ENV: 'test',
+    NODE_CONFIG: info.nodeConfig,
+    PARITY_SEED_URI: uri
+  });
+
+  // The seeder writes the fixtures every comparison is made against, so
+  // nothing outside this tree may preload code into it or change which
+  // `mongoose` and which models it loads. See mongo.PRELOAD_ENV_VARS.
+  mongo.scrubPreloadVars(env);
+
+  // The full isolation contract, not persistence alone: the `config` package
+  // creates its runtime JSON unless persistence is off AND the watch is off,
+  // this child requires `config` through the seeder, and `appRoot: TOOL_ROOT`
+  // points it at the config/ of the tree it runs in instead of an inherited
+  // directory from another one.
+  mongo.applyConfigIsolation(env, { appRoot: TOOL_ROOT, configDir: 'set' });
+
+  return new Promise(function(resolve) {
+    var child;
+    var stderr  = '';
+    var settled = false;
+    var timers  = [];
+
+    function tail() {
+      return String(stderr || '').trim().split('\n').slice(-3).join(' | ');
+    }
+
+    function clearTimers() {
+      timers.forEach(function(timer) { clearTimeout(timer); });
+      timers = [];
+    }
+
+    // "Ours and still running". `child.pid` is undefined when the spawn itself
+    // failed - node also sets exitCode -2 in that case - and there is then no
+    // process to signal at all.
+    function alive() {
+      return !!child && child.pid !== undefined &&
+        child.exitCode === null && child.signalCode === null;
+    }
+
+    // EXACT-PID teardown, and the exactness is the safety property: this
+    // process is also the parent of an in-memory mongod and of the application
+    // servers being compared, so a process-group signal here would end the very
+    // run this seeder is preparing. `child.kill` reaches that one pid only.
+    function signalOwned(signal) {
+      if (!alive()) {
+        return;
+      }
+
+      try {
+        child.kill(signal);
+      }
+      catch (err) {
+        // ESRCH: it exited between the check and the signal - the race this
+        // guard absorbs rather than a failure.
+        if (!err || err.code !== 'ESRCH') {
+          note('warning: could not send ' + signal + ' to the seeder (pid ' +
+            child.pid + '): ' + reasonOf(err));
+        }
+      }
+    }
+
+    // Last resort for a teardown of THIS process while the seeder still runs:
+    // an `exit` listener cannot await, so it is SIGKILL or an orphan holding a
+    // connection to a database that is about to disappear.
+    function sweep() {
+      if (alive()) {
+        signalOwned('SIGKILL');
+      }
+    }
+
+    function settle(result) {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      clearTimers();
+
+      // Dropped only when there is nothing left for it to do; a child that
+      // outlived every signal keeps it, so this process's exit tries once more.
+      if (!alive()) {
+        process.removeListener('exit', sweep);
+      }
+
+      resolve(result);
+    }
+
+    try {
+      child = childProcess.spawn(process.execPath, ['-e', script], {
+        cwd: TOOL_ROOT,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: env
+      });
+    }
+    catch (err) {
+      resolve({
+        ok: false,
+        reason: 'the seeder could not be spawned: ' + reasonOf(err),
+        summary: null
+      });
+      return;
+    }
+
+    process.on('exit', sweep);
+
+    // The seeder reports on stderr and writes nothing to stdout, but both are
+    // drained anyway: an undrained pipe is what this function exists to avoid.
+    child.stdout.resume();
+    child.stderr.on('data', function(chunk) {
+      stderr += chunk.toString();
+    });
+
+    // The deadline, in three bounded steps. The parent never waits past the
+    // last one: a seeder that survived SIGKILL would otherwise reproduce
+    // exactly the indefinite wait this replaces.
+    timers.push(setTimeout(function() {
+      note('the seeder has not finished within ' + SEED_TIMEOUT_MS +
+        'ms; sending SIGTERM to pid ' + child.pid + '.');
+      signalOwned('SIGTERM');
+
+      timers.push(setTimeout(function() {
+        note('the seeder did not exit on SIGTERM; sending SIGKILL to pid ' +
+          child.pid + '.');
+        signalOwned('SIGKILL');
+
+        timers.push(setTimeout(function() {
+          settle({
+            ok: false,
+            reason: 'the seeder (pid ' + child.pid + ') did not finish ' +
+              'within ' + SEED_TIMEOUT_MS + 'ms and could not be reaped ' +
+              'after SIGTERM and SIGKILL. End it by hand; its last output ' +
+              'was: ' + (tail() || '(nothing on stderr)'),
+            summary: null
+          });
+        }, SEED_KILL_GRACE_MS));
+      }, SEED_KILL_GRACE_MS));
+    }, SEED_TIMEOUT_MS));
+
+    child.on('error', function(err) {
+      settle({
+        ok: false,
+        reason: 'the seeder could not be spawned: ' + reasonOf(err),
+        summary: null
+      });
+    });
+
+    child.on('close', function(status, signal) {
+      if (status === 0) {
+        settle({ ok: true, reason: null, summary: tail() });
+        return;
+      }
+
+      settle({
+        ok: false,
+        reason: 'the seeder ' +
+          (status === null
+            ? 'was killed on ' + signal + ' (the deadline above says whether ' +
+              'this harness sent it)'
+            : 'exited ' + String(status)) +
+          ': ' + (tail() || '(nothing on stderr)'),
+        summary: null
+      });
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Fixture profiles and evidence
+// ---------------------------------------------------------------------------
+
+/**
+ * Selects the http fixture profile for the next request and CONFIRMS it.
+ *
+ * The profile file is the documented way to switch profiles without restarting
+ * the server: the fixture re-reads it synchronously at the start of every
+ * intercepted call. Writing it is not the same as it being in force, so it is
+ * read back here and the result is carried onto the scenario - a request driven
+ * under the wrong external outcome would be compared against a recording made
+ * under a different one, which is a silent invalidation of the comparison
+ * rather than a visible failure.
+ *
+ * A profile name the catalogue does not know is rejected rather than written,
+ * because the fixture's own contract is to log an unknown name and KEEP the
+ * previous profile.
+ *
+ * @param {(string|null)} profileFile
+ * @param {string} profile
+ * @returns {Object} {fileConfirmed, fileReason}
+ * @throws {ToolError} If the profile is unknown to the catalogue.
+ */
+function selectProfile(profileFile, profile) {
+  var written;
+
+  if (httpFixture.profileNames().indexOf(profile) === -1) {
+    throw new ToolError('the fixture profile ' + JSON.stringify(profile) +
+      ' is not in the catalogue. Known profiles: ' +
+      httpFixture.profileNames().join(', '));
+  }
+
+  if (!profileFile) {
+    return {
+      fileConfirmed: false,
+      fileReason: 'the launcher published no profile file, so the profile ' +
+        'could not be switched or confirmed'
+    };
+  }
+
+  try {
+    fs.writeFileSync(profileFile, JSON.stringify({ profile: profile }) + '\n');
+  }
+  catch (err) {
+    return {
+      fileConfirmed: false,
+      fileReason: 'could not write ' + profileFile + ': ' + reasonOf(err)
+    };
+  }
+
+  try {
+    written = JSON.parse(fs.readFileSync(profileFile, 'utf8'));
+  }
+  catch (err) {
+    return {
+      fileConfirmed: false,
+      fileReason: 'could not read ' + profileFile + ' back: ' + reasonOf(err)
+    };
+  }
+
+  if (!written || written.profile !== profile) {
+    return {
+      fileConfirmed: false,
+      fileReason: 'the profile file reads back as ' +
+        JSON.stringify(written && written.profile) + ' rather than ' +
+        JSON.stringify(profile)
+    };
+  }
+
+  return { fileConfirmed: true, fileReason: null };
+}
+
+/**
+ * Arms or disarms the model-boundary fault injector for the next step.
+ *
+ * The channel that makes the auth scheme's fifth outcome - 'Auth error', which
+ * needs the `User` lookup ITSELF to fail - reachable over HTTP. It is
+ * step-scoped rather than scenario-scoped because the value of that case is
+ * that exactly one lookup fails: the login that establishes the session and the
+ * request that proves the session survived both have to succeed.
+ *
+ * The arming document is built by `fixtures/model.js`'s own `arming()` and
+ * written by `server.writeModelFaultFile`, so neither this file nor capture.js
+ * holds a second copy of its field names or of what disarmed looks like.
+ *
+ * An arming with nowhere to write it is a hard error rather than a skip. The
+ * failure mode it prevents is the one that matters: driving the request with no
+ * fault armed and comparing the perfectly ordinary 200 against a baseline that
+ * recorded a refusal, or - worse, on a self-comparison - against another
+ * unfaulted response, and calling the pair a match.
+ *
+ * @param {(string|null)} faultFile PARITY_MODEL_FAULT_FILE of the running server.
+ * @param {(Object|null)} fault The step's `modelFault`, or null to disarm.
+ * @returns {undefined}
+ * @throws {ToolError} If an arming is requested with nowhere to write it.
+ */
+function selectModelFault(faultFile, fault) {
+  if (!faultFile) {
+    if (fault) {
+      throw new ToolError('a step asked for the model-boundary fault to be ' +
+        'armed, but this run has no arming file to write it to. The launcher ' +
+        'publishes one as `modelFaultPath` on its start result, so this can ' +
+        'only happen against a server this file did not start. Driving the ' +
+        'step unfaulted and comparing the result would report a pass for an ' +
+        'outcome that was never reached.');
+    }
+
+    return;
+  }
+
+  server.writeModelFaultFile(faultFile, fault ? stampArming(fault) : null);
+}
+
+// A monotonically increasing stamp put on every arming this process writes.
+// Two consecutive armed steps with identical specifications would otherwise
+// produce identical file text, and the fixture keys its use counter on that
+// text - so the second step would find the first one's arming already spent.
+// The value is harness-internal: the fixture ignores unknown keys, and the
+// corpus stores the declared `modelFault` without it, so it is never compared.
+var armGeneration = 0;
+
+/**
+ * The arming document as written, with its generation stamp.
+ *
+ * @param {Object} fault The step's declared `modelFault`.
+ * @returns {Object}
+ */
+function stampArming(fault) {
+  var out = modelFixture.arming(fault);
+
+  armGeneration = armGeneration + 1;
+  out.armGeneration = armGeneration;
+
+  return out;
+}
+
+
+/**
+ * Clears an arming this scenario left behind, on every exit path.
+ *
+ * Recorded rather than thrown, because this runs on error paths too and a throw
+ * here would replace the diagnosis with its own. A failed disarm is an
+ * observation on the scenario, which is what puts it in the report: every
+ * scenario after it is suspect, since the next user lookup will fail and will
+ * be attributed to whatever case happens to make it.
+ *
+ * @param {(string|null)} faultFile
+ * @param {boolean} armed Whether anything is believed to be armed.
+ * @param {Object} item The scenario.
+ * @param {Object} result The scenario's result, for recording against.
+ * @returns {undefined}
+ */
+function disarmModelFault(faultFile, armed, item, result) {
+  if (!armed || !faultFile) {
+    return;
+  }
+
+  try {
+    selectModelFault(faultFile, null);
+  }
+  catch (err) {
+    result.observations.push({
+      kind    : 'model-fault-not-disarmed',
+      scenario: item.id,
+      detail  : reasonOf(err)
+    });
+    note('WARNING: could not disarm the model-boundary fault after ' + item.id +
+      ': ' + reasonOf(err) + '. Every later scenario in this pass is suspect.');
+  }
+}
+
+/**
+ * Reads one of the fixtures' JSONL evidence logs.
+ *
+ * The fixtures run inside the CHILD, so their in-memory call logs are
+ * unreachable from here; the log files are the published cross-process channel
+ * and each is written through per call, precisely because some profiles end in
+ * an uncaught throw or never settle and buffered evidence would be lost exactly
+ * where it matters most.
+ *
+ * A missing log is reported as such rather than treated as an empty one: "no
+ * external call was made" and "the evidence could not be read" are different
+ * findings.
+ *
+ * @param {(string|null)} target
+ * @returns {Object} {available, records, malformed, reason}
+ */
+function readEvidenceLog(target) {
+  var text;
+  var records = [];
+  var malformed = 0;
+
+  if (!target) {
+    return {
+      available: false,
+      records: records,
+      malformed: 0,
+      reason: 'no log path was configured'
+    };
+  }
+
+  try {
+    text = fs.readFileSync(target, 'utf8');
+  }
+  catch (err) {
+    return {
+      available: false,
+      records: records,
+      malformed: 0,
+      reason: err && err.code === 'ENOENT'
+        ? 'the log was never written, so nothing was intercepted'
+        : 'could not read ' + target + ': ' + reasonOf(err)
+    };
+  }
+
+  text.split('\n').forEach(function(line) {
+    if (!line.trim()) {
+      return;
+    }
+
+    try {
+      records.push(JSON.parse(line));
+    }
+    catch (err) {
+      malformed++;
+    }
+  });
+
+  return {
+    available: true,
+    records: records,
+    malformed: malformed,
+    reason: null
+  };
+}
+
+/**
+ * Counts evidence records by one field, sorted for stability.
+ *
+ * @param {Array.<Object>} records
+ * @param {string} field
+ * @returns {Object}
+ */
+function countBy(records, field) {
+  var counts = {};
+
+  records.forEach(function(record) {
+    var key = record && record[field] !== undefined && record[field] !== null
+      ? String(record[field])
+      : '(unset)';
+
+    counts[key] = (counts[key] || 0) + 1;
+  });
+
+  return sortedKeys(counts);
+}
+
+/**
+ * Collects the external-effect evidence a pass produced.
+ *
+ * This is what turns "no real network was reached" and "these object keys were
+ * stored" from claims into recorded facts. The stored keys matter beyond this
+ * report: an upload's object key is the sha1 digest of the file's CONTENT, so a
+ * change to that digest silently orphans every stored object, and recording the
+ * keys a run produced is what makes such a change visible.
+ *
+ * @param {(Object|null)} info the launcher's start result
+ * @returns {Object}
+ */
+function collectEvidence(info) {
+  var httpLog;
+  var mailLog;
+  var s3Log;
+  var modelLog;
+  var priorS3Root;
+  var stored = { available: false, objects: [], reason: null };
+
+  if (!info) {
+    return {
+      available: false,
+      reason: 'the server was not launched by this run, so its per-run ' +
+        'evidence paths are owned by whoever started it'
+    };
+  }
+
+  httpLog = readEvidenceLog(info.httpLogPath);
+  mailLog = readEvidenceLog(info.mailLogPath);
+  s3Log = readEvidenceLog(info.s3LogPath);
+  modelLog = readEvidenceLog(info.modelFaultLog);
+
+  // The object store is a directory on disk, so it is read directly. The
+  // fixture resolves its root from this variable on every store access, which
+  // is why it is set before the require and why the require is lazy.
+  //
+  // BOTH pieces of state are put back, and only one of them used to be. The
+  // fixture's patch is undone by `restore()` below; the ENVIRONMENT variable is
+  // undone in the `finally`, and here that matters more than anywhere else in
+  // this folder, because a replay drives TWO passes. `process.env` is inherited
+  // by every child this tool spawns, so a root left behind by the non-secure
+  // pass is the root the secure pass's launcher and seeder would inherit, and
+  // the secure pass would then be reading the first pass's objects while
+  // reporting them as its own. Restored rather than deleted when it was already
+  // set, because a caller who supplied one is entitled to get it back.
+  priorS3Root = Object.prototype.hasOwnProperty.call(process.env, 'PARITY_S3_ROOT')
+    ? process.env.PARITY_S3_ROOT
+    : null;
+
+  try {
+    process.env.PARITY_S3_ROOT = info.s3Root;
+
+    if (awsFixture === null) {
+      awsFixture = require('./fixtures/aws');
+    }
+
+    try {
+      awsFixture.restore();
+    }
+    catch (restoreError) {
+      note('warning: could not restore the aws fixture in this process: ' +
+        reasonOf(restoreError));
+    }
+
+    stored = {
+      available: true,
+      objects: awsFixture.list(),
+      errors: awsFixture.errors(),
+      reason: null
+    };
+  }
+  catch (err) {
+    stored = {
+      available: false,
+      objects: [],
+      reason: 'the object store at ' + info.s3Root + ' could not be listed: ' +
+        reasonOf(err)
+    };
+  }
+  finally {
+    if (priorS3Root === null) {
+      delete process.env.PARITY_S3_ROOT;
+    }
+    else {
+      process.env.PARITY_S3_ROOT = priorS3Root;
+    }
+  }
+
+  return {
+    available: true,
+    reason: null,
+    http: {
+      available: httpLog.available,
+      reason: httpLog.reason,
+      intercepted: httpLog.records.length,
+      malformedLines: httpLog.malformed,
+      byEndpoint: countBy(httpLog.records, 'endpoint'),
+      byProfile: countBy(httpLog.records, 'profile')
+    },
+    mail: {
+      available: mailLog.available,
+      reason: mailLog.reason,
+      captured: mailLog.records.length,
+      malformedLines: mailLog.malformed,
+      byType: countBy(mailLog.records, 'type'),
+      expectedSendResult: mailFixture.sendResult
+    },
+    s3: {
+      available: s3Log.available,
+      reason: s3Log.reason,
+      calls: s3Log.records.length,
+      malformedLines: s3Log.malformed,
+      byOperation: countBy(s3Log.records, 'operation'),
+      stored: stored
+    },
+    // The injected data-store faults. `accountAuthOutcomes` reconciles the
+    // armed steps of the lookup-error scenario against `faulted` and `byId`,
+    // because a scenario that reports the right status without a recorded
+    // fault reached that status some other way - which is precisely the state
+    // this whole mechanism was added to make visible.
+    modelFault: {
+      available: modelLog.available,
+      reason: modelLog.reason,
+      records: modelLog.records.length,
+      malformedLines: modelLog.malformed,
+      faulted: modelLog.records.filter(function(entry) {
+        return entry && entry.event === 'faulted';
+      }).length,
+      byEvent: countBy(modelLog.records, 'event'),
+      byId: countBy(modelLog.records.filter(function(entry) {
+        return entry && entry.event === 'faulted';
+      }), 'id')
+    }
+  };
+}
+
+/**
+ * Whether the application is still SERVING.
+ *
+ * Two questions in order, because the cheap one is not sufficient. Signal 0
+ * tests for the process record without touching it, and a process that is gone
+ * answers immediately. But the record outliving the server is exactly the state
+ * this is asked about: a child that has just taken itself down is
+ * exited-but-unreaped for a moment, and `kill(pid, 0)` succeeds for a zombie.
+ *
+ * Measured, on a self-check of the corpus against the tree it was captured
+ * from: `POST /api/admin/user/{userId}` took the application down, the recorded
+ * ECONNRESET matched, and this returned ALIVE - so the pass drove the two cases
+ * after it against nothing, collected ECONNREFUSED where the corpus holds
+ * ECONNRESET, and reported two differences that were this function's detection
+ * lag rather than any behaviour of either tree.
+ *
+ * The second question is therefore asked of the port: a refused connection is
+ * a dead application whatever the process table says. Anything else - a
+ * connection, a timeout, an unexpected error - is treated as alive, which is
+ * the conservative direction: it stops the pass, and a pass stopped early is
+ * visible in the coverage while a pass continued past a death is not.
+ *
+ * Paid for only when a transport failure has already happened.
+ *
+ * @param {(Object|null)} info the launcher's start result
+ * @returns {Promise<boolean>}
+ */
+async function serverAlive(info) {
+  var reading;
+  var gone;
+
+  if (!info || !info.pid) {
+    return false;
+  }
+
+  // An ALIVE answer is CONFIRMED rather than taken once, and the reason is the
+  // detection lag described above: both questions can answer "alive" for a
+  // child that is already on its way out, because the process record outlives
+  // the process and the listening socket accepts one more connection while it
+  // closes. One reading inside that window is indistinguishable from a healthy
+  // application.
+  //
+  // Measured, on a 50-iteration stress of two asset failure-path scenarios: on
+  // the iteration whose LAST selected scenario took the application down, the
+  // child's stderr held Node's fatal termination and this returned ALIVE, so
+  // `died` was never set and the pass serialized `applicationDied.died: false`
+  // over a dead child. Mid-pass the next scenario's refused connection
+  // eventually exposes it; after the last selected scenario nothing re-asks, so
+  // the false claim is what the gate evidence keeps.
+  //
+  // A DEAD reading still returns immediately and unchanged, so the conservative
+  // direction is preserved and the cost is bounded: the delay is paid only when
+  // a transport failure has already happened and the application still looks
+  // alive.
+  for (reading = 0; reading < LIVENESS_CONFIRM_READINGS; reading += 1) {
+    if (reading) {
+      await pause(LIVENESS_CONFIRM_DELAY_MS);
+    }
+
+    gone = false;
+
+    try {
+      process.kill(info.pid, 0);
+    }
+    catch (err) {
+      // EPERM is a process that exists and is not ours to signal, which is
+      // alive for this purpose. Anything else - ESRCH above all - is a process
+      // that has been reaped, and that is decisive on its own: an exited child
+      // cannot be serving whatever a port probe says next.
+      if (!(err && err.code === 'EPERM')) {
+        gone = true;
+      }
+    }
+
+    if (gone) {
+      return false;
+    }
+
+    if (!(await portAccepting(info.probeHost || info.host, info.port))) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Whether anything accepts a connection on this address.
+ *
+ * @param {(string|null)} host
+ * @param {(number|null)} port
+ * @returns {Promise<boolean>} false ONLY for a refused connection
+ */
+function portAccepting(host, port) {
+  if (!host || !port) {
+    return Promise.resolve(false);
+  }
+
+  return new Promise(function(resolve) {
+    var socket = net.connect({ host: host, port: port });
+    var settled = false;
+
+    function finish(alive) {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      socket.destroy();
+      resolve(alive);
+    }
+
+    socket.setTimeout(LIVENESS_PROBE_MS, function() {
+      finish(true);
+    });
+
+    socket.once('connect', function() {
+      finish(true);
+    });
+
+    socket.once('error', function(err) {
+      finish(!(err && err.code === 'ECONNREFUSED'));
+    });
+  });
+}
+
+/**
+ * Waits, so a liveness reading can be re-taken rather than believed once.
+ *
+ * @param {number} ms
+ * @returns {Promise<void>}
+ */
+function pause(ms) {
+  return new Promise(function(resolve) {
+    setTimeout(resolve, ms);
+  });
+}
+
+/**
+ * One field of an object that may not be there, without throwing.
+ *
+ * Returns `null` for an absent container and for an absent field alike,
+ * because the caller comparing two provenance records treats both the same
+ * way: a field one side does not carry is not a contradiction.
+ *
+ * @param {(Object|null|undefined)} source
+ * @param {string} key
+ * @returns {*} the value, or null
+ */
+function pluck(source, key) {
+  if (!source || typeof source !== 'object') {
+    return null;
+  }
+
+  return source[key] === undefined ? null : source[key];
+}
+
+// ---------------------------------------------------------------------------
+// Driving one scenario
+// ---------------------------------------------------------------------------
+
+/**
+ * Replays one scenario and compares every step of it.
+ *
+ * Never throws for a fault in the driving: a step that could not be driven is
+ * recorded with its reason and the scenario is marked as not driven, because a
+ * case silently dropped is the one failure mode a parity gate cannot tolerate.
+ * Step order is preserved exactly as the corpus holds it - reordering the two
+ * consecutive requests of the cross-request redirect leak would destroy the
+ * only evidence of it.
+ *
+ * @param {Object} item the planned scenario
+ * @param {Object} context {jar, profileFile, faultFile, httpLogPath, timeoutMs, selfCheck, expectation}
+ * @returns {Promise<Object>} the scenario result
+ */
+async function runScenario(item, context) {
+  var result = {
+    driven: false,
+    compared: false,
+    skipped: false,
+    error: null,
+    steps: [],
+    differences: [],
+    // The full set before the authorized register is applied, and the two
+    // halves it splits into. `differences` stays the UNAUTHORIZED set so that
+    // every existing reader of it - the deviation verdict, the classification,
+    // the report - keeps its own meaning.
+    allDifferences: [],
+    authorizedDifferences: [],
+    unauthorizedDifferences: [],
+    observations: [],
+    expectation: null,
+    deviation: null,
+    profileEvidence: null,
+    outcome: null
+  };
+  var evidenceBefore;
+  var profileSelection;
+  var observedRecords = [];
+  var index;
+  var step;
+  var driven;
+  var comparison;
+  var authorization;
+  // Whether an arming this scenario wrote is still in the fault file. It must
+  // be cleared on every exit path: the server is long-lived and the scenarios
+  // are driven serially, so an arming left behind would fail the next
+  // scenario's user lookup and be reported as that scenario's own difference.
+  var faultArmed = false;
+
+  item.result = result;
+
+  if (!item.steps.length) {
+    // A scenario with no steps. It carries its reason and is accounted as an
+    // explained gap, which is the difference between that and a silent one -
+    // and `accountAuthOutcomes` treats such a gap in the auth group as a
+    // FAILURE unless the exemption table justifies it, because a stated reason
+    // is not an assertion.
+    result.skipped = true;
+    return result;
+  }
+
+  try {
+    profileSelection = selectProfile(context.profileFile, item.fixtureProfile);
+  }
+  catch (err) {
+    result.error = reasonOf(err);
+    return result;
+  }
+
+  evidenceBefore = readEvidenceLog(context.httpLogPath).records.length;
+
+  if (item.freshSession) {
+    context.jar.reset(item.identity);
+  }
+
+  for (index = 0; index < item.steps.length; index++) {
+    step = item.steps[index];
+
+    if (step.resetSessionBefore) {
+      context.jar.reset(step.identity || item.identity);
+    }
+
+    // Arm for a step that declares a fault, and disarm as soon as the step
+    // after it does not. Written only when the state changes, so the scenarios
+    // that never arm anything pay nothing for this.
+    if (step.modelFault || faultArmed) {
+      try {
+        selectModelFault(context.faultFile, step.modelFault || null);
+        faultArmed = !!step.modelFault;
+      }
+      catch (err) {
+        result.error = 'step ' + index + ' (' + step.label + ') could not arm ' +
+          'the model-boundary fault: ' + reasonOf(err);
+        disarmModelFault(context.faultFile, faultArmed, item, result);
+        return result;
+      }
+    }
+
+    try {
+      driven = await context.jar.request(step.identity || item.identity, {
+        method: step.method,
+        target: step.target,
+        accept: step.accept,
+        payload: step.payload === undefined ? null : step.payload,
+        contentType: step.contentType
+      }, step.timeoutMs || context.timeoutMs);
+    }
+    catch (err) {
+      // Nothing in the driver rejects, so reaching here means a fault in this
+      // file rather than in the application. Recorded against the step, in
+      // place, so the report says which case failed and why.
+      result.error = 'step ' + index + ' (' + step.label + ') could not be ' +
+        'driven: ' + reasonOf(err);
+      result.steps.push({
+        label: step.label,
+        request: { method: step.method, target: step.target },
+        observed: null,
+        outcome: OUTCOME_MISSING,
+        baselineOutcome: outcomeOf(step.baseline),
+        differences: [],
+        observations: [],
+        error: result.error
+      });
+      disarmModelFault(context.faultFile, faultArmed, item, result);
+      return result;
+    }
+
+    observedRecords.push(driven.response);
+    comparison = compareStep(step, driven.response, context.expectation, item);
+
+    result.steps.push({
+      label: step.label,
+      request: driven.sent,
+      observed: driven.response,
+      outcome: comparison.outcome,
+      baselineOutcome: comparison.baselineOutcome,
+      differences: comparison.differences,
+      observations: comparison.observations,
+      error: null
+    });
+
+    result.differences = result.differences.concat(
+      comparison.differences.map(function(record) {
+        return annotateDifference(record, item, step);
+      }));
+    result.observations = result.observations.concat(
+      comparison.observations.map(function(record) {
+        return annotateDifference(record, item, step);
+      }));
+
+    if (step.baseline) {
+      result.compared = true;
+    }
+  }
+
+  disarmModelFault(context.faultFile, faultArmed, item, result);
+
+  // THE AUTHORIZED REGISTER IS APPLIED HERE, and the position is load-bearing
+  // twice over. It is after every step has been compared, so a scenario is
+  // partitioned as a whole rather than step by step; and it is BEFORE the
+  // approved-deviation verdict and before `classifyScenario`, both of which
+  // read `result.differences` - so what those two see is the UNAUTHORIZED set,
+  // which is what makes `failingScenarios` count only unauthorized failures
+  // without a second counter anywhere.
+  //
+  // The full set is retained under its own name, because the register's own
+  // generation mode reads it and because a reader of the artifact has to be
+  // able to see what was authorized rather than take the count on trust.
+  result.allDifferences = result.differences;
+
+  if (context.authorizer) {
+    authorization = context.authorizer.authorize(result.differences);
+    result.authorizedDifferences = authorization.authorized;
+    result.differences = authorization.unauthorized;
+  }
+  else {
+    result.authorizedDifferences = [];
+  }
+
+  // Named for `authorizeGeneratedRecords`, which files records for exactly the
+  // differences that are still failing after the register has been applied -
+  // so re-running `--authorize` over an already-registered tree files the
+  // residue and nothing else.
+  result.unauthorizedDifferences = result.differences;
+
+  result.driven = true;
+  result.outcome = result.steps.length
+    ? result.steps[0].outcome
+    : OUTCOME_MISSING;
+  result.expectation = evaluateExpectation(item, observedRecords);
+  // The same clauses against the RECORDED responses. A declared expectation
+  // describes the BASELINE, so it is only evidence about the target where the
+  // baseline satisfied it: an expectation the corpus itself does not meet is a
+  // finding about the capture, and failing the replay for it would report the
+  // same thing twice and blame the wrong artifact.
+  result.baselineExpectation = evaluateExpectation(item, item.steps.map(function(step) {
+    return step.baseline;
+  }));
+  result.profileEvidence = profileEvidenceFor(item, context, profileSelection,
+    evidenceBefore);
+
+  if (item.expectedDeviation && !context.selfCheck) {
+    // Skipped under --self-check: there the tree under test IS the tree the
+    // corpus came from, so the deviation must not materialize and the marker
+    // has nothing to approve. classifyScenario enforces that directly from the
+    // marker, so computing a verdict here would only produce a misleading
+    // progress line.
+    result.deviation = verifyApprovedDeviation(item, observedRecords,
+      result.differences);
+  }
+
+  return result;
+}
+
+/**
+ * Attaches the scenario and step context every difference record needs.
+ *
+ * Every difference record carries the scenario id, the route, the field and
+ * the two values, so a reviewer can act on the report without re-running the
+ * tool. The step label is here too, because a sequence has more than one
+ * request.
+ *
+ * @param {Object} record
+ * @param {Object} item
+ * @param {Object} step
+ * @returns {Object}
+ */
+function annotateDifference(record, item, step) {
+  var out = {
+    scenario: item.id,
+    group: item.group,
+    route: item.routeKey,
+    identity: item.identity,
+    step: step.label,
+    stepIndex: step.index,
+    target: step.target,
+    field: record.field,
+    baselineValue: record.baseline,
+    targetValue: record.target
+  };
+
+  Object.keys(record).forEach(function(key) {
+    if (key !== 'field' && key !== 'baseline' && key !== 'target') {
+      out[key] = record[key];
+    }
+  });
+
+  return out;
+}
+
+/**
+ * Builds the fixture-profile evidence for one scenario.
+ *
+ * @param {Object} item
+ * @param {Object} context
+ * @param {Object} selection the result of selectProfile
+ * @param {number} evidenceBefore records in the log before the scenario ran
+ * @returns {Object}
+ */
+function profileEvidenceFor(item, context, selection, evidenceBefore) {
+  var log = readEvidenceLog(context.httpLogPath);
+  var appended = log.available ? log.records.slice(evidenceBefore) : [];
+  var profiles = [];
+  var calls = 0;
+  var notes = 0;
+  var changes = [];
+
+  // The fixture's log carries three kinds of record and only one of them is an
+  // intercepted call. A `profile-changed` event reports the switch itself, with
+  // its profile nested under `detail`; a bare `event` record is a diagnostic
+  // note, such as the one saying the legacy request mechanism is not resolvable
+  // on this tree; and a record carrying `endpoint` and `mechanism` is a CALL
+  // the fixture served, with the profile it served it under at the top level.
+  // Counting the first two as calls would report "(unset)" for every scenario
+  // and turn a working assertion into noise.
+  appended.forEach(function(record) {
+    var profile;
+
+    if (record && record.event === 'profile-changed') {
+      changes.push(record.detail && record.detail.profile
+        ? String(record.detail.profile)
+        : '(unset)');
+      return;
+    }
+
+    if (record && record.event !== undefined) {
+      notes++;
+      return;
+    }
+
+    calls++;
+    profile = record && record.profile ? String(record.profile) : '(unset)';
+
+    if (profiles.indexOf(profile) === -1) {
+      profiles.push(profile);
+    }
+  });
+
+  return {
+    fileConfirmed: selection.fileConfirmed,
+    fileReason: selection.fileReason,
+    interceptedCalls: calls,
+    fixtureNotes: notes,
+    // The fixture's own record of having adopted the profile from the file.
+    // Present only when the profile actually changed - a scenario that reuses
+    // the previous profile produces no event, which is not a fault.
+    profileChanges: changes,
+    profileChangeMismatch: changes.filter(function(profile) {
+      return profile !== item.fixtureProfile;
+    }),
+    profilesSeen: profiles,
+    logAvailable: log.available,
+    logReason: log.reason
+  };
+}
+
+/**
+ * Logs in every password identity the selected scenarios actually need.
+ *
+ * Driven through the real login form rather than by forging a cookie: session
+ * state lives on the server, so a forged cookie could not work, and the login
+ * flow is part of the surface under comparison. Only the identities in use are
+ * logged in, so a narrow run does not pay for sessions it will not spend.
+ *
+ * A login that does not land is reported rather than hidden, with one
+ * exception: the disabled account is REFUSED by design and its scenario exists
+ * to record that, so its failure to land is the expected outcome.
+ *
+ * @param {Jar} jar
+ * @param {Array.<Object>} scenarios
+ * @returns {Promise<Object>} {established, failures}
+ */
+async function establishSessions(jar, scenarios) {
+  var wanted = {};
+  var identity;
+  var outcome;
+
+  scenarios.forEach(function(item) {
+    [item.identity].concat(item.steps.map(function(step) {
+      return step.identity;
+    })).forEach(function(name) {
+      if (PASSWORD_IDENTITIES.indexOf(name) >= 0) {
+        wanted[name] = true;
+      }
+    });
+  });
+
+  for (identity of Object.keys(wanted).sort()) {
+    outcome = await jar.login(identity, seed.credentials[identity]);
+
+    if (outcome.ok) {
+      note('logged in as the seeded ' + identity);
+    }
+    else if (identity === IDENTITY_DISABLED) {
+      note('the disabled identity did not reach /home, which is what its ' +
+        'scenario records: ' + (outcome.location || outcome.error));
+    }
+    else {
+      note('warning: the ' + identity + ' login did not land on /home (' +
+        (outcome.location || outcome.error) + '). Cases driven as this ' +
+        'identity will be compared as whatever an unauthenticated request ' +
+        'returns, which is very likely to differ from the recording.');
+    }
+  }
+
+  return {
+    established: sortedKeys(jar.established),
+    failures: sortedKeys(jar.failures)
+  };
+}
+
+// ---------------------------------------------------------------------------
+// One cookie pass
+// ---------------------------------------------------------------------------
+
+/**
+ * Runs one cookie pass end to end: provision, launch, seed, drive, compare,
+ * account, and shut down.
+ *
+ * The order is the order in which each step can still fail cheaply. The
+ * object-store pre-population manifest is built BEFORE the launcher, because
+ * the fixture reads it once at load. The seeder runs AFTER the server is up,
+ * awaited, for the pipe-starvation reason on `seedFixtures`. Sessions are
+ * established before the sweep, because a case driven as an identity with no
+ * session is compared against a recording made with one.
+ *
+ * Every pass gets its own freshly provisioned database and its own server, so
+ * the mutating scenarios of one pass cannot change the fixture the next pass
+ * reads.
+ *
+ * @param {string} passName
+ * @param {Object} options
+ * @param {Object} plan {scenarios, ...}
+ * @param {Object} context {differential, scratchDir}
+ * @returns {Promise<Object>} the pass document
+ */
+async function runPass(passName, options, plan, context) {
+  var scenarios = plan.scenarios;
+  var s3Seed;
+  var info = null;
+  var jar;
+  var sessions = null;
+  var seeded = null;
+  var fatal = null;
+  var died = {
+    died: false,
+    lastScenario: null,
+    lastIndex: -1,
+    remaining: 0,
+    stderrPath: null
+  };
+  var undriven = [];
+  // One evidence document and one stderr path per SEGMENT: a pass that
+  // restarts the application after a death the corpus records has more than
+  // one of each, and `mergeEvidence`/`combineStderrLogs` fold them at the end.
+  var segments = [];
+  var stderrPaths = [];
+  var relaunches = [];
+  var recordedDeaths = [];
+  // The restarts performed because the corpus records a death the target did
+  // NOT repeat, so the fixture state had to be brought back to what the
+  // baseline recording continued from. Separate from `recordedDeaths`, which
+  // is about the application going down on THIS tree.
+  var stateRealignments = [];
+  var remainingAfterItem;
+  var relaunchBudget = countRecordedDeaths(scenarios);
+  // Mirrors the capture: it forced a reseed before each destructive case, and
+  // a corpus captured with `--no-reseed` says so here, in which case the
+  // deletes were recorded in sequence and are replayed that way.
+  var reseedBeforeDestructive = !!(plan.ordering &&
+    plan.ordering.reseedBeforeEachDestructiveCase);
+  var reseeds = [];
+  var reseeded;
+  var evidence;
+  var warnings;
+  var prepared;
+  var relaunch;
+  // The launcher result whose evidence has already been collected, so a
+  // relaunch that could not start a replacement does not have the segment it
+  // already read counted twice.
+  var evidenceTaken = null;
+  var harnessOriginReconciliation = harnessOriginAccounting();
+  var heldBackShortCodes;
+  var index;
+  var item;
+  var result;
+
+  note('--- pass ' + passName + ': ' + scenarios.length + ' scenario(s)');
+
+  // Per pass, and before anything is compared: the tally is what the pass
+  // document reports, and a pass must not inherit the previous pass's entries.
+  // See THE HELD-BACK SHORT CODE, RECONCILED PAIRWISE.
+  resetHeldBackShortCodeTally();
+
+  // Before the launcher, deliberately: the object-store fixture reads this
+  // manifest ONCE at load, so a manifest prepared afterwards would never be
+  // seen. See prepareS3Seed for what that costs.
+  s3Seed = prepareS3Seed(options, context.scratchDir);
+
+  if (!s3Seed.path) {
+    throw new ToolError('the object-store pre-population manifest could not ' +
+      'be prepared, and without it a download route asks the store for a key ' +
+      'it does not hold and takes the server down mid-run: ' + s3Seed.reason);
+  }
+
+  info = await server.start(launcherOptions(options, passName, s3Seed.path));
+  stderrPaths.push(info.stderrPath);
+
+  // The origin this pass answers on, installed as soon as it is known and
+  // released in the `finally` below. See THE HARNESS ORIGIN, RECONCILED: the
+  // application builds its own absolute URLs from the port this harness chose,
+  // so without this the corpus is replayable at exactly one port.
+  installHarnessOrigin(info.baseUrl);
+
+  if (relaunchBudget) {
+    note(relaunchBudget + ' scenario(s) of this selection record a transport ' +
+      'failure, which is how the corpus records the baseline application ' +
+      'dying on them. The application is restarted and re-seeded after each ' +
+      'one, so the cases after it are compared rather than reported as ' +
+      'never reached.');
+  }
+
+  try {
+    prepared = await prepareApplicationState(info, options, scenarios, 0);
+    seeded = prepared.seeded;
+    jar = prepared.jar;
+    sessions = prepared.sessions;
+
+    for (index = 0; index < scenarios.length; index++) {
+      item = scenarios[index];
+
+      // The other half of the ordering contract. Putting the deletes last is
+      // what stops them deciding what an earlier case observed; this is what
+      // stops them deciding what each OTHER observes, and it is what the
+      // capture did before recording each of them. Without it, five of the
+      // fourteen destructive cases report a difference that is the replay's
+      // own order and not the application - measured, on a self-check of the
+      // corpus against the very tree it was captured from.
+      if (reseedBeforeDestructive && item.phase === PHASE_DESTRUCTIVE) {
+        reseeded = await seedFixtures(info, { force: true });
+
+        reseeds.push({
+          beforeScenario: item.id,
+          index: index,
+          ok: reseeded.ok,
+          reason: reseeded.reason
+        });
+
+        if (!reseeded.ok) {
+          // Fatal, exactly as it is in the capture: this destructive case and
+          // every one after it would be driven against unknown fixture state,
+          // and nothing in the comparison would distinguish that from a route
+          // that genuinely answers this way.
+          throw new ToolError('the forced reseed before ' + item.id +
+            ' failed, so this destructive case and the ones after it would ' +
+            'be compared against unknown fixture state: ' + reseeded.reason);
+        }
+      }
+
+      result = await runScenario(item, {
+        jar: jar,
+        profileFile: info.httpProfilePath,
+        faultFile: info.modelFaultPath,
+        httpLogPath: info.httpLogPath,
+        timeoutMs: options.timeoutMs,
+        selfCheck: !!options.selfCheck,
+        expectation: context.differential ? { differential: true } : null,
+        // Null under --authorize: a generation run must see the whole
+        // difference set, because it is what decides which records the
+        // register will hold, and applying the register it is about to
+        // overwrite would hide every difference it already covers.
+        authorizer: context.authorizer || null
+      });
+
+      reportScenario(item, index, scenarios.length);
+
+      if (result.error) {
+        undriven.push({ id: item.id, reason: result.error, neverReached: false });
+      }
+
+      // A transport failure is the only thing that reaches this block, and the
+      // two cases it splits into are decided by the RECORDING, not by a
+      // liveness probe.
+      //
+      // Where the corpus records a transport failure at this same scenario,
+      // the application is known to take itself down here and the target has
+      // just done the same, so the pass restarts unconditionally - it does not
+      // ask whether the process has finished going. It cannot usefully ask: a
+      // child that is exiting still accepts a connection for a few
+      // milliseconds, and MEASURED, once, on the secure pass of an otherwise
+      // clean gate run, the probe found the port open at the case that killed
+      // it, no restart ran, and the NEXT case reported ECONNREFUSED against
+      // the corpus's ECONNRESET - a difference that was this race and nothing
+      // else. `relaunchAfterRecordedDeath` stops the launcher before starting
+      // the replacement, so a restart that turns out not to have been needed
+      // costs a stop and a start rather than correctness.
+      //
+      // Everywhere else a transport failure is only a death if the application
+      // is actually gone - a refused streaming fetch records one BY DESIGN -
+      // so the unrecorded case still asks `serverAlive`, and still ends the
+      // pass, exactly as it did.
+      if (sawTransportFailure(result) &&
+          (baselineLostTransport(item) || !(await serverAlive(info)))) {
+        died = {
+          died: true,
+          lastScenario: item.id,
+          lastIndex: index,
+          remaining: scenarios.length - index - 1,
+          stderrPath: info.stderrPath
+        };
+
+        // A death the CORPUS records at this same scenario is a match, not a
+        // fault: the baseline died here too, which is why the recording is a
+        // transport failure. The pass continues from a restarted, re-seeded
+        // application - see `relaunchAfterRecordedDeath` - and `died` is
+        // reverted, because `applicationDied.died` is a gate failure and this
+        // death is the recorded behaviour rather than a break in the run.
+        if (baselineLostTransport(item)) {
+          recordedDeaths.push({
+            id: item.id,
+            index: index,
+            route: item.routeKey || null,
+            remaining: died.remaining,
+            stderrPath: info.stderrPath,
+            relaunched: false
+          });
+
+          note('the transport failed on ' + item.id + ', AS THE RECORDED ' +
+            'BASELINE DID: the corpus holds a transport failure for this ' +
+            'scenario, so the two agree and the comparison stands. The ' +
+            'application is restarted from here rather than probed, because a ' +
+            'child that is exiting still accepts a connection.');
+
+          if (!died.remaining) {
+            note('it was the last scenario of this pass, so nothing has to ' +
+              'be restarted.');
+            died.died = false;
+            continue;
+          }
+
+          if (relaunches.length >= relaunchBudget) {
+            note('THE APPLICATION DIED on ' + item.id + ' and the relaunch ' +
+              'budget of ' + relaunchBudget + ' (one per scenario this ' +
+              'corpus records a transport failure for) is spent, so ' +
+              died.remaining + ' scenario(s) were never reached.');
+
+            undriven = undriven.concat(
+              markRemainingUndriven(scenarios, index + 1,
+                'never reached: the application died on ' + item.id +
+                ' and the relaunch budget was spent'));
+            break;
+          }
+
+          relaunch = await relaunchAfterRecordedDeath({
+            passName: passName,
+            options: options,
+            scenarios: scenarios,
+            index: index,
+            item: item,
+            info: info,
+            s3SeedPath: s3Seed.path,
+            attempt: relaunches.length + 1
+          });
+
+          segments.push(relaunch.evidence);
+          evidenceTaken = info;
+
+          relaunches.push({
+            attempt: relaunches.length + 1,
+            afterScenario: item.id,
+            afterIndex: index,
+            ok: relaunch.ok,
+            reason: relaunch.reason,
+            runDir: relaunch.runDir || null,
+            reseeded: relaunch.ok ? relaunch.seeded.summary : null,
+            sessions: relaunch.ok ? relaunch.sessions : null
+          });
+
+          if (relaunch.ok) {
+            info = relaunch.info;
+            seeded = relaunch.seeded;
+            jar = relaunch.jar;
+            sessions = relaunch.sessions;
+            stderrPaths.push(info.stderrPath);
+            recordedDeaths[recordedDeaths.length - 1].relaunched = true;
+            died.died = false;
+
+            note('restarted and re-seeded the application; ' + died.remaining +
+              ' scenario(s) still to drive.');
+            continue;
+          }
+
+          if (relaunch.info) {
+            stderrPaths.push(relaunch.info.stderrPath);
+            info = relaunch.info;
+          }
+
+          note('THE APPLICATION DIED on ' + item.id + ' and could not be ' +
+            'restarted (' + relaunch.reason + '), so ' + died.remaining +
+            ' scenario(s) were never reached.');
+
+          undriven = undriven.concat(
+            markRemainingUndriven(scenarios, index + 1,
+              'never reached: the application died on ' + item.id +
+              ' and could not be restarted: ' + relaunch.reason));
+          break;
+        }
+
+        note('THE APPLICATION DIED on ' + item.id + '; ' + died.remaining +
+          ' scenario(s) were never reached. Every comparison after this point ' +
+          'would be a transport failure that means nothing.');
+
+        undriven = undriven.concat(
+          markRemainingUndriven(scenarios, index + 1,
+            'never reached: the application died on ' + item.id));
+        break;
+      }
+
+      // STATE REALIGNMENT AFTER A RECORDED DEATH THE TARGET SURVIVED.
+      //
+      // The corpus holds a transport failure for this scenario, so the
+      // baseline DIED here and its capture continued from a restarted,
+      // re-seeded, re-logged-in application - every recording after this point
+      // was made against fresh fixtures. The target answered the same request
+      // instead of dying, so unless the same restart runs here the two sides
+      // are compared from divergent state for the whole remainder of the pass,
+      // and the branch above cannot do it: it is entered only when the target
+      // ALSO lost transport.
+      //
+      // Measured on the delivered corpus, both cookie passes: scenario 275 of
+      // 392, `POST /api/admin/user/000000000000000000000101` with no payload,
+      // is one of the three the corpus records a transport failure for. The
+      // target answers it and strips that user's roles, after which
+      // `PUT /api/courses/{courseId}/metadata`,
+      // `PUT .../lessons/{lessonId}/move`, `POST .../userLookup`, the
+      // dead-301 alias scenario and the OAuth save-then-fail scenario all take
+      // their permission-denied branch and answer 500 - lib/controllers/
+      // course.js's unbound `Boom`, a PRESERVED baseline quirk - where the
+      // corpus recorded 200 from a baseline whose roles had just been
+      // re-seeded. That is 250 field differences across 9 scenario classes
+      // produced by the harness's state rather than by the tree, and driving
+      // those same scenarios alone against a freshly seeded application makes
+      // every one of them match (measured with `--only`: five of the six
+      // reported `-> match`). The same asymmetry is why `body.json.flash
+      // .requested` appeared on the baseline side of four scenarios: the
+      // post-relaunch re-login left a `requested` flash unread, and
+      // `request.yar.flash()` with no argument reads AND CLEARS everything.
+      //
+      // So the restart runs on this side too, out of the SAME budget: it is
+      // one per scenario the corpus records a transport failure for, and this
+      // branch and the death branch above are mutually exclusive for any one
+      // scenario, so the budget covers whichever fires. The difference
+      // measured FOR THIS SCENARIO is recorded before the realignment and
+      // stands as it is - a `transport-failure -> answered` difference is a
+      // real difference and the register has to account for it. What the
+      // realignment removes is only the divergence it would otherwise cause in
+      // every scenario after it.
+      if (baselineLostTransport(item) && !sawTransportFailure(result)) {
+        remainingAfterItem = scenarios.length - index - 1;
+
+        note('the corpus records a transport failure for ' + item.id +
+          ' and THE TARGET ANSWERED IT instead. The difference stands; the ' +
+          'application is restarted and re-seeded from here anyway, because ' +
+          'the baseline recording continued from a restarted, re-seeded ' +
+          'application and comparing the rest of the pass against unaligned ' +
+          'fixtures measures the harness rather than the tree.');
+
+        if (!remainingAfterItem) {
+          note('it was the last scenario of this pass, so there is nothing ' +
+            'left to realign.');
+          continue;
+        }
+
+        if (relaunches.length >= relaunchBudget) {
+          note('THE RELAUNCH BUDGET of ' + relaunchBudget + ' (one per ' +
+            'scenario this corpus records a transport failure for) is spent, ' +
+            'so the state could not be realigned and ' + remainingAfterItem +
+            ' scenario(s) were not driven: every one of them would have been ' +
+            'compared against fixtures the baseline recording never saw.');
+
+          undriven = undriven.concat(
+            markRemainingUndriven(scenarios, index + 1,
+              'never driven: the corpus records a transport failure for ' +
+              item.id + ' that the target survived, and the relaunch budget ' +
+              'for realigning the fixture state was spent'));
+          break;
+        }
+
+        relaunch = await relaunchAfterRecordedDeath({
+          passName: passName,
+          options: options,
+          scenarios: scenarios,
+          index: index,
+          item: item,
+          info: info,
+          s3SeedPath: s3Seed.path,
+          attempt: relaunches.length + 1
+        });
+
+        segments.push(relaunch.evidence);
+        evidenceTaken = info;
+
+        relaunches.push({
+          attempt: relaunches.length + 1,
+          afterScenario: item.id,
+          afterIndex: index,
+          ok: relaunch.ok,
+          reason: relaunch.reason,
+          runDir: relaunch.runDir || null,
+          reseeded: relaunch.ok ? relaunch.seeded.summary : null,
+          sessions: relaunch.ok ? relaunch.sessions : null,
+          // What this restart was FOR, so the two callers of
+          // relaunchAfterRecordedDeath are distinguishable in the artifact.
+          because: 'state-realignment'
+        });
+
+        stateRealignments.push({
+          id: item.id,
+          index: index,
+          route: item.routeKey || null,
+          remaining: remainingAfterItem,
+          relaunched: relaunch.ok,
+          reason: relaunch.reason || null
+        });
+
+        if (relaunch.ok) {
+          info = relaunch.info;
+          seeded = relaunch.seeded;
+          jar = relaunch.jar;
+          sessions = relaunch.sessions;
+          stderrPaths.push(info.stderrPath);
+
+          note('restarted and re-seeded the application after ' + item.id +
+            '; ' + remainingAfterItem + ' scenario(s) still to drive, now ' +
+            'against the same fixture state the baseline recording had.');
+          continue;
+        }
+
+        if (relaunch.info) {
+          stderrPaths.push(relaunch.info.stderrPath);
+          info = relaunch.info;
+        }
+
+        note('THE APPLICATION COULD NOT BE RESTARTED after ' + item.id +
+          ' (' + relaunch.reason + '), so the fixture state could not be ' +
+          'realigned and ' + remainingAfterItem + ' scenario(s) were not ' +
+          'driven.');
+
+        undriven = undriven.concat(
+          markRemainingUndriven(scenarios, index + 1,
+            'never driven: the state could not be realigned after ' + item.id +
+            ', which the corpus records a transport failure for and the ' +
+            'target survived: ' + relaunch.reason));
+        break;
+      }
+    }
+  }
+  catch (err) {
+    // Recorded on the pass rather than thrown away, so the artifacts still say
+    // what happened and how far the pass got. The caller turns a fatal pass
+    // into the "could not be performed" exit code - never into a pass.
+    fatal = reasonOf(err);
+    note('the ' + passName + ' pass could not be completed: ' + fatal);
+  }
+  finally {
+    // Collected while the run directory is still the current one, and the
+    // server is stopped whatever happened, so no failure path can leak a child
+    // process holding the port.
+    if (!segments.length || evidenceTaken !== info) {
+      segments.push(collectEvidence(info));
+    }
+
+    evidence = mergeEvidence(segments);
+    warnings = accountWarnings(combineStderrLogs(stderrPaths,
+      path.join(context.scratchDir, passName + '-stderr.combined.log')), {
+      nodeFlags: info ? info.nodeFlags : [],
+      appRoot: info ? info.appRoot : options.appRoot
+    });
+
+    // The boolean is the whole answer and is not discarded: ./server resolves
+    // `false` for an unclean stop instead of rejecting, so a child still
+    // holding the port would otherwise leave no trace at all. `foldStop`
+    // reads the value, the rejection and the launcher's own records; the pass
+    // itself still returns whatever it produced.
+    await foldStop('stop the application', server, 'test/parity/server.js',
+      'test/parity/server.js');
+
+    // Read as well: the launcher adopts ./mongo's records when it stopped a
+    // database it provisioned, but a start that failed after the database came
+    // up can leave a record the launcher never adopted. `recordCleanupFailure`
+    // deduplicates, so reading both cannot double-count one fault.
+    mongo.cleanupFailures().forEach(function(entry) {
+      recordCleanupFailure(entry.operation + ' (test/parity/mongo.js)',
+        entry.message);
+    });
+
+    // Released here rather than at the end of the pass body, so a pass that
+    // threw cannot leave the next one's `installHarnessOrigin` refusing. The
+    // accounting is taken on the way out, because the counters live in the
+    // state being released.
+    harnessOriginReconciliation = releaseHarnessOrigin();
+    // Taken on the way out for the same reason, and before the next pass
+    // resets the tally.
+    heldBackShortCodes = heldBackShortCodeAccounting();
+  }
+
+  return {
+    name: passName,
+    secure: passName === PASS_SECURE,
+    differential: !!context.differential,
+    fatal: fatal,
+    // What the harness-origin reconciliation replaced in this pass, with every
+    // port it saw. A reader has to be able to see that the only prefix removed
+    // was the one this tool's own --port decided.
+    harnessOrigin: harnessOriginReconciliation,
+    // What the pairwise short-code reconciliation removed in this pass, field
+    // by field. Usually nothing: the committed rule's all-digit exemption is
+    // only reached when a minted code comes out with no letter in it.
+    heldBackShortCodes: heldBackShortCodes || heldBackShortCodeAccounting(),
+    scenarios: scenarios.length,
+    driven: scenarios.filter(function(entry) {
+      return entry.result && entry.result.driven;
+    }).length,
+    baseUrl: info ? info.baseUrl : null,
+    port: info ? info.port : null,
+    appRoot: info ? info.appRoot : options.appRoot,
+    appHead: info ? gitHead(info.appRoot) : null,
+    runDir: info ? info.runDir : null,
+    stdoutPath: info ? info.stdoutPath : null,
+    stderrPath: info ? info.stderrPath : null,
+    // Every segment's stream, and the file the warning gate actually judged.
+    // With no relaunch the two are the one path above; with one they are not,
+    // and a reader who is told only the last would think the pass produced far
+    // less stderr than it did.
+    stderrPaths: stderrPaths,
+    warningStderrPath: warnings ? (warnings.stderrPath || null) : null,
+    nodeFlags: info ? info.nodeFlags : [],
+    mongo: info ? info.mongo : null,
+    s3Seed: { path: s3Seed.path, entries: s3Seed.entries },
+    seeded: seeded,
+    sessions: sessions,
+    applicationDied: died,
+    // The deaths the corpus records, whether or not each was relaunched, and
+    // the restarts performed. These are NOT `applicationDied`: that field is a
+    // gate failure, and a death both trees produce at the same scenario is the
+    // behaviour under test.
+    recordedDeaths: recordedDeaths,
+    // The scenarios where the corpus records a transport failure that this
+    // tree ANSWERED, and the restart each one triggered so the rest of the
+    // pass was compared from the fixture state the baseline recording
+    // continued from. The difference measured at the scenario itself is
+    // reported as a difference; this field is about everything after it.
+    stateRealignments: stateRealignments,
+    relaunchBudget: relaunchBudget,
+    relaunches: relaunches,
+    // What the capture recorded about its own ordering, and what this pass did
+    // with it. A reader comparing two runs needs to see that both reseeded
+    // before the same cases, because a difference in this field explains a
+    // difference in every destructive case at once.
+    reseedBeforeDestructive: reseedBeforeDestructive,
+    reseeds: reseeds,
+    undriven: undriven,
+    evidence: evidence,
+    warnings: warnings,
+    ordering: describeOrdering(scenarios)
+  };
+}
+
+/**
+ * The launcher options for one pass.
+ *
+ * `secure` is the whole difference between the two passes. The fake Google
+ * client is the same explicit top layer capture.js applies, because without it
+ * the OAuth handlers short-circuit to a different branch than the one the
+ * corpus recorded.
+ *
+ * @param {Object} options
+ * @param {string} passName
+ * @param {string} s3SeedPath
+ * @returns {Object}
+ */
+/**
+ * Applies the seeder's published OAuth identity map, here and in the child.
+ *
+ * `test/parity/seed.js` creates the two OAuth accounts and exports
+ * `oauthIdentities` in exactly the shape `setIdentityEmails()` takes;
+ * `test/parity/fixtures/http.js` serves whichever addresses it holds. Two
+ * copies of an address that must be equal is a contract nothing enforces, and
+ * it had already drifted once - the fixture served an address the seeder never
+ * created, so the profile named `oauth:success-existing-user` drove the
+ * new-user branch and the existing-user branch went unexercised while
+ * appearing to be covered.
+ *
+ * So the map is applied rather than assumed, in both processes that need it:
+ * here, because this file constructs scenarios from `httpFixture.identities`,
+ * and in the application through PARITY_HTTP_IDENTITIES, which the fixture
+ * reads at load. The seeder may not be required by the preload itself - it
+ * pulls lib/models/**, and therefore mongoose-schema-extend, into whatever
+ * process loads it - which is exactly why the value travels as an environment
+ * variable rather than as a require.
+ *
+ * @returns {Object} the environment pair the launcher passes to the child
+ */
+function alignIdentitiesToSeeder() {
+  var published = seed.oauthIdentities || {};
+  var map = { existing: published.existing, new: published.new };
+
+  if (!map.existing || !map.new) {
+    throw new ToolError('test/parity/seed.js published no OAuth identity map, ' +
+      'so the http fixture cannot be aligned to the accounts the seeder ' +
+      'creates and the two OAuth database branches cannot be told apart');
+  }
+
+  httpFixture.setIdentityEmails(map);
+
+  return { PARITY_HTTP_IDENTITIES: JSON.stringify(map) };
+}
+
+function launcherOptions(options, passName, s3SeedPath) {
+  var launcher = {
+    appRoot: options.appRoot,
+    s3Seed: s3SeedPath,
+    // The identity map reaches the application here. `options.env` is applied
+    // last by the launcher, so this is additive to the fixture contract it
+    // builds.
+    env: alignIdentitiesToSeeder(),
+    secure: passName === PASS_SECURE,
+    host: options.host,
+    port: options.port,
+    database: options.database,
+    mongoUri: options.mongoUri,
+    // The required deprecation flags are added here rather than demanded of
+    // the caller. They are how the evidence is produced - a caller who forgot
+    // them wanted the gate, not a lecture - and a suppressor passed
+    // deliberately still surfaces in the audit and still fails the check. One
+    // value may be space-separated, so the list is flattened first.
+    nodeFlags: warningPolicy.childFlags(
+      options.nodeFlags.reduce(function(flat, entry) {
+        return flat.concat(warningPolicy.splitFlags(entry));
+      }, [])),
+    readyTimeoutMs: options.readyTimeoutMs,
+    config: mergeGoogleStub(options.config)
+  };
+
+  if (options.overlay !== undefined) {
+    launcher.overlay = options.overlay;
+  }
+
+  if (options.provisionMongo !== undefined) {
+    launcher.provisionMongo = options.provisionMongo;
+  }
+
+  if (options.runDir) {
+    launcher.runDir = path.join(options.runDir, passName);
+  }
+
+  return launcher;
+}
+
+/**
+ * Merges the fake Google client into a caller's own top configuration layer.
+ *
+ * A caller that supplies `app.auth.google` itself wins, because an explicit
+ * value is a decision; anything else keeps its own keys.
+ *
+ * @param {(Object|null)} supplied
+ * @returns {Object}
+ */
+function mergeGoogleStub(supplied) {
+  var out = { app: { auth: { google: GOOGLE_STUB } } };
+  var app;
+
+  if (!supplied) {
+    return out;
+  }
+
+  out = JSON.parse(JSON.stringify(supplied));
+  app = out.app = out.app || {};
+  app.auth = app.auth || {};
+
+  if (!app.auth.google) {
+    app.auth.google = GOOGLE_STUB;
+  }
+
+  return out;
+}
+
+/**
+ * The referer every request carries: the configured url, which is what the
+ * application itself would compute and what the suite's own requests send.
+ * Several handlers read it into the view metrics they persist, so it is part of
+ * the behaviour rather than decoration.
+ *
+ * @param {(Object|null)} info the launcher's start result
+ * @returns {string}
+ */
+function refererFor(info) {
+  var app = info && info.config && info.config.app ? info.config.app : null;
+  var url = app && app.url ? app.url : null;
+  var composed;
+
+  if (url && url.protocol && url.hostname) {
+    composed = url.protocol + '://' + url.hostname;
+
+    if (url.port) {
+      composed += ':' + url.port;
+    }
+
+    return composed;
+  }
+
+  return info ? info.baseUrl : '';
+}
+
+/**
+ * Whether any step of a scenario recorded a transport failure.
+ *
+ * @param {Object} result
+ * @returns {boolean}
+ */
+function sawTransportFailure(result) {
+  return (result.steps || []).some(function(step) {
+    return step.outcome === OUTCOME_TRANSPORT;
+  });
+}
+
+/**
+ * Whether the CORPUS records the transport failing on this scenario.
+ *
+ * Three baseline scenarios take the application down with them, and the
+ * corpus says so in the only way a recording can: the step's baseline record
+ * is a transport failure rather than a response. `POST /api/admin/user/{id}`
+ * asks `request.fail` to wrap a plain object and hoek's assertion escapes the
+ * handler frame; both `copy` routes throw inside a Mongoose save callback,
+ * which re-emits it as an unhandled `error` event. The target preserves all
+ * three deliberately (R-d, T-6), so the target dies there too.
+ *
+ * That makes a death at such a scenario a MATCH rather than a fault, and it is
+ * the one case in which the pass may continue: the comparison for the scenario
+ * itself is complete, and what follows was recorded against an application
+ * that had been restarted. Anywhere else a death means every later comparison
+ * is a transport failure that says nothing, which is why the caller still
+ * stops for one this predicate does not recognise.
+ *
+ * The predicate reads the recorded side ONLY. A target that dies where the
+ * baseline answered is not covered here and must remain a failure.
+ *
+ * @param {Object} item the planned scenario, carrying its baselines
+ * @returns {boolean}
+ */
+function baselineLostTransport(item) {
+  return (item.steps || []).some(function(step) {
+    return outcomeOf(step.baseline) === OUTCOME_TRANSPORT;
+  });
+}
+
+/**
+ * How many scenarios of this selection record a transport failure.
+ *
+ * The relaunch budget: one per scenario the corpus says takes the application
+ * down. A death at a scenario that records one is expected and is absorbed; a
+ * budget computed from the corpus rather than a constant means a run cannot
+ * loop restarting a server that is failing for some other reason.
+ *
+ * @param {Array.<Object>} scenarios
+ * @returns {number}
+ */
+function countRecordedDeaths(scenarios) {
+  return scenarios.filter(baselineLostTransport).length;
+}
+
+/**
+ * Folds the per-segment evidence documents of one pass into one document.
+ *
+ * A relaunch cannot share the dead segment's run directory: ./server truncates
+ * the captured logs AND the four fixture evidence files when a `--run-dir` is
+ * reused - deliberately, so one run's evidence is never appended to the last
+ * one's - so a second start into the same directory would erase the 380
+ * scenarios that had already been driven. Each segment therefore gets its own
+ * directory, its evidence is collected while that directory is still the
+ * current one, and the parts are added up here.
+ *
+ * Counts sum and the `countBy` maps merge key by key, which is what every
+ * consumer of this document reads: `accountAuthOutcomes` reconciles the armed
+ * steps of the auth lookup-error scenario against `modelFault.faulted` and
+ * `modelFault.byId`, and those records belong to whichever segment drove that
+ * scenario. Availability is an AND with the reasons collected, because a
+ * segment whose log could not be read is a gap in the evidence and not a
+ * detail to average away.
+ *
+ * @param {Array.<Object>} docs one per segment, in the order they ran
+ * @returns {Object} an evidence document of the same shape
+ */
+function mergeEvidence(docs) {
+  var parts = (docs || []).filter(Boolean);
+  var out;
+
+  if (!parts.length) {
+    return {
+      available: false,
+      reason: 'no evidence was collected for this pass'
+    };
+  }
+
+  if (parts.length === 1) {
+    return parts[0];
+  }
+
+  out = {
+    available: parts.every(function(part) {
+      return part.available;
+    }),
+    reason: parts.filter(function(part) {
+      return !part.available;
+    }).map(function(part) {
+      return part.reason;
+    }).join('; ') || null,
+    // Named so a reader of the result document knows the counts below are a
+    // sum over restarts rather than one server's whole life.
+    segments: parts.length,
+    http: mergeEvidenceSection(parts, 'http', ['intercepted', 'malformedLines'],
+      ['byEndpoint', 'byProfile']),
+    mail: mergeEvidenceSection(parts, 'mail', ['captured', 'malformedLines'],
+      ['byType']),
+    s3: mergeEvidenceSection(parts, 's3', ['calls', 'malformedLines'],
+      ['byOperation']),
+    modelFault: mergeEvidenceSection(parts, 'modelFault',
+      ['records', 'malformedLines', 'faulted'], ['byEvent', 'byId'])
+  };
+
+  // Carried through unchanged: it is the fixture's declared send result, the
+  // same value in every segment, and summing or joining it would turn one
+  // fact into a list.
+  out.mail.expectedSendResult = parts[0].mail
+    ? parts[0].mail.expectedSendResult
+    : null;
+
+  // Each segment's object store is a different directory, so the stored
+  // objects are the union of the snapshots rather than one listing. The
+  // segment is recorded on every entry, because a key written before a
+  // relaunch and a key written after it are in different stores and a reader
+  // comparing them needs to know that.
+  out.s3.stored = {
+    available: parts.every(function(part) {
+      return part.s3 && part.s3.stored && part.s3.stored.available;
+    }),
+    objects: parts.reduce(function(all, part, position) {
+      var stored = part.s3 && part.s3.stored ? part.s3.stored : null;
+
+      return all.concat(((stored && stored.objects) || []).map(function(entry) {
+        var copy = JSON.parse(JSON.stringify(entry));
+
+        copy.segment = position + 1;
+
+        return copy;
+      }));
+    }, []),
+    errors: parts.reduce(function(all, part) {
+      var stored = part.s3 && part.s3.stored ? part.s3.stored : null;
+
+      return all.concat((stored && stored.errors) || []);
+    }, []),
+    reason: parts.filter(function(part) {
+      return part.s3 && part.s3.stored && !part.s3.stored.available;
+    }).map(function(part) {
+      return part.s3.stored.reason;
+    }).join('; ') || null
+  };
+
+  return out;
+}
+
+/**
+ * Adds up one named section of several evidence documents.
+ *
+ * @param {Array.<Object>} parts the per-segment documents
+ * @param {string} section the key to fold
+ * @param {Array.<string>} counters numeric fields to sum
+ * @param {Array.<string>} maps `countBy` fields to merge
+ * @returns {Object} the folded section
+ */
+function mergeEvidenceSection(parts, section, counters, maps) {
+  var present = parts.map(function(part) {
+    return part[section] || null;
+  });
+  var out = {
+    available: present.every(function(entry) {
+      return entry && entry.available;
+    }),
+    reason: present.filter(function(entry) {
+      return !entry || !entry.available;
+    }).map(function(entry) {
+      return (entry && entry.reason) ||
+        'this segment collected no ' + section + ' evidence';
+    }).join('; ') || null
+  };
+
+  counters.forEach(function(field) {
+    out[field] = present.reduce(function(total, entry) {
+      return total + ((entry && entry[field]) || 0);
+    }, 0);
+  });
+
+  maps.forEach(function(field) {
+    out[field] = present.reduce(function(merged, entry) {
+      var source = (entry && entry[field]) || {};
+
+      Object.keys(source).forEach(function(key) {
+        merged[key] = (merged[key] || 0) + source[key];
+      });
+
+      return merged;
+    }, {});
+  });
+
+  return out;
+}
+
+/**
+ * Joins the captured stderr of every segment of one pass into one file.
+ *
+ * The warning gate judges "the application's stderr over this pass", and after
+ * a relaunch that stream is in two files. Judging only the last one would
+ * discard the segment in which almost everything ran - and it is the segment
+ * where a warning would appear - so the parts are concatenated, in order, each
+ * under a header naming the segment it came from. `noticesFromText` reads the
+ * lines it recognises and ignores the rest, so the headers cost nothing.
+ *
+ * A part that cannot be read is written into the combined file as a line
+ * saying so, and the failure to read it is left visible rather than silently
+ * dropping that segment's stream.
+ *
+ * @param {Array.<string>} paths the per-segment stderr paths, in order
+ * @param {string} target where to write the combined stream
+ * @returns {(string|null)} the path the gate should judge
+ */
+function combineStderrLogs(paths, target) {
+  var present = (paths || []).filter(Boolean);
+  var unreadable = [];
+  var text;
+
+  if (!present.length) {
+    return { path: null, complete: true, reason: null, segments: [] };
+  }
+
+  if (present.length === 1) {
+    return {
+      path: present[0],
+      complete: true,
+      reason: null,
+      segments: present.slice()
+    };
+  }
+
+  text = present.map(function(entry, position) {
+    var header = '--- segment ' + (position + 1) + ' of ' + present.length +
+      ' ---\n';
+
+    try {
+      return header + fs.readFileSync(entry, 'utf8');
+    }
+    catch (err) {
+      unreadable.push(entry + ' (' + reasonOf(err) + ')');
+
+      return header + 'this segment\'s captured stderr could not be read: ' +
+        reasonOf(err) + '\n';
+    }
+  }).join('');
+
+  // FAILS CLOSED, and this is the whole point of returning a document rather
+  // than a path. Returning the last segment on a write failure - which this
+  // did - handed `accountWarnings` a FRAGMENT of the run's stderr, which it
+  // then judged as though it were the run: a DEP0169 in the first segment
+  // with an empty final segment produced ok, qualifying, no notices and no
+  // failures. A pass that relaunches twice has three segments, so the corpus
+  // as delivered exercises exactly this path, and the message the tool
+  // printed about its own inability to fold decided nothing.
+  //
+  // An unreadable SEGMENT is the same fault by another route: what is judged
+  // is then a stream with a hole in it, and the hole is where a warning would
+  // have been. Both make the evidence incomplete, and incomplete evidence
+  // cannot qualify - the remedy is to re-run, which the reason names.
+  try {
+    fs.writeFileSync(target, text, { mode: 0o600 });
+  }
+  catch (err) {
+    return {
+      path: present[present.length - 1],
+      complete: false,
+      reason: 'the ' + present.length + ' stderr segments this pass produced ' +
+        'could not be combined at ' + target + ' (' + reasonOf(err) + '), so ' +
+        'only the last segment is readable and the earlier ' +
+        (present.length - 1) + ' are unjudged',
+      segments: present.slice()
+    };
+  }
+
+  return {
+    path: target,
+    complete: !unreadable.length,
+    reason: unreadable.length
+      ? unreadable.length + ' of the ' + present.length + ' stderr segments ' +
+        'this pass produced could not be read, so the combined stream has a ' +
+        'hole in it: ' + unreadable.join('; ')
+      : null,
+    segments: present.slice()
+  };
+}
+
+/**
+ * Seeds the fixtures, opens a cookie jar and establishes the sessions.
+ *
+ * Everything a started application needs before a scenario may be driven
+ * against it, in the order that matters: the seeder runs after the server is
+ * up and is awaited for the pipe-starvation reason on `seedFixtures`, and the
+ * sessions are established before any case is driven, because a case driven as
+ * an identity with no session is compared against a recording made with one.
+ *
+ * Extracted from `runPass` so a relaunch brings the application to the same
+ * state by the same code path rather than a second, drifting copy of it. The
+ * `from` index is what the relaunch needs: only the identities the REMAINING
+ * scenarios use have to be logged in again, and a login is a request.
+ *
+ * @param {Object} info the launcher's start result
+ * @param {Object} options the run's options
+ * @param {Array.<Object>} scenarios the pass's scenarios
+ * @param {number} from the first index still to be driven
+ * @returns {Promise<Object>} {seeded, jar, sessions}
+ * @throws {ToolError} if the fixtures could not be seeded
+ */
+async function prepareApplicationState(info, options, scenarios, from) {
+  var seeded = await seedFixtures(info);
+  var jar;
+  var sessions;
+
+  if (!seeded.ok) {
+    throw new ToolError('the fixtures could not be seeded, so every ' +
+      'scenario would be compared against a database the corpus was not ' +
+      'recorded against: ' + seeded.reason);
+  }
+
+  note('seeded the fixtures (' + seeded.summary + ')');
+
+  jar = new Jar({
+    baseUrl: info.baseUrl,
+    referer: refererFor(info),
+    timeoutMs: options.timeoutMs
+  });
+
+  sessions = await establishSessions(jar, scenarios.slice(from));
+
+  return { seeded: seeded, jar: jar, sessions: sessions };
+}
+
+/**
+ * Restarts the application after a death the corpus records, and re-seeds it.
+ *
+ * Called only when `baselineLostTransport` recognised the scenario, so this is
+ * recovery from an EXPECTED death and not a retry of a failure. It has TWO
+ * callers and they are mutually exclusive per scenario, which is why one
+ * budget covers both: the death branch, where this tree went down as the
+ * recording did, and the state-realignment branch, where this tree ANSWERED
+ * the request that took the baseline down. The second needs the identical
+ * six steps for the identical reason - the recording continued from a
+ * restarted, re-seeded application, so everything after that point is only
+ * comparable against the same fixture state - and the only difference is that
+ * there is no live process to mourn, so step 2 stops a healthy child instead
+ * of releasing a dead one's descriptors.
+ *
+ * The order is fixed by what each step needs:
+ *
+ * 1. The dying segment's evidence is collected FIRST, while its run directory
+ *    is still the current one. After the new start it is unreachable through
+ *    `info`, and ./server truncates a reused directory's logs.
+ * 2. The launcher is stopped rather than abandoned. The child is already gone,
+ *    so ./server's kill path is skipped and no teardown fault is recorded, but
+ *    the descriptors, the PID file and the provisioned database are released -
+ *    and a database left running would be leaked for the rest of the process.
+ * 3. MongoDB's own teardown records are folded in before the next start,
+ *    because ./server's `startInternal` clears them.
+ * 4. The new segment gets its own run directory.
+ * 5. The port must not move. The corpus embeds absolute origins captured on
+ *    the port it was recorded on, so a relaunch that landed elsewhere would
+ *    compare a body full of one origin against a body full of another; that is
+ *    refused here rather than reported 137 times as a body difference.
+ * 6. The state is rebuilt through `prepareApplicationState`, which re-seeds a
+ *    freshly provisioned database and logs the remaining identities back in.
+ *    The sessions are Mongo-backed, so the jar's old cookies name sessions in
+ *    a database that no longer exists and a new jar is required.
+ *
+ * Re-seeding is also the more faithful comparison, not a compromise: each of
+ * these scenarios was CAPTURED in its own run, against a freshly seeded
+ * database, because the baseline application died the moment it was driven.
+ *
+ * Never throws. A relaunch that cannot be completed comes back as
+ * `{ok: false}` with its reason, and the caller then treats the death exactly
+ * as it treats an unexpected one.
+ *
+ * @param {Object} spec {passName, options, scenarios, index, item, info,
+ *   s3SeedPath, attempt}
+ * @returns {Promise<Object>} {ok, evidence, info, seeded, jar, sessions,
+ *   reason, runDir}
+ */
+async function relaunchAfterRecordedDeath(spec) {
+  var evidence = collectEvidence(spec.info);
+  var previousBaseUrl = spec.info ? spec.info.baseUrl : null;
+  var launcher;
+  var info;
+  var prepared;
+
+  await foldStop('stop the application after a recorded death', server,
+    'test/parity/server.js', 'test/parity/server.js');
+
+  mongo.cleanupFailures().forEach(function(entry) {
+    recordCleanupFailure(entry.operation + ' (test/parity/mongo.js)',
+      entry.message);
+  });
+
+  launcher = launcherOptions(spec.options, spec.passName, spec.s3SeedPath);
+
+  if (launcher.runDir) {
+    launcher.runDir = launcher.runDir + '.relaunch-' + spec.attempt;
+  }
+
+  try {
+    info = await server.start(launcher);
+  }
+  catch (err) {
+    return {
+      ok: false,
+      evidence: evidence,
+      info: null,
+      reason: 'the application could not be restarted: ' + reasonOf(err)
+    };
+  }
+
+  if (previousBaseUrl && info.baseUrl !== previousBaseUrl) {
+    return {
+      ok: false,
+      evidence: evidence,
+      info: info,
+      runDir: info.runDir,
+      reason: 'the restarted application answers on ' + info.baseUrl +
+        ' rather than ' + previousBaseUrl + ', and the corpus embeds the ' +
+        'origin it was recorded on, so every remaining comparison would ' +
+        'differ in the address and not in the behaviour'
+    };
+  }
+
+  try {
+    prepared = await prepareApplicationState(info, spec.options, spec.scenarios,
+      spec.index + 1);
+  }
+  catch (err) {
+    return {
+      ok: false,
+      evidence: evidence,
+      info: info,
+      runDir: info.runDir,
+      reason: reasonOf(err)
+    };
+  }
+
+  return {
+    ok: true,
+    evidence: evidence,
+    info: info,
+    runDir: info.runDir,
+    seeded: prepared.seeded,
+    jar: prepared.jar,
+    sessions: prepared.sessions,
+    reason: null
+  };
+}
+
+/**
+ * Marks every scenario from `from` onwards as never reached.
+ *
+ * They share one cause, which is reported once, so the report does not carry
+ * three hundred identical lines that say nothing about the routes they name.
+ *
+ * @param {Array.<Object>} scenarios
+ * @param {number} from
+ * @param {string} reason
+ * @returns {Array.<Object>}
+ */
+function markRemainingUndriven(scenarios, from, reason) {
+  var out = [];
+  var index;
+
+  for (index = from; index < scenarios.length; index++) {
+    scenarios[index].result = {
+      driven: false,
+      compared: false,
+      skipped: false,
+      error: reason,
+      steps: [],
+      differences: [],
+      observations: [],
+      expectation: null,
+      deviation: null,
+      profileEvidence: null,
+      outcome: OUTCOME_MISSING,
+      neverReached: true
+    };
+
+    out.push({
+      id: scenarios[index].id,
+      reason: reason,
+      neverReached: true
+    });
+  }
+
+  return out;
+}
+
+/**
+ * Reports the read-only-before-mutating property of the replayed order.
+ *
+ * The order is the corpus's own and is never changed here - a mutation replayed
+ * early would change the fixture a later read-only case was recorded against,
+ * and the corpus is already ordered that way by its recorder. This is an
+ * observation about the artifact rather than a gate: a corpus that lost the
+ * property would produce differences, and those are what fail.
+ *
+ * @param {Array.<Object>} scenarios
+ * @returns {Object}
+ */
+function describeOrdering(scenarios) {
+  var lastReadOnly = -1;
+  var firstMutating = -1;
+
+  scenarios.forEach(function(item, index) {
+    if (item.mutating) {
+      if (firstMutating === -1) {
+        firstMutating = index;
+      }
+    }
+    else {
+      lastReadOnly = index;
+    }
+  });
+
+  return {
+    readOnly: scenarios.filter(function(item) { return !item.mutating; }).length,
+    mutating: scenarios.filter(function(item) { return item.mutating; }).length,
+    firstMutatingIndex: firstMutating,
+    lastReadOnlyIndex: lastReadOnly,
+    readOnlyBeforeMutating: firstMutating === -1 || lastReadOnly < firstMutating
+  };
+}
+
+/**
+ * One progress line per scenario, on stderr as it happens, so a long replay is
+ * observable while it runs and a stall is attributable to a case.
+ *
+ * @param {Object} item
+ * @param {number} index
+ * @param {number} total
+ * @returns {undefined}
+ */
+function reportScenario(item, index, total) {
+  var result = item.result;
+  var state;
+
+  if (result.skipped) {
+    state = 'unreachable-by-design';
+  }
+  else if (result.error) {
+    state = 'COULD NOT DRIVE: ' + result.error;
+  }
+  else if (!result.compared) {
+    state = result.outcome + ' (no baseline)';
+  }
+  else if (result.differences.length) {
+    state = result.differences.length + ' DIFFERENCE(S): ' +
+      result.differences.slice(0, 3).map(function(record) {
+        return record.field;
+      }).join(', ');
+  }
+  else {
+    state = 'match';
+  }
+
+  if (result.deviation) {
+    state += result.deviation.approved
+      ? ' [APPROVED DEVIATION]'
+      : ' [DEVIATION NOT AS APPROVED]';
+  }
+
+  if (result.expectation && !result.expectation.met) {
+    state += (result.baselineExpectation && result.baselineExpectation.met
+      ? ' [EXPECTATION NOT MET: '
+      : ' [expectation unmet by the recorded baseline too, so it is a corpus ' +
+        'finding rather than a replay failure: ') +
+      result.expectation.failures.join('; ') + ']';
+  }
+
+  note('[' + (index + 1) + '/' + total + '] ' + item.id + ' -> ' + state);
+}
+
+// ---------------------------------------------------------------------------
+// Classification and the verdict
+// ---------------------------------------------------------------------------
+
+var STATUS_MATCH       = 'match';
+var STATUS_APPROVED    = 'approved-deviation';
+// A scenario every one of whose differences is in the authorized register.
+// DISTINCT from STATUS_MATCH, deliberately: a page that gained a landmark and
+// three ids did not match its recording, and counting it as a match would make
+// the pass summary overstate what was compared. It is equally distinct from
+// STATUS_APPROVED, which belongs to the closed AAP §0.7 register.
+var STATUS_AUTHORIZED  = 'authorized-difference';
+var STATUS_DIFFERENCE  = 'difference';
+var STATUS_UNDRIVEN    = 'undriven';
+var STATUS_UNREACHABLE = 'unreachable-by-design';
+var STATUS_NO_BASELINE = 'no-baseline';
+
+/**
+ * Classifies one replayed scenario.
+ *
+ * Six outcomes and only one of them is a pass with differences: an approved
+ * deviation, whose marker was checked against what the deviation was approved
+ * to BE. Under --self-check even that is a failure, because the tree under test
+ * is the tree the corpus came from and against it nothing may differ.
+ *
+ * @param {Object} item
+ * @param {Object} options
+ * @returns {Object} {status, failing, reason}
+ */
+function classifyScenario(item, options) {
+  var result = item.result;
+
+  if (!result) {
+    return {
+      status: STATUS_UNDRIVEN,
+      failing: true,
+      reason: 'the scenario was never run'
+    };
+  }
+
+  if (result.skipped) {
+    return {
+      status: STATUS_UNREACHABLE,
+      failing: !item.unreachableReason,
+      reason: item.unreachableReason ||
+        'the scenario has no steps and carries no stated reason, so the gap ' +
+        'cannot be reviewed'
+    };
+  }
+
+  if (!result.driven || result.error) {
+    return {
+      status: STATUS_UNDRIVEN,
+      failing: true,
+      reason: result.error || 'the scenario could not be driven'
+    };
+  }
+
+  if (!result.compared) {
+    return {
+      status: STATUS_NO_BASELINE,
+      failing: true,
+      reason: 'no step of this scenario carries a recorded response, so ' +
+        'nothing was compared. Capture a baseline with capture.js; replay ' +
+        'never records one.'
+    };
+  }
+
+  // ONE decision path owns the deviation, and it is resolved BEFORE the
+  // declared expectation and before the differences. Both parts of that order
+  // are load-bearing. A scenario carrying an approved deviation is one whose
+  // recorded baseline expectation the target is EXPECTED to violate - that
+  // violation IS the deviation - so evaluating the expectation first would fail
+  // every approved change before its marker was ever consulted. And a marker on
+  // a scenario that did not change at all is a failure too, which
+  // `verifyApprovedDeviation` already reports as an unmet contract ("the
+  // approved deviation did NOT materialize"), so the no-difference case needs
+  // no branch of its own here.
+  //
+  // `result.deviation` is set by runScenario exactly when the scenario carries
+  // a marker and this is not a --self-check run, so this block covers every
+  // case in which a deviation can be approved. It is therefore the only place
+  // these two verdicts are produced: a branch further down testing the same
+  // conditions would be unreachable, because they have already returned here.
+  if (result.deviation && !options.selfCheck) {
+    if (result.deviation.approved) {
+      return {
+        status: STATUS_APPROVED,
+        failing: false,
+        reason: 'approved by ' +
+          (item.expectedDeviation.approvedBy || 'its marker') +
+          ' under rule ' + (item.expectedDeviation.rule || '(unstated)') +
+          (result.expectation && !result.expectation.met
+            ? '. The scenario\'s declared baseline expectation is no longer ' +
+              'met, which is what the deviation changed: ' +
+              result.expectation.failures.join('; ')
+            : '')
+      };
+    }
+
+    return {
+      status: STATUS_DIFFERENCE,
+      failing: true,
+      reason: 'the scenario carries an approved-deviation marker but what ' +
+        'happened is not what was approved: ' +
+        result.deviation.failures.join('; ')
+    };
+  }
+
+  // THE AUTHORIZED REGISTER, resolved BEFORE the declared expectation and
+  // before the difference count, and the order is load-bearing for the same
+  // reason it is for the deviation above.
+  //
+  // A declared expectation describes the BASELINE, so a scenario whose
+  // rendered output an order-0 remediation deliberately changed will violate
+  // it - measured, on the three multipart-upload client contracts, whose
+  // recorded expectation is the 415 that R1 exists to have stopped happening.
+  // Evaluating the expectation first would therefore fail every authorized
+  // change before the register was consulted, exactly as it would every
+  // approved deviation.
+  //
+  // This is NOT a wildcard. It fires only when the scenario has at least one
+  // authorized difference and NO unauthorized one, and every authorized
+  // difference was matched against a register record pinning both of its
+  // values verbatim. A scenario with one unauthorized difference falls
+  // through to the branches below and fails there, expectation reason and all.
+  if (result.authorizedDifferences.length && !result.differences.length &&
+      !options.selfCheck) {
+    return {
+      status: STATUS_AUTHORIZED,
+      failing: false,
+      reason: result.authorizedDifferences.length + ' difference(s), every ' +
+        'one of them in the authorized register: ' +
+        authorizedFindingSummary(result.authorizedDifferences) +
+        (result.expectation && !result.expectation.met
+          ? '. The scenario\'s declared baseline expectation is no longer met, ' +
+            'which is what the authorized change changed: ' +
+            result.expectation.failures.join('; ')
+          : '')
+    };
+  }
+
+  if (result.expectation && !result.expectation.met &&
+      result.baselineExpectation && result.baselineExpectation.met) {
+    return {
+      status: STATUS_DIFFERENCE,
+      failing: true,
+      reason: 'the recorded baseline meets this scenario\'s declared ' +
+        'expectation and the target does not: ' +
+        result.expectation.failures.join('; ')
+    };
+  }
+
+  if (!result.differences.length) {
+    return { status: STATUS_MATCH, failing: false, reason: null };
+  }
+
+  if (item.expectedDeviation && options.selfCheck) {
+    return {
+      status: STATUS_DIFFERENCE,
+      failing: true,
+      reason: '--self-check declares the tree under test to be the tree the ' +
+        'corpus was captured from, so the approved deviation must NOT ' +
+        'materialize here and this difference is a failure'
+    };
+  }
+
+  if (!item.expectedDeviation) {
+    return {
+      status: STATUS_DIFFERENCE,
+      failing: true,
+      reason: options.annotations
+        ? 'the scenario carries no approved-deviation marker in the corpus or ' +
+          'in the annotations, and its id is not one of the ' +
+          APPROVED_DEVIATION_IDS.length + ' the closed register names, so no ' +
+          'marker could be projected from the register either'
+        : 'the scenario carries no approved-deviation marker. A CAPTURED ' +
+          'corpus does not carry one - capture.js does not emit it - so if ' +
+          'this difference is the approved deviation, join the markers back ' +
+          'on with --annotations test/parity/corpus.json.'
+    };
+  }
+
+  // The default, and the only case left: a scenario carrying a marker whose
+  // contract was never evaluated. runScenario evaluates one for every marker
+  // outside --self-check, so this is unreachable through the CLI and is kept as
+  // the closing verdict rather than removed - a caller assembling a result
+  // itself must not fall out of this function without one, and the safe answer
+  // to "a difference with no verified approval" is that it is not approved.
+  return {
+    status: STATUS_DIFFERENCE,
+    failing: true,
+    reason: 'the difference carries a marker whose contract was not ' +
+      'evaluated, so it is not approved'
+  };
+}
+
+/**
+ * The findings behind a scenario's authorized differences, with counts.
+ *
+ * Rendered into the classification reason so a reader of the progress line or
+ * the scenario table sees WHY the scenario did not fail, without opening the
+ * register.
+ *
+ * @param {Array.<Object>} records the authorized differences of one scenario
+ * @returns {string}
+ */
+function authorizedFindingSummary(records) {
+  var counts = {};
+
+  records.forEach(function(record) {
+    counts[record.finding] = (counts[record.finding] || 0) + 1;
+  });
+
+  return Object.keys(counts).sort().map(function(finding) {
+    return counts[finding] + ' x ' + finding;
+  }).join('; ');
+}
+
+/**
+ * Builds the whole result document for one pass, including its gates.
+ *
+ * @param {Object} pass the pass document from runPass
+ * @param {Object} plan
+ * @param {Object} manifestDocument
+ * @param {Object} options
+ * @param {boolean} selectionComplete whether every corpus scenario ran in this
+ *   pass, which is what conditions the coverage gate
+ * @param {Object} corpus the corpus document, for manifest key equality
+ * @returns {Object}
+ */
+function accountPass(pass, plan, manifestDocument, options, selectionComplete,
+  corpus, authorization) {
+  var scenarios = plan.scenarios;
+  var classified = [];
+  var differences = [];
+  var observations = [];
+  var approved = [];
+  var authorizedDifferences = [];
+  var authorizedByFinding = {};
+  var authorizedByField = {};
+  var authorizedScenarios = 0;
+  var authorizedTotal = 0;
+  var unauthorizedTotal = 0;
+  var register = (authorization && authorization.register) ||
+    { present: false, path: null, records: [], authorities: [] };
+  var matcher = (authorization && authorization.matcher) || null;
+  var counts = {};
+  var checks = [];
+  var coverage = accountCoverage(manifestDocument.entries, scenarios);
+  // The archive containers this pass opened, collected before the checks below
+  // so the named check and the artifact read from one list.
+  var archives = accountArchives(scenarios);
+  var failing = 0;
+
+  scenarios.forEach(function(item) {
+    var verdict = classifyScenario(item, options);
+    var record = {
+      id: item.id,
+      group: item.group,
+      route: item.routeKey,
+      identity: item.identity,
+      intent: item.intent,
+      fixtureProfile: item.fixtureProfile,
+      status: verdict.status,
+      failing: verdict.failing,
+      reason: verdict.reason,
+      differences: item.result ? item.result.differences.length : 0,
+      markerSource: item.markerSource
+    };
+
+    counts[verdict.status] = (counts[verdict.status] || 0) + 1;
+    classified.push(record);
+
+    // Accounted for EVERY scenario, before the classification branches below
+    // return: a scenario can carry authorized differences and still fail on an
+    // unauthorized one, and a reader has to see both halves of it. The listing
+    // is bounded per scenario exactly as the unauthorized listing is, while the
+    // counts are complete.
+    if (item.result && (item.result.authorizedDifferences || []).length) {
+      authorizedScenarios += 1;
+      authorizedTotal += item.result.authorizedDifferences.length;
+      record.authorizedDifferences = item.result.authorizedDifferences.length;
+
+      item.result.authorizedDifferences.forEach(function(entry) {
+        authorizedByFinding[entry.finding] =
+          (authorizedByFinding[entry.finding] || 0) + 1;
+        authorizedByField[String(entry.field).replace(/\[[0-9]+\]/g, '[]')] =
+          (authorizedByField[String(entry.field).replace(/\[[0-9]+\]/g, '[]')] || 0) + 1;
+      });
+
+      authorizedDifferences = authorizedDifferences.concat(
+        item.result.authorizedDifferences.slice(0, MAX_DIFFERENCES_PER_STEP));
+    }
+
+    if (item.result) {
+      unauthorizedTotal += (item.result.differences || []).length;
+    }
+
+    if (verdict.failing) {
+      failing++;
+    }
+
+    if (verdict.status === STATUS_APPROVED) {
+      approved.push({
+        id: item.id,
+        route: item.routeKey,
+        approvedBy: item.expectedDeviation.approvedBy || null,
+        rule: item.expectedDeviation.rule || null,
+        baseline: item.expectedDeviation.baseline || null,
+        target: item.expectedDeviation.target || null,
+        reason: item.expectedDeviation.reason || null,
+        markerSource: item.markerSource.expectedDeviation,
+        verified: item.result.deviation.verified,
+        differences: item.result.differences
+      });
+      return;
+    }
+
+    if (item.result && item.result.differences.length && verdict.failing) {
+      differences = differences.concat(
+        item.result.differences.slice(0, MAX_DIFFERENCES_PER_STEP));
+
+      if (item.result.differences.length > MAX_DIFFERENCES_PER_STEP) {
+        differences.push({
+          scenario: item.id,
+          group: item.group,
+          route: item.routeKey,
+          step: '(summary)',
+          field: '(further differences)',
+          baselineValue: null,
+          targetValue: null,
+          note: item.result.differences.length - MAX_DIFFERENCES_PER_STEP +
+            ' further difference(s) in this scenario are counted but not ' +
+            'enumerated. The count is complete and the verdict is unaffected; ' +
+            'only the listing is bounded, so one restructured page cannot ' +
+            'fill the report.'
+        });
+      }
+    }
+
+    if (item.result) {
+      observations = observations.concat(item.result.observations);
+    }
+  });
+
+  checks.push(accountAuthOutcomes(scenarios, selectionComplete,
+    pass.evidence));
+  checks.push(accountHeaderResolvedChains(scenarios, selectionComplete));
+  checks.push(accountGuestBrowsing(manifestDocument.entries, scenarios,
+    selectionComplete));
+  checks.push(accountFixtureProfiles(scenarios, selectionComplete));
+  // Each of the four accounting checks above is pushed ONCE, with the full
+  // argument list its definition declares. A second push in a shorter form is
+  // not a harmless duplicate: `accountAuthOutcomes(scenarios)` leaves
+  // `evidence` undefined, so `checkInjectedFaults` takes the "this pass
+  // collected no fault evidence at all" branch and reports the injected faults
+  // NOT CONFIRMED while the pass's own `evidence.modelFault` records them. A
+  // duplicate reaching a different verdict from the same data makes the
+  // auth-outcome gate unpassable.
+  // The warning check is re-judged here rather than in runPass, because the
+  // breadth this exercise requires - the whole route surface, more than one
+  // identity, methods beyond GET, and the worker - is only known
+  // once coverage has been accounted. `pass.warnings` is replaced by the
+  // re-judged document so there is exactly one warning check in the report.
+  pass.warnings = qualifyWarningEvidence(pass.warnings, coverage, scenarios,
+    selectionComplete, readWorkerEvidence(options.workerEvidence,
+      pass.appHead, options.diagnostic || options.allowUnreviewedCorpus));
+  checks.push(pass.warnings);
+  checks.push(accountArchiveCheck(archives));
+  // The register's own check. It fails on a record that did not materialize,
+  // which is what stops a stale register from making the gate easier to pass.
+  checks.push(accountAuthorizedRegister(matcher, register, authorizedTotal,
+    unauthorizedTotal));
+  // And the harness origin: a pass whose reconciled occurrences carried more
+  // than one port besides the live one saw the application name two different
+  // ports for itself, which is a behaviour difference rather than a harness
+  // artifact.
+  checks.push(accountHarnessOrigin(pass.harnessOrigin));
+  // And the second pairwise reconciliation, re-audited from the values the
+  // artifact carries rather than trusted: see `accountHeldBackShortCodes`.
+  checks.push(accountHeldBackShortCodes(pass.heldBackShortCodes));
+  checks.push(accountCoverageCheck(coverage, selectionComplete));
+  checks.push(accountManifestCardinality(manifestDocument, corpus,
+    selectionComplete));
+  checks.push(accountDeclaredExpectations(scenarios));
+
+  return {
+    pass: pass,
+    coverage: coverage,
+    archives: archives,
+    scenarios: classified,
+    counts: sortedKeys(counts),
+    failingScenarios: failing,
+    differences: differences,
+    observations: observations,
+    approvedDeviations: approved,
+    // The authorized half, stated as its own account rather than folded into a
+    // bare PASS: how many differences were authorized, per finding and per
+    // comparison field, how many scenarios carried one, and how many
+    // differences were NOT authorized. `failingScenarios` above counts only
+    // the unauthorized ones, which is the whole point of the split.
+    authorized: {
+      registerPresent: !!register.present,
+      registerPath: register.path || null,
+      registeredForThisPass: matcher ? matcher.records.length : 0,
+      matched: matcher ? matcher.matchedCount() : 0,
+      differences: authorizedTotal,
+      unauthorizedDifferences: unauthorizedTotal,
+      scenarios: authorizedScenarios,
+      byFinding: sortedKeys(authorizedByFinding),
+      byField: sortedKeys(authorizedByField),
+      listing: authorizedDifferences,
+      stale: matcher ? matcher.stale() : []
+    },
+    checks: checks,
+    failingChecks: checks.filter(function(check) {
+      return !check.ok;
+    }).map(function(check) {
+      return check.name;
+    })
+  };
+}
+
+/**
+ * Every archive container this pass opened, as committed evidence.
+ *
+ * WHY IT IS IN THE ARTIFACT. The raw digest of these containers is exempt as a
+ * clock read, so the evidence that they were compared at all is the structural
+ * read - and a reviewer asked to accept a registered container change should be
+ * able to diff the entry table and the writer profile out of two artifacts
+ * rather than re-run the tool and take its word for it. The record is bounded
+ * by the number of archive responses in the corpus, which is small, and by the
+ * reader's own entry cap.
+ *
+ * The comparison verdicts here come from `describeArchiveComparison`, the same
+ * function `compareBody` reports from, so the evidence and the verdict cannot
+ * disagree.
+ *
+ * @param {Array.<Object>} scenarios the planned scenarios, driven
+ * @returns {Array.<Object>}
+ */
+function accountArchives(scenarios) {
+  var records = [];
+
+  scenarios.forEach(function(item) {
+    var driven = item.result ? item.result.steps : [];
+
+    (item.steps || []).forEach(function(step, index) {
+      var observedStep = driven[index] || null;
+      var observed = observedStep ? observedStep.observed : null;
+      var contentType = observed && observed.headers
+        ? observed.headers['content-type']
+        : null;
+      var comparison;
+
+      if (!observed || !observed.body) {
+        return;
+      }
+
+      // The BODIES, not the response records: `describeArchiveComparison`
+      // reads `archive` off the body, which is where `drive` attaches it.
+      comparison = describeArchiveComparison(
+        step.baseline ? step.baseline.body : null, observed.body, {
+          contentType: contentType,
+          routeKey: item.routeKey
+        });
+
+      if (!comparison) {
+        return;
+      }
+
+      records.push(Object.assign({
+        scenario: item.id,
+        group: item.group,
+        route: item.routeKey,
+        identity: step.identity || item.identity,
+        step: step.label,
+        stepIndex: index,
+        target: step.target,
+        recordedDigest: step.baseline && step.baseline.body
+          ? step.baseline.body.digest
+          : null,
+        observedDigest: observed.body.digest,
+        digestExempt: true
+      }, comparison));
+    });
+  });
+
+  return records;
+}
+
+/**
+ * The archive-container gate, as a named check.
+ *
+ * Separate from the difference list on purpose: the differences say what moved
+ * and this says whether the containers this pass served were structurally
+ * compared at all. A pass that served an archive nobody could read, or one on a
+ * route the register does not name, fails here as well as there - and a pass
+ * that served archives and compared every one of them says so, which is what
+ * makes the raw-digest exemption auditable from the artifact.
+ *
+ * @param {Array.<Object>} archives as accountArchives produces
+ * @returns {Object}
+ */
+function accountArchiveCheck(archives) {
+  var failures = [];
+  var compared = 0;
+  var againstRecording = 0;
+  var againstPin = 0;
+  var unrecorded = 0;
+  var uncompared = 0;
+
+  archives.forEach(function(record) {
+    if (record.state === 'no-summary' || record.state === 'unreadable') {
+      failures.push(record.scenario + ' served an archive this run could not ' +
+        'read (' + record.state + '): ' + record.reason);
+      return;
+    }
+
+    if (record.state !== 'parsed') {
+      return;
+    }
+
+    if (record.recordingFingerprintState !== 'recorded') {
+      unrecorded++;
+    }
+
+    if (!record.profileComparison || !record.profileComparison.ok) {
+      failures.push(record.scenario + '\'s container does not match the ' +
+        'writer profile registered for ' +
+        (record.writer || record.route || '(no route)') + ': ' +
+        (record.profileComparison
+          ? record.profileComparison.mismatches.map(function(entry) {
+            return entry.field;
+          }).join(', ')
+          : '(no comparison)'));
+      return;
+    }
+
+    if (record.fingerprintComparison === 'differs') {
+      failures.push(record.scenario + '\'s archive fingerprint differs from ' +
+        'the recording');
+      return;
+    }
+
+    if (record.fingerprintComparison === 'differs-from-register-pin') {
+      // BOTH DIGESTS IN FULL, not the 16-character prefix a report elsewhere
+      // uses for a raw digest: two fingerprints that differ in their last
+      // byte share every leading character, so a truncated pair reads as
+      // identical and the failure becomes unactionable. Measured on the
+      // negative control, which perturbed exactly those two digits.
+      failures.push(record.scenario + '\'s archive fingerprint differs from ' +
+        'the pin registered for ' + (record.writer || record.route) + ' in ' +
+        'ARCHIVE_CONTAINER_REGISTER: pinned ' + record.pinnedFingerprint +
+        ', measured ' + record.fingerprint + '. The container\'s CONTENTS ' +
+        'changed, which the content-independent writer profile cannot see ' +
+        'and the exempt raw digest cannot distinguish from the clock. ' +
+        'Re-measure and re-approve the pin if the change is intended, or fix ' +
+        'test/parity/seed.js if the fixtures moved');
+      return;
+    }
+
+    // THE COVERAGE ASSERTION, and the reason it is a failure rather than a
+    // note. This check exists to say the containers were compared; a
+    // container on a REGISTERED archive route whose fingerprint was held
+    // against neither a recording nor a pin was not compared in the one
+    // category that moves with content, and a comparator that cannot fail in
+    // a category is not comparing it. The startup probe
+    // `every-registered-writer-declares-a-complete-content-pin` makes this
+    // unreachable through the committed register, which is exactly why it is
+    // asserted here too: a writer added without a pin fails the run instead
+    // of quietly widening the gate.
+    if (record.fingerprintComparedAgainst !== 'recording' &&
+        record.fingerprintComparedAgainst !== 'register-pin') {
+      uncompared++;
+
+      if (record.writer) {
+        failures.push(record.scenario + ' served an archive on the registered ' +
+          'route ' + record.route + ' (writer ' + record.writer + ') and its ' +
+          'entry-table fingerprint was compared against NOTHING - the ' +
+          'recording carries none and the register declares no pin. The raw ' +
+          'digest of this content type is exempt as a clock read, so with no ' +
+          'fingerprint comparison the container\'s contents are uncovered. ' +
+          'Register a `pinned` block measured from a driven run, or ' +
+          're-capture the corpus with the archive block present');
+      }
+      else {
+        failures.push(record.scenario + ' served an archive on ' + record.route +
+          ', which ARCHIVE_CONTAINER_REGISTER does not name, so neither its ' +
+          'writer profile nor its contents are pinned. An archive route ' +
+          'nobody registered is an archive nobody covered');
+      }
+
+      return;
+    }
+
+    compared++;
+
+    if (record.fingerprintComparedAgainst === 'recording') {
+      againstRecording++;
+    }
+    else {
+      againstPin++;
+    }
+  });
+
+  return {
+    name: 'archive containers',
+    ok: !failures.length,
+    // The number the report prints: how many containers were structurally
+    // compared, which is the claim this check makes.
+    asserted: compared,
+    what: 'Every archive container served in this pass was opened and ' +
+      'compared structurally - its writer profile against the frozen ' +
+      'expectation in ARCHIVE_CONTAINER_REGISTER, and its entry-table ' +
+      'fingerprint against the recording where the recording carries one and ' +
+      'against the register\'s pinned measurement where it does not. Both ' +
+      'produce a real difference and a non-zero exit, and an archive on a ' +
+      'registered route that ends compared against neither fails here. This ' +
+      'is what covers the raw-digest exemption the timestamps category ' +
+      'declares for these content types.',
+    archives: archives.length,
+    structurallyCompared: compared,
+    fingerprintComparedAgainstRecording: againstRecording,
+    fingerprintComparedAgainstRegisterPin: againstPin,
+    // The corpus-side truth, kept as its own number: it says how many
+    // containers the committed corpus holds no fingerprint for, which is what
+    // a re-capture would change. It is NOT a count of uncompared containers -
+    // those are `fingerprintUncompared`, and any of them fails this check.
+    fingerprintNotInRecording: unrecorded,
+    fingerprintUncompared: uncompared,
+    note: unrecorded
+      ? unrecorded + ' of the ' + archives.length + ' container(s) carry no ' +
+        'fingerprint in the recording - the committed corpus records a binary ' +
+        'body as a length and a digest and predates the field - so their ' +
+        'fingerprints were compared against the pinned measurement in ' +
+        'ARCHIVE_CONTAINER_REGISTER instead, exactly, with a mismatch failing ' +
+        'this check. ' + againstPin + ' of them were gated that way. The ' +
+        'corpus-side gap is real and remains open: a corpus captured with the ' +
+        'archive block present is compared against the recording instead, and ' +
+        'the pin stands aside with no change to this file.'
+      : null,
+    failures: failures
+  };
+}
+
+/**
+ * The coverage gate, as a named check.
+ *
+ * @param {Object} coverage
+ * @param {boolean} selectionComplete whether every corpus scenario ran
+ * @returns {Object}
+ */
+function accountCoverageCheck(coverage, selectionComplete) {
+  var failures = [];
+
+  if (coverage.unknownRoutes.length) {
+    failures.push(coverage.unknownRoutes.length + ' scenario route key(s) are ' +
+      'not in the manifest, which means the corpus and the route surface are ' +
+      'out of step: ' + coverage.unknownRoutes.join(', '));
+  }
+
+  if (coverage.unrepresented.length) {
+    if (selectionComplete) {
+      failures.push(coverage.unrepresented.length + ' of ' + coverage.routes +
+        ' route(s) have no scenario in this replay. Every route must be ' +
+        'represented, or listed as unreachable with a reason: ' +
+        coverage.unrepresented.join(', '));
+    }
+  }
+
+  return {
+    name: 'route coverage',
+    asserted: coverage.routes,
+    ok: !failures.length,
+    skipped: false,
+    reason: coverage.unrepresented.length && !selectionComplete
+      ? coverage.unrepresented.length + ' route(s) are outside this narrowed ' +
+        'selection and are therefore not failed here. A narrowed run cannot ' +
+        'stand as the coverage gate.'
+      : null,
+    entries: coverage.unrepresented,
+    failures: failures
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Orchestration
+// ---------------------------------------------------------------------------
+
+/**
+ * Replays the corpus and returns the result document.
+ *
+ * Never throws for a difference - a difference is a result, and the exit code
+ * carries it. It DOES throw when the replay cannot be performed at all: a
+ * corpus that cannot be read, a corpus with no recorded baseline, a manifest
+ * that cannot be produced, a pass that could not be launched. Those are not
+ * comparisons that failed, they are comparisons that never happened, and
+ * reporting them as a difference would be a lie in the other direction.
+ *
+ * @param {Object} options as `parseArguments` produces
+ * @returns {Promise<Object>} the result document, carrying `exitCode`
+ * @throws {ToolError} If the replay could not be performed.
+ */
+async function replay(options) {
+  var corpusArtifact;
+  var secureArtifact = null;
+  var corpus;
+  var annotations = null;
+  var secureCorpus = null;
+  var manifestDocument;
+  var filter = compileFilter(options.only);
+  var scratchDir;
+  var passNames;
+  var selectionComplete;
+  var gate;
+  var provenanceContext;
+  var corpusProvenance;
+  var secureProvenance = null;
+  var normalizationProbes;
+  var originProbes;
+  var shortCodeProbes;
+  var suppressionProbes;
+  var archiveProbes;
+  var registerAuthority;
+  var authorityRegister;
+  var authorizedRegister;
+  var matchers = {};
+  var matcher;
+  var generation = null;
+  var passes = [];
+  var plans = {};
+  var passName;
+  var plan;
+  var passResult;
+  var index;
+  var result;
+
+  assertVolatileSetIntegrity();
+  normalizationProbes = assertNormalizationRules();
+  // Beside them, and for the same reason: the harness-origin reconciliation
+  // removes real difference records - 35 of them on the committed corpus at any
+  // port but its capture port - so what it rewrites, and what it leaves alone,
+  // is measured before a request is driven rather than described.
+  originProbes = assertHarnessOriginReconciliation();
+  // And the second pairwise reconciliation, whose first two probes drive
+  // `normalizeText` itself and require that the committed short-code rule
+  // still writes the placeholder over a hex code and still holds an all-digit
+  // code back. Those two facts are the entire evidence this reconciliation
+  // acts on, so a change to that rule has to fail here.
+  shortCodeProbes = assertHeldBackShortCodeReconciliation();
+  // And the authority table, which decides what a --authorize run may file. A
+  // guard nothing implements, or an authority naming no field, would authorize
+  // more than anyone argued for.
+  authorityRegister = assertAuthorityRegister();
+  // Beside them, and for the same reason: an exemption that removes real
+  // difference records is checked before a request is driven, not trusted.
+  // Authority first, mechanism second - probing the firing conditions of a
+  // rule whose register entry does not exist is work in the wrong order, and
+  // the two failures are reported separately so a run says which one it is.
+  registerAuthority = assertRegisterAuthority();
+  suppressionProbes = assertFrameworkCookieSuppression();
+  // And the third of them: the raw digest of an archive container is exempt,
+  // so the structural read is the only thing comparing it. A reader that
+  // stopped reading would turn every archive response into a silent pass.
+  archiveProbes = assertArchiveReader();
+
+  // One identity contract, applied before any fixture is used, in this process
+  // and in the application this run launches. The two artifacts state the same
+  // two addresses - the seeder creates them and publishes them, the fixture
+  // serves them - and the alignment is what makes a drift between the copies
+  // impossible to act on rather than merely discouraged. Without it, the OAuth
+  // profile named for the existing-user branch can serve an address the seeder
+  // never created, and both OAuth scenarios then exercise the new-user branch
+  // while appearing to cover both.
+  alignIdentitiesToSeeder();
+
+  resetCleanupFailures();
+
+  // Both destinations are resolved BEFORE anything is launched, so a run that
+  // has nowhere to write its evidence fails in the first second rather than
+  // after driving the whole corpus. A programmatic caller does not come through
+  // parseArguments, which is the other reason the policy is applied here.
+  options.out = options.out
+    ? path.resolve(options.out)
+    : resolveArtifactPath(ARTIFACT_NAMES.result, '--out');
+  options.report = options.report
+    ? path.resolve(options.report)
+    : resolveArtifactPath(ARTIFACT_NAMES.report, '--report');
+
+  options.appRoot = path.resolve(options.appRoot);
+
+  // The two READ defaults, resolved here rather than in `defaultOptions` so a
+  // programmatic caller gets the same behaviour as the command line and so
+  // "the tree carries one" is decided against the disk rather than at load.
+  // `undefined` is the unset state and `null` is the declined one, which is why
+  // neither can be spelled as a falsy check.
+  if (options.secureCorpus === undefined) {
+    options.secureCorpus = fs.existsSync(DEFAULT_SECURE_CORPUS)
+      ? DEFAULT_SECURE_CORPUS
+      : null;
+
+    if (options.secureCorpus) {
+      note('secure-pass corpus: using the committed recording ' +
+        pathLabelFor(options.secureCorpus, options.appRoot) +
+        ' (pass --no-secure-corpus to derive the secure pass instead)');
+    }
+  }
+
+  if (options.authorizedDifferences === undefined) {
+    options.authorizedDifferences = fs.existsSync(DEFAULT_AUTHORIZED_DIFFERENCES)
+      ? DEFAULT_AUTHORIZED_DIFFERENCES
+      : null;
+  }
+
+  if (!fs.existsSync(path.join(options.appRoot, 'app.js'))) {
+    throw usageError('--app names ' + options.appRoot + ', which holds no ' +
+      'application entry point. It must be a worktree of this repository.');
+  }
+
+  // The corpus is the REFERENCE every comparison in this run is made against,
+  // so it is verified before it is consumed rather than trusted for carrying a
+  // `scenarios` array. Two independent records are checked, and they establish
+  // different things: the block the artifact carries about itself, which names
+  // the generator blob and the analysed tree and re-computes the payload
+  // digest, and the sidecar beside it, which is what `validateCorpusProvenance`
+  // reconciles below against the bytes read here.
+  corpusArtifact = readCorpusFile(options.corpus, 'corpus');
+  verifyCorpusBlock(corpusArtifact, 'corpus', baselineExpectation(options));
+  corpus = corpusArtifact.parsed;
+
+  if (options.annotations) {
+    // Markers, not measurements: `expectedDeviation` and `unreachableReason`
+    // joined on by scenario id. No sidecar is required of it, and that is a
+    // decision rather than an oversight - it is the hand-authored definition
+    // file with no capture behind it, and nothing compared here comes from it.
+    // A block is verified when the file carries one, and its absence is
+    // reported rather than fatal, because refusing it would make the
+    // documented `--annotations test/parity/corpus.json` invocation
+    // impossible.
+    annotations = readCorpus(options.annotations, 'annotations corpus', {
+      roles: manifest.provenance.ROLES,
+      optional: true
+    });
+  }
+
+  if (options.secureCorpus) {
+    // The secure pass compares against a capture of its own, so it is held to
+    // exactly what the non-secure corpus is held to.
+    secureArtifact = readCorpusFile(options.secureCorpus, 'secure-pass corpus');
+    verifyCorpusBlock(secureArtifact, 'secure-pass corpus',
+      baselineExpectation(options));
+    secureCorpus = secureArtifact.parsed;
+  }
+
+  // The plan for the non-secure pass decides whether there is anything to
+  // replay at all, so it is built before anything is launched. Building it also
+  // validates every declared expectation against the grammar this file can
+  // evaluate, which is why an unimplementable clause stops the run here.
+  plans[PASS_NON_SECURE] = buildPlan(corpus, annotations, filter);
+
+  assertReplayable(plans[PASS_NON_SECURE], options, corpus);
+
+  // AFTER the replayability check, deliberately: a definitions-only corpus is
+  // better diagnosed as "carries no recorded baseline" than as "has no
+  // provenance sidecar", and the committed corpus.json is exactly that file.
+  // A corpus that DOES carry recorded responses is a baseline recording, and
+  // from here on it has to say which tree it recorded.
+  provenanceContext = {
+    appHead: gitHead(options.appRoot),
+    selfCheck: !!options.selfCheck,
+    baselineHead: options.baselineHead
+  };
+
+  corpusProvenance = validateCorpusProvenance(corpusArtifact, 'corpus',
+    Object.assign({}, provenanceContext, {
+      // The primary corpus is the NON-SECURE recording, and it is only held to
+      // that where a second corpus makes the distinction load-bearing: a run
+      // with one corpus drives both cookie configurations from it by
+      // derivation, which the gate already refuses to call measured.
+      expectSecure: options.secureCorpus ? false : undefined,
+      otherDigest: secureArtifact ? secureArtifact.digest : null
+    }));
+
+  note('corpus provenance: captured from ' +
+    (corpusProvenance.capturedTree.head || '(unknown)') + ' by ' +
+    (corpusProvenance.generator.path || '(unknown)') + ' @ ' +
+    (corpusProvenance.generator.head || '(unknown)') + '; artifact digest ' +
+    corpusProvenance.artifactDigest.slice(0, 16));
+
+  if (secureArtifact) {
+    secureProvenance = validateCorpusProvenance(secureArtifact,
+      'secure-pass corpus', Object.assign({}, provenanceContext, {
+        expectSecure: true,
+        otherDigest: corpusArtifact.digest
+      }));
+
+    note('secure-pass corpus provenance: ' +
+      (secureProvenance.cookieMode.secure ? 'secure' : 'NON-SECURE') +
+      ' capture from ' + (secureProvenance.capturedTree.head || '(unknown)'));
+  }
+
+  // AFTER both corpora have been read and authenticated, because the register
+  // is bound to them by digest and a register checked against a corpus this run
+  // then refused would be a check on a file nobody consumed. Under --authorize
+  // nothing is read: the run is about to write it.
+  authorizedRegister = options.authorize
+    ? {
+      present: false,
+      path: options.authorizedDifferences || DEFAULT_AUTHORIZED_DIFFERENCES,
+      records: [],
+      authorities: [],
+      note: '--authorize: the register is being GENERATED by this run, so ' +
+        'nothing was read and every difference is measured'
+    }
+    : readAuthorizedRegister(options.authorizedDifferences, {
+      corpus: corpusArtifact.digest,
+      secureCorpus: secureArtifact ? secureArtifact.digest : null
+    });
+
+  if (authorizedRegister.present) {
+    note('authorized-difference register: ' + authorizedRegister.records.length +
+      ' record(s) from ' +
+      pathLabelFor(authorizedRegister.path, options.appRoot) +
+      ', bound to this corpus by digest');
+  }
+
+  manifestDocument = resolveManifest(options);
+
+  note('manifest: ' + manifestDocument.entries.length + ' route(s) from ' +
+    options.manifestPath);
+  note('corpus: ' + plans[PASS_NON_SECURE].scenarios.length + ' selected of ' +
+    corpus.scenarios.length + ' scenario(s) in ' + options.corpus);
+
+  passNames = options.pass === PASS_BOTH
+    ? [PASS_NON_SECURE, PASS_SECURE]
+    : [options.pass];
+
+  // Two distinct properties, deliberately not conflated. A COMPLETE SELECTION
+  // means every scenario in the corpus ran, which is what makes route coverage
+  // accountable and is therefore what the coverage gate is conditioned on. A
+  // GATE-QUALIFYING run additionally drove both cookie configurations and
+  // satisfies every other requirement the gate puts on a run, which
+  // `qualifyGate` decides once the passes have run - it needs the flags the
+  // children actually received and the manifest check's verdict, neither of
+  // which is knowable here. So `--pass non-secure` still enforces coverage -
+  // it does not narrow the scenario set - while being honestly labelled as not
+  // the gate.
+  //
+  // Selection and cookie configuration are NOT the whole of qualification. The
+  // zero-warning condition is measured over this same exercise, so a
+  // run that produced no warning evidence cannot be the gate however cleanly it
+  // compared: without --pending-deprecation a pending deprecation is silent, a
+  // suppressor makes the stream meaningless, a narrowed or GET-only sweep
+  // leaves most of the surface unmeasured, and the worker is a third of the
+  // required exercise this tool cannot drive. Each of those is decided per pass
+  // by `qualifyWarningEvidence` and folded in below, AFTER the passes have run,
+  // because none of it can be known in advance.
+  selectionComplete = !options.only.length;
+  // A corpus whose provenance does not establish a capture of the base commit
+  // makes the run a diagnostic too, on the same principle - and that is not
+  // decided here either: `authenticated-corpus` in `qualifyGate` refuses gate
+  // status while --allow-unreviewed-corpus is in force.
+
+  scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-replay-'));
+
+  try {
+    for (index = 0; index < passNames.length; index++) {
+      passName = passNames[index];
+
+      // A FRESH plan per pass. The plan objects carry each scenario's result,
+      // so reusing one would have the second pass overwrite the first pass's
+      // findings before they were accounted.
+      plan = passName === PASS_SECURE
+        ? securePassPlan(corpus, secureCorpus, annotations, filter)
+        : buildPlan(corpus, annotations, filter);
+
+      plans[passName] = plan;
+
+      // One matcher per pass, over the register this run read. Under
+      // --authorize there is none: the run is measuring what the register will
+      // hold, so it must see every difference.
+      matcher = options.authorize
+        ? null
+        : authorizedRegisterFor(authorizedRegister, passName);
+      matchers[passName] = matcher;
+
+      passResult = await runPass(passName, options, plan, {
+        differential: passName === PASS_SECURE && !secureCorpus,
+        scratchDir: scratchDir,
+        authorizer: matcher
+      });
+
+      // Coverage is enforced on EVERY pass with a complete selection, not on
+      // the first one only: both passes now drive the same scenarios in the
+      // same order, so each is independently accountable against the manifest,
+      // and a --secure-corpus carrying a different scenario set gets its own
+      // accounting rather than inheriting the other pass's.
+      passes.push(accountPass(passResult, plan, manifestDocument, options,
+        selectionComplete, corpus, {
+          register: authorizedRegister,
+          matcher: matcher
+        }));
+    }
+  }
+  finally {
+    removeDirectory(scratchDir);
+  }
+
+  // The generation half of the register, and it runs only when asked. It reads
+  // the plans the passes left behind, so it files records for exactly what was
+  // measured rather than for what a second run might measure.
+  if (options.authorize) {
+    generation = generateAuthorizedRegister(options, plans, passNames, {
+      corpus: corpusArtifact,
+      secureCorpus: secureArtifact,
+      authorities: authorityRegister
+    });
+  }
+
+  gate = qualifyGate(options, manifestDocument, passes, selectionComplete, {
+    corpus: corpusProvenance,
+    secureCorpus: secureProvenance,
+    appHead: provenanceContext.appHead
+  });
+
+  result = buildResult(options, corpus, annotations, secureCorpus,
+    manifestDocument, plans, passes, gate, {
+      corpus: corpusProvenance,
+      secureCorpus: secureProvenance,
+      normalizationProbes: normalizationProbes,
+      originProbes: originProbes,
+      shortCodeProbes: shortCodeProbes,
+      suppressionProbes: suppressionProbes,
+      archiveProbes: archiveProbes,
+      registerAuthority: registerAuthority,
+      authorizedRegister: authorizedRegister,
+      authorityRegister: authorityRegister,
+      generation: generation
+    });
+
+  // A GENERATION RUN IS NOT A GATE RUN, and it says so in the verdict rather
+  // than in a note beside a PASS. It measured a tree in order to write the
+  // register, so its own comparison was made with the register switched off and
+  // every difference unauthorized; and if anything was unattributable it wrote
+  // nothing at all, which the exit code has to carry.
+  if (options.authorize) {
+    result.gateQualifying = false;
+    result.gateQualifyingReason = 'this run was asked to GENERATE the ' +
+      'authorized-difference register with --authorize, so it compared with ' +
+      'the register switched off and cannot stand as the gate. Re-run without ' +
+      '--authorize to measure the gate against what it wrote.';
+
+    // A generation run that could not attribute everything it measured exits
+    // non-zero even where the register it wrote is otherwise complete: the
+    // residue is the operator's next piece of work, and a zero exit would let
+    // it pass through a shell pipeline unread.
+    if (generation && (!generation.written || generation.reason)) {
+      result.verdict = VERDICT_FAIL;
+      result.exitCode = EXIT_DIFFERENCE;
+    }
+  }
+
+  // The one thing this tool writes outside its own two artifacts, and only
+  // when asked: the target comparison, into the committed provenance sidecar
+  // of each corpus it replayed.
+  if (options.attest) {
+    result.attestation = attestCorpora(result, options, plans, passes);
+  }
+
+  return result;
+}
+
+/**
+ * Writes the target-replay evidence into each replayed corpus's sidecar.
+ *
+ * WHY THIS EXISTS. A corpus records what the BASELINE did. Nothing in the
+ * delivery recorded what the TARGET did about it, so the committed evidence
+ * could not distinguish "the replay passed" from "the replay was never run" -
+ * and it had never been run: the corpora carried baseline responses and no
+ * target result at all, while the aggregate gate exited non-zero. The result
+ * document this tool writes is a scratch artifact by contract (see --out), so
+ * the durable place for the comparison is the corpus's own sidecar, which is
+ * committed, is beside the thing it describes, and is already the file that
+ * says which trees the recording came from.
+ *
+ * WHAT IT WRITES. Per scenario, `replayVerdict` - match, approved-deviation,
+ * difference, undriven, no-baseline or unreachable-by-design - and per step a
+ * `targetResponse` holding exactly the surface AAP 0.9.3 compares: the status,
+ * the content type, the Location, the four error-page headers, the
+ * Content-Disposition, every Set-Cookie attribute, and the body as its
+ * encoding, byte length, raw digest and NORMALIZED digest. The normalized
+ * digest is what makes the record verifiable without carrying a second copy of
+ * every page: two bodies with the same normalized digest are the same body
+ * under the declared volatile set.
+ *
+ * WHAT IT REFUSES. Anything but an accepted gate run. A sidecar that recorded
+ * a failing or non-qualifying replay as the target evidence would be the exact
+ * overstatement this file exists to prevent, so the refusal is a hard error
+ * rather than a skipped write, and it names which condition failed.
+ *
+ * @param {Object} result the result document, already built
+ * @param {Object} options
+ * @param {Object} plans by pass name
+ * @param {Array.<Object>} passes
+ * @returns {Object} what was written, for the result document
+ * @throws {ToolError} If the run is not an accepted gate run.
+ */
+function attestCorpora(result, options, plans, passes) {
+  var written = [];
+
+  if (result.verdict !== VERDICT_PASS) {
+    throw new ToolError('--attest writes the target comparison into the ' +
+      'committed corpus sidecar, so it accepts only a run that passed: this ' +
+      'one is ' + result.verdict + ' (exit ' + result.exitCode + '). Fix what ' +
+      'it found, or drop --attest and read the result artifact instead.');
+  }
+
+  if (!result.gateQualifying) {
+    throw new ToolError('--attest accepts only a GATE-QUALIFYING run, and ' +
+      'this one is not: ' + result.gateQualifyingReason + '. The sidecar ' +
+      'would otherwise record a narrowed diagnostic as the parity evidence.');
+  }
+
+  passes.forEach(function(entry) {
+    var passName = entry.pass.name;
+    var corpusPath = passName === PASS_SECURE
+      ? options.secureCorpus
+      : options.corpus;
+    var sidecarPath;
+    var sidecar;
+    var evidence;
+
+    if (!corpusPath) {
+      throw new ToolError('the ' + passName + ' pass replayed no corpus of ' +
+        'its own, so there is nothing to attest for it');
+    }
+
+    sidecarPath = corpusPath + PROVENANCE_SUFFIX;
+
+    try {
+      sidecar = JSON.parse(fs.readFileSync(sidecarPath, 'utf8'));
+    }
+    catch (err) {
+      throw new ToolError('cannot attest ' + corpusPath + ': its provenance ' +
+        'sidecar ' + sidecarPath + ' could not be read (' + reasonOf(err) +
+        '). capture.js writes one beside every corpus it records.');
+    }
+
+    evidence = targetReplayEvidence(result, options, plans[passName], entry);
+
+    // Verified against the bytes on disk, not against the corpus this process
+    // holds in memory: the sidecar's whole contribution is a digest of the
+    // exact file it sits beside, and an attestation attached to a sidecar that
+    // no longer describes that file would be evidence about nothing.
+    evidence.corpusDigest = sha256Hex(fs.readFileSync(corpusPath, 'utf8'));
+
+    sidecar.targetReplay = evidence;
+
+    // capture.js writes its sidecar as a scratch companion and says so in this
+    // field - "RUN OUTPUT, not a delivery artifact, and not to be committed",
+    // which is true of the file it wrote. Attesting changes what the file IS:
+    // it now carries the target comparison, which is nowhere else, and the
+    // corpus beside it is committed with it. Leaving the original wording in
+    // place would tell a reader of the committed record to disregard it.
+    sidecar.capturedNote = sidecar.capturedNote || sidecar.note;
+    sidecar.note = 'DELIVERY RECORD for the corpus beside it. Everything ' +
+      'above `targetReplay` is capture.js\'s own provenance block, embedded ' +
+      'identically in the corpus under its `provenance` key, plus a digest ' +
+      'of the exact corpus bytes; `capturedNote` is what capture.js wrote ' +
+      'about the file when it was still only that. `targetReplay` is written ' +
+      'by test/parity/replay.js --attest from a passing, gate-qualifying run ' +
+      'and exists nowhere else: it carries the per-scenario verdict and the ' +
+      'target response every claim of parity rests on. Neither part is ' +
+      'hand-editable - the digests authenticate the corpus, and the ' +
+      'attestation records the command that produced it.';
+
+    fs.writeFileSync(sidecarPath, serialize(sidecar) + '\n');
+
+    written.push({
+      pass: passName,
+      corpus: pathLabelFor(corpusPath, options.appRoot),
+      sidecar: pathLabelFor(sidecarPath, options.appRoot),
+      scenarios: Object.keys(evidence.scenarios).length
+    });
+
+    note('attested ' + sidecarPath + ': ' +
+      Object.keys(evidence.scenarios).length + ' scenario verdict(s) and ' +
+      'their target responses');
+  });
+
+  return {
+    what: 'the target comparison, written into each replayed corpus\'s ' +
+      'committed provenance sidecar under `targetReplay`',
+    verdict: result.verdict,
+    gateQualifying: result.gateQualifying,
+    written: written
+  };
+}
+
+/**
+ * The target-replay evidence for one pass.
+ *
+ * @param {Object} result
+ * @param {Object} options
+ * @param {Object} plan the plan for this pass, holding the driven items
+ * @param {Object} entry the accounted pass
+ * @returns {Object}
+ */
+function targetReplayEvidence(result, options, plan, entry) {
+  var scenarios = {};
+
+  (plan ? plan.scenarios : []).forEach(function(item) {
+    var classified = entry.scenarios.filter(function(record) {
+      return record.id === item.id;
+    })[0];
+
+    if (!classified) {
+      return;
+    }
+
+    scenarios[item.id] = {
+      // The field name the record is read by: what the target did about this
+      // scenario's recorded baseline.
+      replayVerdict: classified.status,
+      failing: classified.failing,
+      differences: classified.differences,
+      reason: portableReason(classified.reason, options.appRoot),
+      expectationMet: item.result && item.result.expectation
+        ? item.result.expectation.met
+        : null,
+      steps: (item.result ? item.result.steps : []).map(function(step) {
+        return {
+          step: step.label,
+          request: step.request
+            ? { method: step.request.method, target: step.request.target }
+            : null,
+          outcome: step.outcome,
+          baselineOutcome: step.baselineOutcome,
+          targetResponse: targetResponseRecord(step.observed)
+        };
+      })
+    };
+  });
+
+  return {
+    schema: 1,
+    what: 'What the TARGET tree did when this corpus was replayed against ' +
+      'it, scenario by scenario. Written by test/parity/replay.js --attest ' +
+      'and only from a run that both PASSED and qualified as the gate, so a ' +
+      'reader can tell a proven pair from an unrun one - which the corpus ' +
+      'alone cannot say.',
+    tool: 'test/parity/replay.js',
+    toolHead: gitHead(TOOL_ROOT),
+    pass: entry.pass.name,
+    secure: entry.pass.secure,
+    command: attestedCommand(options),
+    verdict: result.verdict,
+    exitCode: result.exitCode,
+    gateQualifying: result.gateQualifying,
+    gateRequirementsMet: result.gateQualification.requirements.length -
+      result.gateQualification.unmet.length,
+    gateRequirements: result.gateQualification.requirements.length,
+    target: {
+      root: pathLabelFor(options.appRoot, options.appRoot),
+      head: entry.pass.appHead,
+      nodeFlags: (entry.pass.nodeFlags || []).slice()
+    },
+    counts: entry.counts,
+    scenariosDriven: entry.pass.driven,
+    failingScenarios: entry.failingScenarios,
+    namedChecks: (entry.checks || []).map(function(check) {
+      return {
+        name: check.name,
+        // `ok` is the field a check carries; there is no `verdict` on one, and
+        // reading a name that does not exist wrote `undefined` - which
+        // JSON.stringify drops, so the committed evidence would have listed
+        // each check by name with no result at all.
+        ok: check.ok !== false,
+        asserted: check.asserted,
+        failures: (check.failures || []).length
+      };
+    }),
+    approvedDeviations: (entry.approvedDeviations || []).map(function(record) {
+      return {
+        id: record.id,
+        route: record.route,
+        approvedBy: record.approvedBy,
+        rule: record.rule,
+        verified: record.verified
+      };
+    }),
+    coverage: {
+      routes: entry.coverage ? entry.coverage.routes : null,
+      represented: entry.coverage ? entry.coverage.represented : null,
+      unrepresented: entry.coverage ? entry.coverage.unrepresented : null
+    },
+    // The category ids, from `describeVolatileSet`'s document - which is an
+    // object carrying `categories`, not an array. Read as an array this threw
+    // at the last step of a complete passing run, after both passes had been
+    // driven, so the attestation was the only thing lost; the ids are what the
+    // digest note below refers to.
+    volatileSet: ((result.volatileSet && result.volatileSet.categories) || [])
+      .map(function(category) {
+        return category.id;
+      }),
+    // The one framework-imposed exemption in force, by id AND by the register
+    // entry that authorizes it, so a reader of the committed sidecar sees both
+    // without opening the tool. An exemption a reader has to discover from a
+    // source file is an exemption nobody audits, and one whose register entry
+    // is not named cannot be checked against the argument that approved it.
+    frameworkExemptions: [describeFrameworkExemption(FRAMEWORK_COOKIE_SUPPRESSION)],
+    // THE WORKER ARTIFACT THIS QUALIFICATION RESTS ON, by identity rather
+    // than by claim. AAP 0.9.3 measures the zero-warning condition over the
+    // server, the route surface AND the standalone worker; this tool drives
+    // the first two and consumes an artifact for the third. A sidecar that
+    // recorded `warning-evidence: met` without naming that artifact asserted
+    // a third of the measurement and pointed at nothing - so the digest, the
+    // generator blob and the commit the worker measured are carried here, and
+    // a reader can reconcile them against the artifact itself.
+    workerEvidence: workerAttestation(entry),
+    bodyDigest: 'sha256 over the response body as recorded, and over its ' +
+      'normalized form. Two bodies whose normalized digests agree are the ' +
+      'same body under the volatile set named above.',
+    scenarios: scenarios
+  };
+}
+
+/**
+ * The worker artifact's identity, for the attestation.
+ *
+ * Read from the pass's re-judged warning check, which is where
+ * `qualifyWarningEvidence` attaches what `readWorkerEvidence` authenticated.
+ * Null rather than absent when a pass carries none, because "no worker
+ * evidence" is itself a fact about the run - and a passing gate run cannot be
+ * in that state, since `worker-warning-evidence` is one of the ten
+ * requirements it had to meet.
+ *
+ * @param {Object} entry one pass's accounted document
+ * @returns {(Object|null)}
+ */
+function workerAttestation(entry) {
+  var warnings = (entry.pass && entry.pass.warnings) || {};
+  var evidence = warnings.workerEvidence;
+
+  if (!evidence || !evidence.summary) {
+    return null;
+  }
+
+  return {
+    qualifying: !!evidence.qualifying,
+    artifactDigest: evidence.summary.artifactDigest || null,
+    generator: evidence.summary.generator || null,
+    measuredTree: evidence.summary.measuredTree || null,
+    verdict: evidence.summary.verdict || null,
+    jobs: evidence.summary.jobs,
+    failedChecks: evidence.summary.failedChecks
+  };
+}
+
+/**
+ * The compared surface of one observed response, as committed evidence.
+ *
+ * Deliberately not the whole response: a body per scenario per pass would
+ * double the delivered artifacts, and a digest over the normalized text proves
+ * the same thing. Every field here is one AAP 0.9.3 names for exact
+ * comparison.
+ *
+ * @param {(Object|null)} observed
+ * @returns {(Object|null)}
+ */
+function targetResponseRecord(observed) {
+  var headers;
+  var body;
+
+  if (!observed) {
+    return null;
+  }
+
+  headers = observed.headers || {};
+  body = observed.body || null;
+
+  return {
+    status: observed.status === undefined ? null : observed.status,
+    timedOut: !!observed.timedOut,
+    error: observed.error || null,
+    contentType: headers['content-type'] === undefined
+      ? null
+      : headers['content-type'],
+    location: headers.location === undefined ? null : headers.location,
+    errorPageHeaders: ERROR_PAGE_HEADERS.reduce(function(out, name) {
+      out[name] = headers[name] === undefined ? null : headers[name];
+      return out;
+    }, {}),
+    contentDisposition: headers['content-disposition'] === undefined
+      ? null
+      : headers['content-disposition'],
+    setCookies: (observed.setCookies || []).map(function(cookie) {
+      return {
+        name: cookie.name,
+        attributes: cookie.attributes,
+        expiresInDays: cookie.expiresInDays === undefined
+          ? null
+          : cookie.expiresInDays
+      };
+    }),
+    body: body
+      ? {
+        encoding: body.encoding,
+        length: body.length,
+        truncated: !!body.truncated,
+        digest: body.digest,
+        normalizedDigest: typeof body.text === 'string'
+          ? sha256Hex(normalized(body.text))
+          : null,
+        // The archive container's structure, for the content types whose raw
+        // digest the timestamps category exempts. Carried in full - the entry
+        // table, the writer profile and the fingerprint - because it is the
+        // evidence that replaced that exemption with a comparison, and a
+        // reviewer diffing two deliveries should not have to re-run the tool
+        // to see which container field moved.
+        archive: body.archive || null
+      }
+      : null
+  };
+}
+
+/**
+ * The command an attested sidecar records as its own reproduction.
+ *
+ * Built from the options in force rather than from a literal, so it cannot
+ * describe a run that was not the one performed.
+ *
+ * @param {Object} options
+ * @returns {string}
+ */
+function attestedCommand(options) {
+  var parts = [
+    'node test/parity/replay.js',
+    '--app ' + pathLabelFor(options.appRoot, options.appRoot),
+    '--corpus ' + pathLabelFor(options.corpus, options.appRoot)
+  ];
+
+  if (options.secureCorpus) {
+    parts.push('--secure-corpus ' +
+      pathLabelFor(options.secureCorpus, options.appRoot));
+  }
+
+  if (options.annotations) {
+    parts.push('--annotations ' +
+      pathLabelFor(options.annotations, options.appRoot));
+  }
+
+  parts.push('--pass ' + options.pass);
+  parts.push('--node-flags "' + REQUIRED_NODE_FLAGS.join(' ') + '"');
+
+  if (options.workerEvidence) {
+    parts.push('--worker-evidence <the artifact test/parity/worker.js wrote>');
+  }
+
+  parts.push('--port ' + (options.port === null ? '<overlay>' : options.port));
+
+  return parts.join(' ');
+}
+
+/**
+ * Refuses to replay a corpus that carries no recorded baseline.
+ *
+ * The committed corpus ships as DEFINITIONS: every scenario has `baseline:
+ * null` and every step `response: null`, because its own first note refuses to
+ * fabricate one - "an invented status would make the parity gate pass against
+ * a fiction". So this is checked BEFORE anything is launched, and it fails as
+ * "could not be performed" rather than as a difference, because there was no
+ * comparison. A corpus where SOME scenarios carry a baseline is replayed, and
+ * the ones that do not are each failed individually, which is the honest
+ * treatment of a partial capture.
+ *
+ * @param {Object} plan
+ * @param {Object} options
+ * @param {Object} corpus
+ * @returns {undefined}
+ * @throws {ToolError}
+ */
+function assertReplayable(plan, options, corpus) {
+  var comparable = plan.scenarios.filter(function(item) {
+    return item.steps.length && item.baselineRecorded;
+  });
+  var drivable = plan.scenarios.filter(function(item) {
+    return item.steps.length;
+  });
+
+  if (!plan.scenarios.length) {
+    throw usageError('no scenario in ' + options.corpus + ' matched ' +
+      (options.only.length
+        ? '--only ' + options.only.map(function(pattern) {
+          return JSON.stringify(pattern);
+        }).join(' ')
+        : 'the selection'));
+  }
+
+  if (comparable.length) {
+    return;
+  }
+
+  throw new ToolError('the corpus at ' + options.corpus + ' carries NO ' +
+    'recorded baseline: ' + drivable.length + ' drivable scenario(s) and not ' +
+    'one recorded response' +
+    (corpus.summary && corpus.summary.captured === false
+      ? ' (its own summary says captured: false' +
+        (corpus.summary.baselinesPending
+          ? ', baselinesPending: ' + corpus.summary.baselinesPending
+          : '') + ')'
+      : '') + '. There is nothing to compare against, and this file will not ' +
+    'invent one - a fabricated baseline would make the parity gate pass ' +
+    'against a fiction. Capture one first:\n' +
+    '  node test/parity/capture.js --app <worktree at the base commit> ' +
+    '--out <corpus> --expect-baseline\n' +
+    'then replay against the migrated tree with --corpus <corpus> ' +
+    '--annotations ' + DEFAULT_CORPUS + ', which joins the approved-deviation ' +
+    'marker back on - a capture does not carry it.');
+}
+
+/**
+ * Builds the plan for the secure cookie pass.
+ *
+ * With a --secure-corpus the pass is an ordinary exact replay of that corpus.
+ * Without one it is the DERIVED differential described in the header: the same
+ * scenarios, in the same order, compared against the non-secure recording with
+ * the cookie attributes the secure configuration moves - and every other field
+ * compared exactly, because `isSecure` moves nothing else.
+ *
+ * IT DRIVES THE WHOLE SELECTION AND IS NOT NARROWED TO THE COOKIE-SETTING
+ * SCENARIOS, and that was a measurement rather than a preference. A first
+ * version drove only the scenarios whose baseline set a cookie, which is the
+ * subset the differential has anything to say about. It reported a difference
+ * on `POST /api/interest`: several responses embed the yar FLASH, which is
+ * cross-request session state, so a pass that skips the requests in between
+ * arrives at that route with a different session than the recording did. The
+ * sequence is part of the input, so the secure pass replays all of it.
+ *
+ * @param {Object} corpus
+ * @param {(Object|null)} secureCorpus
+ * @param {(Object|null)} annotations
+ * @param {(function(Object): boolean|null)} filter
+ * @returns {Object} the plan
+ */
+function securePassPlan(corpus, secureCorpus, annotations, filter) {
+  var plan;
+
+  if (secureCorpus) {
+    return buildPlan(secureCorpus, annotations, filter);
+  }
+
+  plan = buildPlan(corpus, annotations, filter);
+  plan.derived = true;
+
+  note('the secure pass has no baseline of its own (none was captured with ' +
+    '--secure), so it replays the same ' + plan.scenarios.length +
+    ' scenario(s) in the same order and asserts the documented cookie ' +
+    'differential, comparing every other field exactly. THIS RUN IS ' +
+    'THEREFORE NOT GATE-QUALIFYING: the secure cookie contract is compared ' +
+    'against a value this tool derived from the non-secure recording rather ' +
+    'than one a secure baseline produced. Capture a corpus against a ' +
+    '--secure server and pass --secure-corpus for the measured comparison ' +
+    'AAP §0.9.3 asks for.');
+
+  return plan;
+}
+
+/**
+ * The teardown operations of this run that did not complete.
+ *
+ * Module-scoped because the two places that observe one - the per-pass server
+ * stop in `runPass`'s `finally`, and the scratch removal in `replay`'s - are in
+ * different frames from `buildResult`, which is where the verdict is assembled;
+ * neither can return the answer without changing what it reports.
+ */
+var cleanupFailures = [];
+
+/**
+ * Records a teardown operation that did not complete, once.
+ *
+ * The note at each site stays: those lines are the diagnostic evidence a
+ * human reads. What this adds is the entry `buildResult` folds into `gates`,
+ * so the failure reaches both the result document and the exit code.
+ *
+ * DEDUPLICATED ON THE MESSAGE, because ./server adopts ./mongo's records when
+ * it stopped a database it provisioned: one leaked mongod is reachable through
+ * both accessors, both are read, and one fault must still be one entry.
+ *
+ * @param {string} operation What was attempted, phrased to follow 'could not'.
+ * @param {string} message The measured cause.
+ * @returns {undefined}
+ */
+function recordCleanupFailure(operation, message) {
+  var seen = cleanupFailures.some(function(entry) {
+    return entry.message === message;
+  });
+
+  if (!seen) {
+    cleanupFailures.push({ operation: operation, message: message });
+  }
+}
+
+/**
+ * Forgets the recorded teardown failures, so a second `replay` in one process
+ * does not inherit the first one's.
+ *
+ * @returns {undefined}
+ */
+function resetCleanupFailures() {
+  cleanupFailures = [];
+}
+
+/**
+ * Folds one lifecycle module's stop into the record, counting each fault once.
+ *
+ * Three channels carry a failure out of ./server's and ./mongo's `stop`, and a
+ * `catch` sees only one of them: both modules RESOLVE `false` for an unclean
+ * stop rather than rejecting, so that a caller's real result still reaches the
+ * shell. The fulfilled value, the rejection and the module's own named records
+ * are therefore all read here.
+ *
+ * @param {string} what The operation, phrased to follow 'could not'.
+ * @param {Object} target ./server or ./mongo.
+ * @param {string} attribution The module its own records come from.
+ * @param {string} owner The module, for the generic entry.
+ * @returns {Promise<undefined>}
+ */
+async function foldStop(what, target, attribution, owner) {
+  var clean = true;
+  var threw = false;
+  var named;
+
+  try {
+    clean = (await target.stop()) !== false;
+  }
+  catch (err) {
+    threw = true;
+    clean = false;
+    note('warning: could not ' + what + ': ' + reasonOf(err));
+    recordCleanupFailure(what, reasonOf(err));
+  }
+
+  named = typeof target.cleanupFailures === 'function'
+    ? target.cleanupFailures()
+    : [];
+
+  // The module's records name the operation as a bare phrase, so they are
+  // carried through with an attribution rather than a second 'could not'.
+  named.forEach(function(entry) {
+    recordCleanupFailure(entry.operation + ' (' + attribution + ')',
+      entry.message);
+  });
+
+  if (!clean && !threw && !named.length) {
+    recordCleanupFailure(what, owner + ' reported an unclean stop without ' +
+      'naming an operation, so something it started may still be running');
+  }
+}
+
+/**
+ * Removes a directory this tool created.
+ *
+ * Only ever called with a path from `mkdtempSync` in the system temp
+ * directory, and it is checked here as well, because a recursive removal is not
+ * something to leave to the caller's discipline.
+ *
+ * A refusal and a failure are both recorded as teardown faults: either way the
+ * directory this run was responsible for is still there, and `buildResult`
+ * carries that into the verdict rather than leaving it on stderr.
+ *
+ * @param {string} target
+ * @returns {undefined}
+ */
+function removeDirectory(target) {
+  var temp = os.tmpdir();
+
+  if (!target || String(target).indexOf(path.join(temp, 'parity-replay-')) !== 0) {
+    note('warning: declining to remove ' + target +
+      ', which this run did not create');
+    recordCleanupFailure('remove the scratch directory ' + target,
+      'the path is not one this run created, so it was left as it is');
+    return;
+  }
+
+  try {
+    fs.rmSync(target, { recursive: true, force: true });
+  }
+  catch (err) {
+    note('warning: could not remove the scratch directory ' + target + ': ' +
+      reasonOf(err));
+    recordCleanupFailure('remove the scratch directory ' + target,
+      reasonOf(err));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The result document
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds the machine-readable result, and with it the verdict and exit code.
+ *
+ * Six things fail a run, and each is listed separately in `gates` so a reader
+ * knows which one it was rather than inferring it from a number: an unapproved
+ * difference, a scenario that could not be driven, a scenario with no baseline
+ * to compare against, a failed named check - which includes route coverage and
+ * the zero-warning condition - an application that died mid-pass, and a
+ * teardown operation that did not complete.
+ *
+ * The last one is the only entry that also changes the CODE rather than only
+ * the verdict: `cleanupFailures` answers EXIT_ERROR, because a live application
+ * process, a leaked mongod or a surviving scratch directory means the run could
+ * not be performed cleanly, which is not the same statement as "the comparison
+ * found a difference". Every artifact is still written first, and every stderr
+ * line is still printed.
+ *
+ * @param {Object} options
+ * @param {Object} corpus
+ * @param {(Object|null)} annotations
+ * @param {(Object|null)} secureCorpus
+ * @param {Object} manifestDocument
+ * @param {Object} plans
+ * @param {Array.<Object>} passes
+ * @param {Object} gate as `qualifyGate` returns
+ * @param {Object} evidence {corpus, secureCorpus, normalizationProbes}
+ * @returns {Object}
+ */
+function buildResult(options, corpus, annotations, secureCorpus,
+  manifestDocument, plans, passes, gate, evidence) {
+  // `failingScenarios` counts SCENARIOS and `differenceRecords` counts
+  // individual differences, and they are two different numbers - one
+  // restructured page can contribute the whole per-step cap on its own.
+  // Printing the scenario count under the label "unapproved differences" would
+  // understate a failure by as much as the fan-out of its worst scenario, so
+  // both are carried and each is labelled as what it counts.
+  var gates = {
+    failingScenarios: 0,
+    differenceRecords: 0,
+    // The other half of the split, carried beside `differenceRecords` so the
+    // artifact never states a difference count without stating how many were
+    // accounted to a finding. `differenceRecords` keeps its meaning exactly:
+    // the UNAUTHORIZED differences of the failing scenarios.
+    authorizedDifferences: 0,
+    // Registered records that did not materialize. Each is a FAILURE and is
+    // already counted through its pass's failing check; carried here so a
+    // reader does not have to find it among the checks.
+    staleAuthorizations: 0,
+    undriven: 0,
+    missingBaselines: 0,
+    failedChecks: [],
+    applicationDied: false,
+    fatalPasses: [],
+    // One string per teardown operation that did not complete, in the same
+    // shape as `failedChecks` and `fatalPasses`, so the result document carries
+    // what leaked and not merely that something did.
+    cleanupFailures: cleanupFailures.map(function(entry) {
+      return 'could not ' + entry.operation + ': ' + entry.message;
+    })
+  };
+  var approved = [];
+  var result;
+
+  passes.forEach(function(entry) {
+    gates.authorizedDifferences += entry.authorized.differences;
+    gates.staleAuthorizations += entry.authorized.stale.length;
+
+    entry.scenarios.forEach(function(record) {
+      if (!record.failing) {
+        return;
+      }
+
+      if (record.status === STATUS_UNDRIVEN) {
+        gates.undriven++;
+        return;
+      }
+
+      if (record.status === STATUS_NO_BASELINE) {
+        gates.missingBaselines++;
+        return;
+      }
+
+      gates.failingScenarios++;
+      // The COMPLETE count, taken from the scenario record rather than from the
+      // enumerated list, which is capped at MAX_DIFFERENCES_PER_STEP per
+      // scenario for the report's sake.
+      gates.differenceRecords += record.differences;
+    });
+
+    entry.failingChecks.forEach(function(name) {
+      gates.failedChecks.push(entry.pass.name + ': ' + name);
+    });
+
+    if (entry.pass.applicationDied.died) {
+      gates.applicationDied = true;
+    }
+
+    if (entry.pass.fatal) {
+      gates.fatalPasses.push(entry.pass.name + ': ' + entry.pass.fatal);
+    }
+
+    approved = approved.concat(entry.approvedDeviations.map(function(record) {
+      var copy = JSON.parse(JSON.stringify(record));
+
+      copy.pass = entry.pass.name;
+
+      return copy;
+    }));
+  });
+
+  result = {
+    schema: 1,
+    tool: 'test/parity/replay.js',
+    verdict: null,
+    exitCode: null,
+    gateQualifying: gate.qualifying,
+    gateQualifyingReason: gate.qualifying
+      ? null
+      : unmetGateReason(gate, options, passes),
+    gateQualification: {
+      requirements: gate.requirements,
+      unmet: gate.unmet,
+      // Whether the run was ASKED to be a diagnostic, which is the only thing
+      // that separates an unmet requirement from a non-zero exit. Recorded
+      // beside the requirements so a reader of the artifact alone can tell a
+      // deliberately narrowed run from a gate command that fell short.
+      declaredDiagnostic: !!options.diagnostic,
+      note: 'AAP §0.9.3 decides what the gate is; this list is that decision, ' +
+        'requirement by requirement. An unmet requirement DECIDES THE VERDICT: ' +
+        'the run is reported ' + VERDICT_NOT_THE_GATE + ' and exits ' +
+        EXIT_ERROR + ' unless it was asked for with --diagnostic, which is how ' +
+        'a narrowed run - a legitimate thing to run - says that it is not ' +
+        'being cited as the gate. What it never changes is the comparison: a ' +
+        'difference fails a diagnostic run too.'
+    },
+    // The zero-warning gate this run was judged against, and the evidence it
+    // stands on. Persisted so the artifact says which bar was applied and
+    // under which flags, rather than leaving a reader to infer it from a
+    // command nobody recorded.
+    warningGate: {
+      policy: warningPolicy.POLICY,
+      workerEvidence: options.workerEvidence,
+      passes: passes.map(function(entry) {
+        var warnings = entry.pass.warnings || {};
+
+        return {
+          pass: entry.pass.name,
+          nodeFlags: entry.pass.nodeFlags,
+          flags: warnings.flags || null,
+          gateApplies: warnings.gateApplies !== false,
+          qualifying: !!warnings.qualifying,
+          ok: warnings.ok !== false,
+          notices: warnings.notices || [],
+          requirements: warnings.requirements || [],
+          worker: warnings.workerEvidence || null,
+          stderrPath: warnings.stderrPath || null
+        };
+      })
+    },
+    selfCheck: !!options.selfCheck,
+    gates: gates,
+    approvedDeviations: approved,
+    // The authorized rendered-output difference register, stated as "N
+    // authorized (per finding), M unauthorized" rather than folded into the
+    // verdict. It is deliberately a SEPARATE key from `approvedDeviations`
+    // above: that one is the closed AAP §0.7 register and this one is the
+    // generated account of the differences later remediations mandated, and a
+    // reader must be able to tell them apart in the artifact as well as in the
+    // source.
+    authorizedDifferences: {
+      registerPresent: !!evidence.authorizedRegister &&
+        !!evidence.authorizedRegister.present,
+      registerPath: evidence.authorizedRegister
+        ? evidence.authorizedRegister.path
+        : null,
+      registerRecords: evidence.authorizedRegister
+        ? evidence.authorizedRegister.records.length
+        : 0,
+      // The authorities as they were ASSERTED at startup, so a reviewer reads
+      // which findings this run was willing to file a record under, with the
+      // place each is argued and the guard each carries.
+      authorities: evidence.authorityRegister || [],
+      probes: evidence.originProbes || [],
+      total: {
+        authorized: gates.authorizedDifferences,
+        unauthorized: gates.differenceRecords,
+        stale: gates.staleAuthorizations
+      },
+      byPass: passes.map(function(entry) {
+        return {
+          pass: entry.pass.name,
+          authorized: entry.authorized.differences,
+          unauthorized: entry.authorized.unauthorizedDifferences,
+          scenarios: entry.authorized.scenarios,
+          registeredForThisPass: entry.authorized.registeredForThisPass,
+          matched: entry.authorized.matched,
+          byFinding: entry.authorized.byFinding,
+          byField: entry.authorized.byField,
+          stale: entry.authorized.stale,
+          harnessOrigin: entry.pass.harnessOrigin
+        };
+      }),
+      // Present only on a generation run, and then it is the whole account of
+      // what was filed and what was refused.
+      generation: evidence.generation || null,
+      note: 'A record is keyed by pass, scenario, step and comparison field ' +
+        'and pins BOTH values, so a change on either side no longer matches ' +
+        'it and is reported unauthorized. A record that did not materialize ' +
+        'FAILS the run, under the `authorized-difference-register` check of ' +
+        'each pass. Regenerate with --authorize, which refuses to file a ' +
+        'difference it cannot trace to a named finding.'
+    },
+    volatileSet: describeVolatileSet(evidence.normalizationProbes),
+    comparisonContract: {
+      binaryBodies: describeBinaryBodyContract(),
+      // The archive reader and its frozen register, as EXERCISED at startup
+      // rather than as described. A reviewer auditing the raw-digest exemption
+      // reads what actually fired - including the negative control, which
+      // holds a baseline-shaped container against the frozen expectation and
+      // requires it to be rejected on exactly the registered fields.
+      archiveContainerProbes: evidence.archiveProbes || [],
+      // The one framework-imposed difference this run will not fail on, with
+      // its measurement, its conditions, what it costs and the register entry
+      // that authorizes it. Emitted whole - the `register` field included -
+      // into every artifact for the same reason the volatile set is: an
+      // exemption a reader has to discover from a source file is an exemption
+      // nobody audits, and one that names no register cannot be reconciled
+      // against the argument that approved it.
+      // The second pairwise reconciliation, emitted whole for the same reason
+      // as the first: its probes as EXERCISED at startup - including the two
+      // that drive `normalizeText` itself and bind this mechanism to the
+      // committed volatile rule it complements - and what each pass actually
+      // removed, field by field, with both compared values. An exemption a
+      // reader has to discover from a source file is an exemption nobody
+      // audits.
+      heldBackShortCodes: {
+        rule: HELD_BACK_SHORT_CODE_RULE,
+        placeholder: SHORT_CODE_PLACEHOLDER,
+        expression: String(HELD_BACK_SHORT_CODE_EXPRESSION),
+        why: 'the committed `generated trinket short code` rule exempts an ' +
+          'all-digit token, because ten to twelve decimal digits is also an ' +
+          'epoch reading and an unanchored single-sided rule must not ' +
+          'rewrite one. hashify mints ten hexadecimal characters, so about ' +
+          'one code in a hundred and ten comes out all digits and is held ' +
+          'back on one side while its counterpart is normalized on the ' +
+          'other. This reconciliation closes exactly that pair, on both ' +
+          'sides together, and nothing else.',
+        costs: 'the literal value of a minted short code in the one position ' +
+          'where the committed rule had already given it up on the other ' +
+          'side. Every literal character around the code must match for this ' +
+          'to fire, both token counts must be equal, and a digit run is ' +
+          'reconciled only against the placeholder at the same position - so ' +
+          'two differing epoch readings, the case the exemption exists for, ' +
+          'still fail.',
+        probes: evidence.shortCodeProbes || null,
+        byPass: passes.map(function(entry) {
+          return Object.assign({ pass: entry.pass.name },
+            entry.pass.heldBackShortCodes || {});
+        })
+      },
+      frameworkCookieSuppression: Object.assign({},
+        FRAMEWORK_COOKIE_SUPPRESSION,
+        // The conditions, as exercised at startup rather than as described.
+        // A reader auditing the exemption reads what actually fired.
+        { probes: evidence.suppressionProbes || [] },
+        // And the register that authorizes it, as VERIFIED at startup
+        // rather than as cited: which document was read, resolved from
+        // where, how long the entry was, and the rejection branches that
+        // were exercised to prove the verification fails closed.
+        { registerVerified: evidence.registerAuthority || null })
+    },
+    sources: {
+      appRoot: options.appRoot,
+      appHead: gitHead(options.appRoot),
+      corpus: options.corpus,
+      corpusDigest: evidence.corpus ? evidence.corpus.artifactDigest : null,
+      corpusProvenance: evidence.corpus,
+      secureCorpusProvenance: evidence.secureCorpus,
+      corpusSchema: corpus.schema === undefined ? corpus.version : corpus.schema,
+      corpusScenarios: corpus.scenarios.length,
+      // Derived from the records rather than from a summary key, because
+      // capture.js writes no `captured` flag - only the hand-authored
+      // definition corpus carries one, where it is false. Counting the
+      // scenarios that actually hold a recorded response says the same thing
+      // and cannot go stale.
+      corpusScenariosWithBaseline: plans[PASS_NON_SECURE].scenarios
+        .filter(function(item) { return item.baselineRecorded; }).length,
+      corpusScenariosDrivable: plans[PASS_NON_SECURE].scenarios
+        .filter(function(item) { return item.steps.length; }).length,
+      annotations: options.annotations,
+      annotationsUsed: plans[PASS_NON_SECURE].annotationsUsed,
+      annotationsUnknown: plans[PASS_NON_SECURE].unknownAnnotations,
+      secureCorpus: options.secureCorpus,
+      manifest: options.manifestPath,
+      manifestRoutes: manifestDocument.entries.length,
+      selection: options.only.length ? options.only.slice() : 'all',
+      skippedByFilter: plans[PASS_NON_SECURE].skipped.length,
+      passesRequested: options.pass
+    },
+    passes: passes.map(summarizePass)
+  };
+
+  if (gates.fatalPasses.length) {
+    result.verdict = VERDICT_NOT_PERFORMED;
+    result.exitCode = EXIT_ERROR;
+  }
+  // `failingScenarios` is this document's name for the count of scenarios
+  // carrying an unapproved difference; `cleanupFailures` is the teardown fault
+  // that must reach the exit code even when every comparison matched.
+  else if (gates.failingScenarios || gates.undriven || gates.missingBaselines ||
+           gates.failedChecks.length || gates.applicationDied ||
+           gates.cleanupFailures.length) {
+    result.verdict = VERDICT_FAIL;
+    // A teardown fault is OPERATIONAL and dominates: the passes may have
+    // compared cleanly, but this process could not release what it acquired, so
+    // the honest code is "could not be performed cleanly" rather than "found a
+    // difference". A code already at EXIT_ERROR is never lowered.
+    result.exitCode = gates.cleanupFailures.length
+      ? EXIT_ERROR
+      : EXIT_DIFFERENCE;
+  }
+  // The comparison was sound and INCOMPLETE. Every run is the canonical gate
+  // unless it was asked for with --diagnostic, so an unmet gate requirement
+  // decides the verdict here rather than being recorded beside a PASS: the
+  // requirement list is what AAP §0.9.3 asks this tool to measure, and a run
+  // missing the secure corpus, the deprecation flags, worker evidence or a
+  // driven auth outcome has not measured it. EXIT_ERROR rather than
+  // EXIT_DIFFERENCE, because nothing was found to differ - the gate could not
+  // be performed as the gate.
+  else if (!gate.qualifying && !options.diagnostic) {
+    result.verdict = VERDICT_NOT_THE_GATE;
+    result.exitCode = EXIT_ERROR;
+  }
+  else {
+    result.verdict = VERDICT_PASS;
+    result.exitCode = EXIT_OK;
+  }
+
+  return result;
+}
+
+/**
+ * The specific warning shortfalls of each pass, by name.
+ *
+ * The zero-warning condition is measured over THIS exercise, so a run that
+ * cannot vouch for its own stream is not the gate - and a reader is owed the
+ * reason, because a missing flag and a GET-only sweep are different problems
+ * with different fixes. Each shortfall is stated specifically rather than as a
+ * category, and it is read in two places deliberately: the `warning-evidence`
+ * requirement in `qualifyGate` is decided on it, and `unmetGateReason`
+ * reports it.
+ *
+ * @param {Array.<Object>} passes
+ * @returns {Array.<string>}
+ */
+function warningShortfalls(passes) {
+  var shortfalls = [];
+
+  (passes || []).forEach(function(entry) {
+    var warnings = entry.pass && entry.pass.warnings;
+
+    if (!warnings || warnings.qualifying) {
+      return;
+    }
+
+    if (warnings.skipped) {
+      shortfalls.push('the ' + entry.pass.name + ' pass launched no application, ' +
+        'so it produced no warning evidence');
+      return;
+    }
+
+    if (!warnings.gateApplies) {
+      shortfalls.push('the ' + entry.pass.name + ' pass measured a tree that is ' +
+        'not this worktree, so its stream is a measurement of that tree and ' +
+        'not this gate');
+      return;
+    }
+
+    if (!warnings.flags.complete) {
+      shortfalls.push('the ' + entry.pass.name + ' pass produced no warning ' +
+        'evidence: ' +
+        (warnings.flags.missing.length
+          ? warnings.flags.missing.join(' ') + ' were not in force'
+          : 'warnings were suppressed by ' +
+            warnings.flags.suppressors.join(' ')));
+      return;
+    }
+
+    (warnings.requirements || []).forEach(function(item) {
+      if (!item.met) {
+        shortfalls.push('the ' + entry.pass.name + ' pass did not measure the ' +
+          'whole exercise - ' + item.id);
+      }
+    });
+  });
+
+  return shortfalls;
+}
+
+/**
+ * Why a run does not qualify as the gate, from the requirements it missed.
+ *
+ * Derived from `qualifyGate`'s own records rather than restated, so the reason
+ * cannot drift from the predicate: a requirement added there appears here
+ * without being written twice, and a run labelled non-qualifying can always
+ * name which requirement did it.
+ *
+ * @param {Object} gate as `qualifyGate` returns
+ * @param {Object} options the parsed options, read for the
+ *   --allow-unreviewed-corpus escape, which is not a gate requirement and
+ *   would otherwise go unmentioned
+ * @param {Array.<Object>} passes the accounted passes, for the per-pass
+ *   warning shortfalls
+ * @returns {string}
+ */
+function unmetGateReason(gate, options, passes) {
+  var reasons = gate.requirements.filter(function(entry) {
+    return !entry.met;
+  }).map(function(entry) {
+    return entry.id + ': ' + (entry.detail || 'the requirement was not met');
+  });
+
+  // --only and --pass are already named by the `complete-selection` and
+  // `both-cookie-passes` requirements above, so they are not repeated. The
+  // diagnostic escape is not a gate requirement and would otherwise go
+  // unmentioned.
+  if (options.allowUnreviewedCorpus) {
+    reasons.push('--allow-unreviewed-corpus accepted a corpus whose ' +
+      'provenance does not establish a capture of the base commit ' +
+      manifest.provenance.BASELINE_HEAD.slice(0, 7) + ', so the reference ' +
+      'these comparisons were made against is not baseline evidence');
+  }
+
+
+  reasons = reasons.concat(warningShortfalls(passes));
+
+  return reasons.join('; ') ||
+    'the run did not satisfy the gate requirements';
+}
+
+/**
+ * The volatile set as it was applied, for the artifact.
+ *
+ * Emitted in full, justifications included, so docs/baseline-parity.md can
+ * cite them verbatim: every entry here is a field the migration is not checked
+ * on, and that list belongs in the evidence rather than only in the source.
+ *
+ * The measured probe results travel with it. A declared rule that does not fire
+ * is not distinguishable from an absent one by reading the artifact, and the
+ * cache-prefix rule is the case where that matters: every rendered page carries
+ * a `/cache-prefix-<epoch>/` asset URL, so a reviewer needs to see that the
+ * rule fired rather than take the declaration's word for it.
+ *
+ * @param {Array.<Object>} [probes] as `assertNormalizationRules` returns
+ * @returns {Object}
+ */
+function describeVolatileSet(probes) {
+  return {
+    categories: VOLATILE_SET.map(function(category) {
+      return {
+        id: category.id,
+        title: category.title,
+        why: category.why,
+        seedingAlternative: category.seedingAlternative,
+        coverageLost: category.coverageLost,
+        headersRemoved: (category.headers || []).slice(),
+        headersComparedForPresenceOnly: (category.presenceOnlyHeaders || []).slice(),
+        cookieFieldsNotCompared: (category.cookieFields || []).slice(),
+        recordedFieldsNotCompared: (category.responseFields || []).slice(),
+        binaryDigestExemptTypes: (category.binaryDigestExemptTypes || []).slice(),
+        textPatterns: (category.textPatterns || []).map(function(pattern) {
+          return { name: pattern.name, expression: String(pattern.expression) };
+        })
+      };
+    }),
+    appliedHeadersRemoved: VOLATILE_HEADERS.slice(),
+    appliedHeadersPresenceOnly: PRESENCE_ONLY_HEADERS.slice(),
+    appliedCookieFields: VOLATILE_COOKIE_FIELDS.slice(),
+    appliedRecordedFields: VOLATILE_RESPONSE_FIELDS.slice(),
+    appliedArchiveDigestExempt: ARCHIVE_DIGEST_EXEMPT.slice(),
+    // The exemption above is the RAW DIGEST of those content types and nothing
+    // else, and this field says so beside it: a reader of the artifact alone
+    // should not conclude from a list of archive media types that the archives
+    // went uncompared. `comparisonContract.binaryBodies` carries the frozen
+    // register and both halves of the contract, and every pass carries the
+    // containers it opened under `archives`.
+    appliedArchiveDigestExemptCoveredBy: 'the raw digest only. Each of these ' +
+      'containers is opened in the same step and compared structurally - ' +
+      '`body.archive.writerProfile` against the frozen expectation in ' +
+      'ARCHIVE_CONTAINER_REGISTER, and `body.archive.fingerprint`, the ' +
+      'canonical entry table with the mtime fields excluded, against the ' +
+      'recording where the recording carries one and against that ' +
+      'register\'s pinned measurement where it does not - and either ' +
+      'comparison produces a difference that fails the run, as does an ' +
+      'archive on a registered route whose fingerprint was compared against ' +
+      'neither. See comparisonContract.binaryBodies for the contract and the ' +
+      'register, and passes[].archives for what was measured, including ' +
+      'which side decided each container.',
+    normalizationProbes: (probes || []).map(function(record) {
+      return {
+        id: record.id,
+        category: record.category,
+        rule: record.rule,
+        what: record.what,
+        input: record.input,
+        normalizedTo: record.observed,
+        rulesApplied: record.rulesApplied,
+        ok: record.ok
+      };
+    }),
+    normalizationProbeNote: 'Each probe is RUN at startup and the run refuses ' +
+      'to proceed if one does not hold, so this section is a measurement ' +
+      'rather than a restatement of the rules above. They assert both halves ' +
+      'of every rule: that the volatile part IS normalized, and that the ' +
+      'value around it is NOT - a rule that swallowed the rest of an asset ' +
+      'URL would stop comparing asset paths altogether.',
+    note: 'Six categories, fixed. An addition is a weakening and has to be ' +
+      'justified in docs/baseline-parity.md, naming the field, why seeding ' +
+      'could not make it deterministic instead, and what coverage is lost. ' +
+      'Everything else is compared exactly.'
+  };
+}
+
+/**
+ * Reduces one accounted pass to what belongs in the artifact.
+ *
+ * The per-scenario records and the differences are kept in full - they are the
+ * evidence - while the raw response records are not: the artifact says what
+ * differed, and the corpus already holds what was recorded.
+ *
+ * @param {Object} entry
+ * @returns {Object}
+ */
+function summarizePass(entry) {
+  return {
+    name: entry.pass.name,
+    secure: entry.pass.secure,
+    differential: entry.pass.differential,
+    fatal: entry.pass.fatal,
+    scenarios: entry.pass.scenarios,
+    driven: entry.pass.driven,
+    counts: entry.counts,
+    failingScenarios: entry.failingScenarios,
+    baseUrl: entry.pass.baseUrl,
+    port: entry.pass.port,
+    appRoot: entry.pass.appRoot,
+    appHead: entry.pass.appHead,
+    nodeFlags: entry.pass.nodeFlags,
+    runDir: entry.pass.runDir,
+    stdoutPath: entry.pass.stdoutPath,
+    stderrPath: entry.pass.stderrPath,
+    mongo: entry.pass.mongo,
+    seeded: entry.pass.seeded,
+    sessions: entry.pass.sessions,
+    s3Seed: entry.pass.s3Seed,
+    ordering: entry.pass.ordering,
+    applicationDied: entry.pass.applicationDied,
+    recordedDeaths: entry.pass.recordedDeaths,
+    // The scenarios the corpus records a transport failure for that THIS tree
+    // answered, and the restart each one triggered so the remainder of the
+    // pass was compared from the fixture state the recording continued from.
+    stateRealignments: entry.pass.stateRealignments,
+    relaunchBudget: entry.pass.relaunchBudget,
+    relaunches: entry.pass.relaunches,
+    stderrPaths: entry.pass.stderrPaths,
+    warningStderrPath: entry.pass.warningStderrPath,
+    reseedBeforeDestructive: entry.pass.reseedBeforeDestructive,
+    reseeds: entry.pass.reseeds,
+    undriven: entry.pass.undriven,
+    evidence: entry.pass.evidence,
+    coverage: entry.coverage,
+    // The opened archive containers: entry table, writer profile and
+    // fingerprint per archive response, so the structural comparison behind
+    // the raw-digest exemption is in the evidence and not only in the source.
+    archives: entry.archives,
+    checks: entry.checks,
+    approvedDeviations: entry.approvedDeviations,
+    // The authorized half of this pass, beside the unauthorized `differences`
+    // below it. Kept per pass as well as in the run-level account, because the
+    // secure pass compares a different recording and its authorizations are
+    // its own.
+    authorized: entry.authorized,
+    harnessOrigin: entry.pass.harnessOrigin,
+    // And what the pairwise short-code reconciliation removed in this
+    // pass, so a per-pass reader sees it without going to the run-level
+    // comparison contract.
+    heldBackShortCodes: entry.pass.heldBackShortCodes,
+    differences: entry.differences,
+    observations: entry.observations,
+    scenarioResults: entry.scenarios
+  };
+}
+
+/**
+ * The label for a path, so no block this file writes carries an absolute one.
+ *
+ * @param {(string|null|undefined)} target
+ * @param {string} appRoot the tree under test
+ * @returns {(string|null)}
+ */
+function pathLabelFor(target, appRoot) {
+  return manifest.provenance.pathLabel(target, {
+    toolRoot: TOOL_ROOT,
+    analysedRoot: appRoot
+  });
+}
+
+/**
+ * A recorded reason, made safe to write into a provenance block.
+ *
+ * The contract's guard rejects any value CONTAINING an absolute path or an ISO
+ * instant, not merely one that starts with one, and a reason is the one field
+ * here whose value is an underlying error's own words - which for a
+ * filesystem error is a quoted machine path. Delegated to
+ * `provenance.portableText` rather than matched locally, so this file and
+ * capture.js sanitize by one implementation: it replaces every embedded path
+ * with the same label `pathLabel` would give it and every instant with a
+ * marker, and keeps the words that say what happened.
+ *
+ * @param {*} value
+ * @param {string} appRoot the tree under test
+ * @returns {(string|null)}
+ */
+function portableReason(value, appRoot) {
+  return manifest.provenance.portableText(value, {
+    toolRoot: TOOL_ROOT,
+    analysedRoot: appRoot
+  });
+}
+
+/**
+ * The `--only` patterns, labelled so a regular expression is not mistaken for
+ * a path.
+ *
+ * `--only /quirk\./` is a regular expression wrapped in slashes, which is
+ * exactly the shape the contract's guard rejects as an absolute path - and it
+ * is right to reject the shape, because a value it cannot tell apart from a
+ * machine path must not reach a committed block unlabelled. The prefix is the
+ * same device `pathLabel` uses: it says what the string IS, and it keeps the
+ * pattern readable instead of reducing it to a count.
+ *
+ * @param {Array.<string>} patterns
+ * @returns {Array.<string>}
+ */
+function patternLabels(patterns) {
+  return (patterns || []).map(function(pattern) {
+    return 'pattern:' + String(pattern);
+  });
+}
+
+/**
+ * The identity an input artifact records about itself, as this run read it.
+ *
+ * A replay is only as attributable as the evidence it consumed, so the result
+ * names each input by the commit and generator that input claims - not by the
+ * path it happened to sit at. `readCorpus` and `verifiedManifest` have already
+ * refused anything whose block does not hold up, so what is recorded here is a
+ * VERIFIED identity rather than a copied assertion. A file with no block
+ * reaches this point only where absence is permitted, and says so.
+ *
+ * @param {(string|null)} target
+ * @param {string} appRoot
+ * @returns {(Object|null)}
+ */
+function inputIdentity(target, appRoot) {
+  var block;
+
+  if (!target) {
+    return null;
+  }
+
+  try {
+    block = manifest.provenance.extract(fs.readFileSync(target, 'utf8'));
+  }
+  catch (err) {
+    return {
+      artifact: pathLabelFor(path.resolve(target), appRoot),
+      recorded: false,
+      // Through portableText, because this is the one field here that carries
+      // an underlying error's own words and a filesystem error's words are a
+      // path: an ENOENT message reaching the block verbatim throws in the
+      // contract's guard at write time, which is after the whole replay has
+      // run. The words are kept and the machine-specific parts are labelled.
+      reason: portableReason('could not be re-read while writing this block: ' +
+        reasonOf(err), appRoot)
+    };
+  }
+
+  if (!block) {
+    return {
+      artifact: pathLabelFor(path.resolve(target), appRoot),
+      recorded: false,
+      reason: 'the artifact carries no provenance block, which this consumer ' +
+        'permits only for authored markers'
+    };
+  }
+
+  return {
+    artifact: block.artifact,
+    recorded: true,
+    role: block.role,
+    analysedHead: block.analysedTree ? block.analysedTree.head : null,
+    analysedIsBaseline: !!(block.analysedTree &&
+      block.analysedTree.isBaselineCommit),
+    generator: block.generator ? block.generator.path : null,
+    generatorBlob: block.generator ? block.generator.blob : null,
+    generatorCommit: block.generator ? block.generator.commit : null,
+    generatorVerified: !!(block.generator && block.generator.verified),
+    deliveredHead: block.delivered ? block.delivered.head : null,
+    payloadDigest: block.payloadDigest || null
+  };
+}
+
+/**
+ * A requirement list reduced to its verdicts, for the provenance block.
+ *
+ * Every key is kept except the free-form `detail` and `reason`, for one
+ * reason: a requirement's prose enumerates route paths, and an HTTP route path
+ * is indistinguishable from a filesystem path to the contract's portability
+ * guard - `provenance.portableText` rewrites
+ * `DELETE /api/admin/featured-course/{courseId}` to
+ * `DELETE ephemeral:featured-course{courseId}`, so making the prose portable
+ * would corrupt the very names it exists to report.
+ *
+ * Nothing is lost. The block needs to name WHICH requirement was unmet, which
+ * is its id and its verdict; the verbatim prose is carried at the result
+ * document's own top level, where full detail belongs.
+ *
+ * @param {Array.<Object>} list
+ * @returns {Array.<Object>}
+ */
+function requirementVerdicts(list) {
+  return (list || []).map(function(entry) {
+    var projected = {};
+
+    Object.keys(entry).forEach(function(key) {
+      if (key === 'detail' || key === 'reason') {
+        return;
+      }
+
+      projected[key] = entry[key];
+    });
+
+    return projected;
+  });
+}
+
+/**
+ * Recorded evidence made portable, whatever shape it arrived in.
+ *
+ * A warning notice is the runtime's own words and may name a file; worker
+ * evidence is a nested object that may carry a path several levels down. Both
+ * are walked so a run-local path is labelled wherever it sits, which is what
+ * lets this evidence travel in a provenance block at all.
+ *
+ * @param {*} value
+ * @param {string} appRoot the tree under test
+ * @returns {*}
+ */
+function portableEvidence(value, appRoot) {
+  if (typeof value === 'string') {
+    return portableReason(value, appRoot);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(function(item) {
+      return portableEvidence(item, appRoot);
+    });
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.keys(value).reduce(function(carried, key) {
+      carried[key] = portableEvidence(value[key], appRoot);
+      return carried;
+    }, {});
+  }
+
+  return value;
+}
+
+/**
+ * Builds the replay result's provenance block.
+ *
+ * "Replayed against the migrated tree" means replayed BY target-worktree
+ * tooling against a particular install of a particular commit, and this block
+ * is what makes that claim checkable. It is built by the shared contract in
+ * `./manifest`, which settles three things this record cannot establish for
+ * itself:
+ *
+ *   the tool is named by the git BLOB that ran and the commit verified to
+ *   contain it, rather than by a path plus the HEAD of whatever worktree ran
+ *   it - a path is machine state, and that HEAD belongs to a clone rather than
+ *   to an artifact;
+ *
+ *   there is no clock in the block, because a wall-clock `generatedAt` makes
+ *   two runs over one tree differ for no reason a reviewer can act on, and a
+ *   re-run over one tree has to produce the same block; and
+ *
+ *   a pass contributes what it MEANT - which cookie configuration, whether it
+ *   compared against a capture or asserted the documented differential, which
+ *   node flags were in force, how many scenarios were driven, and which tree
+ *   it drove - rather than its run-local `appRoot`, `port`, `baseUrl`,
+ *   `runDir`, `stderrPath` and Mongo settings.
+ *
+ * The result's own `sources` and `passes` keep their full detail, absolute
+ * paths included: they are the run's report, and the contract's guard applies
+ * to the provenance block. What is NOT allowed is for that unattributable
+ * detail to be the artifact's provenance.
+ *
+ * @param {Object} options
+ * @param {Object} result
+ * @returns {Object}
+ */
+function buildProvenance(options, result) {
+  var provenance = manifest.provenance;
+  var appRoot = path.resolve(options.appRoot);
+  var tree = provenance.treeIdentity(appRoot);
+
+  return provenance.build({
+    artifact: options.out,
+    // The role follows the tree that was DRIVEN, which is what this artifact
+    // is evidence about: the migrated tree is `target`, and the base commit is
+    // `baseline`, which is what --self-check's rehearsal against the captured
+    // tree produces.
+    role: tree.isBaselineCommit ? 'baseline' : 'target',
+    generatorFile: __filename,
+    toolRoot: TOOL_ROOT,
+    analysedRoot: appRoot,
+    detail: {
+      resultSchema: result.schema,
+      verdict: result.verdict,
+      exitCode: result.exitCode,
+      // Whether this run stands as the gate, and if not, why - carried in the
+      // provenance as well as in the result, so a block detached from its
+      // artifact still cannot be read as the gate.
+      gateQualifying: result.gateQualifying,
+      // A reason is the one field that legitimately carries prose, so it keeps
+      // its words and loses only the run-local parts of them.
+      gateQualifyingReason: portableReason(result.gateQualifyingReason, appRoot),
+      // The requirement-by-requirement verdict, not only its conclusion: a
+      // block that says `false` without naming which of the requirements was
+      // unmet cannot be audited. Verdicts only - see `requirementVerdicts`.
+      gateQualification: {
+        requirements: requirementVerdicts(result.gateQualification.requirements),
+        unmet: (result.gateQualification.unmet || []).slice()
+      },
+      // The warning gate travels with the provenance as well as with the
+      // result: which bar was applied, and under which flags, is part of what
+      // this artifact is evidence of. The bar and the flags are reproducible
+      // as recorded; the per-pass stderr file is not, so it becomes a label,
+      // exactly as each pass's own stderr does below.
+      warningGate: {
+        policy: result.warningGate.policy,
+        // A LABEL, like every other path in this block. The worker evidence is
+        // produced by a separate run and is routinely pointed at a directory
+        // outside the tree - `verify:corpus` puts it under $TMPDIR - and the
+        // contract's guard rejects any provenance field containing an absolute
+        // path. Measured: with PARITY_OUT set outside the repository, a
+        // complete passing run then wrote no artifact at all, because the
+        // block was built after the comparison and refused at the last step.
+        workerEvidence: pathLabelFor(result.warningGate.workerEvidence, appRoot),
+        passes: (result.warningGate.passes || []).map(function(entry) {
+          return {
+            pass: entry.pass,
+            nodeFlags: (entry.nodeFlags || []).slice(),
+            flags: entry.flags,
+            gateApplies: entry.gateApplies,
+            qualifying: entry.qualifying,
+            ok: entry.ok,
+            notices: portableEvidence(entry.notices || [], appRoot),
+            requirements: requirementVerdicts(entry.requirements),
+            worker: portableEvidence(entry.worker, appRoot),
+            stderrLog: pathLabelFor(entry.stderrPath, appRoot)
+          };
+        })
+      },
+      selfCheck: result.selfCheck,
+      passesRequested: options.pass,
+      selection: options.only.length ? 'filtered' : 'all',
+      selectionPatterns: patternLabels(options.only),
+      unreviewedCorpusAccepted: !!options.allowUnreviewedCorpus,
+      // Each input by the identity it records about itself, verified before it
+      // was consumed. This is what ties the whole set to one target state:
+      // corpus, secure corpus, annotations and route manifest each name the
+      // tree they describe and the generator that wrote them.
+      inputs: {
+        corpus: inputIdentity(options.corpus, appRoot),
+        secureCorpus: inputIdentity(options.secureCorpus, appRoot),
+        annotations: inputIdentity(options.annotations, appRoot),
+        routeManifest: inputIdentity(options.manifestPath, appRoot)
+      },
+      corpusScenarios: result.sources.corpusScenarios,
+      corpusScenariosWithBaseline: result.sources.corpusScenariosWithBaseline,
+      manifestRoutes: result.sources.manifestRoutes,
+      passes: result.passes.map(function(entry) {
+        return {
+          name: entry.name,
+          secure: !!entry.secure,
+          differential: !!entry.differential,
+          nodeFlags: (entry.nodeFlags || []).slice(),
+          scenarios: entry.scenarios,
+          driven: entry.driven,
+          // The tree each pass drove, by commit. The launcher reports the
+          // path it used; the commit is what identifies it.
+          appHead: entry.appHead || null,
+          appIsBaseline: provenance.isBaselineHead(entry.appHead || null),
+          // The application's own stderr, as a label: the file lives in the
+          // launcher's per-run directory, whose name carries a PID, and only
+          // its basename is reproducible.
+          stderrLog: pathLabelFor(entry.stderrPath, appRoot)
+        };
+      }),
+      artifacts: {
+        result: pathLabelFor(path.resolve(options.out), appRoot),
+        report: pathLabelFor(path.resolve(options.report), appRoot)
+      }
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// The human report
+// ---------------------------------------------------------------------------
+
+/**
+ * Renders the human report.
+ *
+ * Written to a FILE, always, so docs/baseline-parity.md can cite it - a report
+ * that existed only on a terminal is not evidence. The approved deviation gets
+ * a section of its own, before the differences, because a clean exit that
+ * contains an intended behaviour change must not be read as "nothing changed".
+ *
+ * @param {Object} result
+ * @param {Object} options
+ * @returns {string}
+ */
+function renderReport(result, options) {
+  var lines = [];
+
+  function heading(text) {
+    lines.push('');
+    lines.push(text);
+    lines.push(new Array(text.length + 1).join('='));
+  }
+
+  function bullet(text) {
+    lines.push('  - ' + text);
+  }
+
+  lines.push('TRINKET PARITY REPLAY');
+  lines.push('=====================');
+  lines.push('');
+  lines.push('VERDICT        ' + result.verdict + ' (exit ' + result.exitCode + ')');
+  lines.push('gate run       ' + (result.gateQualifying
+    ? 'yes - the full corpus in both cookie configurations'
+    : 'NO - ' + result.gateQualifyingReason));
+
+  if (result.selfCheck) {
+    lines.push('mode           --self-check: the tree under test is declared ' +
+      'to be the tree the');
+    lines.push('               corpus was captured from, so EVERY difference ' +
+      'fails and an');
+    lines.push('               approved deviation that materializes fails too.');
+  }
+
+  lines.push('application    ' + result.sources.appRoot +
+    (result.sources.appHead ? ' @ ' + result.sources.appHead : ''));
+  lines.push('corpus         ' + result.sources.corpus + ' (' +
+    result.sources.corpusScenarios + ' scenarios, schema ' +
+    result.sources.corpusSchema + ', ' +
+    result.sources.corpusScenariosWithBaseline + ' of ' +
+    result.sources.corpusScenariosDrivable +
+    ' drivable ones carrying a recorded baseline)');
+
+  if (result.sources.corpusProvenance) {
+    lines.push('corpus origin  captured from ' +
+      (result.sources.corpusProvenance.capturedTree.head || '(unknown)') +
+      ' by ' + (result.sources.corpusProvenance.generator.path || '(unknown)') +
+      ' @ ' + (result.sources.corpusProvenance.generator.head || '(unknown)'));
+    lines.push('corpus digest  ' + result.sources.corpusProvenance.artifactDigest +
+      (result.sources.corpusProvenance.digestVerified
+        ? ' (matches the digest its sidecar declares)'
+        : ' (computed here; the sidecar declares none)'));
+  }
+
+  lines.push('annotations    ' + (result.sources.annotations || '(none)'));
+  lines.push('secure corpus  ' + (result.sources.secureCorpus || '(none - the ' +
+    'secure pass asserts the documented differential)'));
+  lines.push('manifest       ' + result.sources.manifest + ' (' +
+    result.sources.manifestRoutes + ' routes)');
+  lines.push('selection      ' + (Array.isArray(result.sources.selection)
+    ? result.sources.selection.join(' ')
+    : result.sources.selection));
+
+  heading('GATES');
+  bullet('failing scenarios (unapproved difference)  ' +
+    result.gates.failingScenarios);
+  bullet('difference records in them                 ' +
+    result.gates.differenceRecords +
+    ' (the complete count; the listing below is capped at ' +
+    MAX_DIFFERENCES_PER_STEP + ' per scenario)');
+  // Stated on the same summary as the failing counts, because a bare "0
+  // unapproved differences" over a tree whose rendered output deliberately
+  // moved would overstate what was compared. See AUTHORIZED RENDERED-OUTPUT
+  // DIFFERENCES below for the per-finding breakdown.
+  bullet('differences authorized and attributed      ' +
+    result.gates.authorizedDifferences +
+    ' (accounted to a named finding; ' + result.gates.differenceRecords +
+    ' unauthorized)');
+  bullet('registered records that did NOT materialize ' +
+    result.gates.staleAuthorizations +
+    (result.gates.staleAuthorizations
+      ? ' <- FAILURE: a remediation the register accounts for is no longer in ' +
+        'the tree'
+      : ''));
+  bullet('scenarios not driven     ' + result.gates.undriven);
+  bullet('scenarios with no baseline ' + result.gates.missingBaselines);
+  bullet('failed named checks      ' + (result.gates.failedChecks.length
+    ? result.gates.failedChecks.join('; ')
+    : '0'));
+  bullet('application died         ' + (result.gates.applicationDied ? 'YES' : 'no'));
+  bullet('failed teardown          ' + (result.gates.cleanupFailures.length
+    ? result.gates.cleanupFailures.join('; ')
+    : '0'));
+
+  if (result.gates.fatalPasses.length) {
+    bullet('passes not performed     ' + result.gates.fatalPasses.join('; '));
+  }
+
+  renderGateQualification(lines, result, heading);
+  renderApprovedSection(lines, result, heading, bullet);
+  renderAuthorizedSection(lines, result, heading, bullet);
+
+  result.passes.forEach(function(pass) {
+    renderPass(lines, pass, result, heading, bullet);
+  });
+
+  renderVolatileSection(lines, result, heading, bullet);
+  renderHeldBackShortCodeSection(lines, result, heading, bullet);
+  renderBinaryContract(lines, result, heading, bullet);
+  renderClosing(lines, result, options, heading);
+
+  return lines.join('\n') + '\n';
+}
+
+/**
+ * What the gate requires, requirement by requirement, met or not.
+ *
+ * Rendered whatever the verdict, because "this run was the gate" is a claim in
+ * its own right and a reader has to be able to check it without reading the
+ * source. A run that satisfies every comparison and misses a requirement here
+ * is a clean diagnostic, not the parity gate, and the two must not read the
+ * same.
+ *
+ * @param {Array.<string>} lines
+ * @param {Object} result
+ * @param {function(string): undefined} heading
+ * @returns {undefined}
+ */
+function renderGateQualification(lines, result, heading) {
+  heading('GATE QUALIFICATION (AAP §0.9.3)');
+
+  result.gateQualification.requirements.forEach(function(entry) {
+    lines.push('  ' + (entry.met ? 'met ' : 'NOT ') + '  ' + entry.id +
+      ' - ' + entry.requirement);
+
+    if (entry.detail) {
+      lines.push('          ' + entry.detail);
+    }
+  });
+
+  lines.push('');
+  lines.push('  ' + (result.gateQualifying
+    ? 'Every requirement is met, so this run may be cited as the parity gate.'
+    : result.gateQualification.unmet.length + ' requirement(s) unmet, so this ' +
+      'run did not measure the gate.'));
+
+  if (!result.gateQualifying) {
+    if (result.gateQualification.declaredDiagnostic) {
+      lines.push('  It was asked for with --diagnostic, so it is reported as ' +
+        'a diagnostic and may exit 0 -');
+      lines.push('  a narrowed comparison that matches is a real result. It ' +
+        'does not stand as the gate,');
+      lines.push('  and a document citing it as one would overstate what was ' +
+        'measured.');
+    }
+    else {
+      lines.push('  It was NOT asked for with --diagnostic, so it is the ' +
+        'canonical gate and the unmet');
+      lines.push('  requirement(s) above decide the verdict: ' +
+        VERDICT_NOT_THE_GATE + ', exit ' + EXIT_ERROR + '. Supply the missing');
+      lines.push('  input(s), or pass --diagnostic to declare that this run ' +
+        'is not the gate.');
+    }
+  }
+}
+
+/**
+ * The comparison contract for binary and stream bodies, as it is applied.
+ *
+ * In the report because a document that quotes "length and content digest"
+ * without its exception overstates the gate: the digest is an OBSERVATION for
+ * the enumerated archive container types, whose headers embed each entry's
+ * modification time. This section is what such a document should be written
+ * from.
+ *
+ * @param {Array.<string>} lines
+ * @param {Object} result
+ * @param {function(string): undefined} heading
+ * @param {function(string): undefined} bullet
+ * @returns {undefined}
+ */
+function renderBinaryContract(lines, result, heading, bullet) {
+  var contract = result.comparisonContract.binaryBodies;
+  var suppression;
+  var published;
+
+  heading('BINARY AND STREAM BODIES - what is compared, exactly');
+
+  bullet('length        ' + contract.lengthCompared);
+  bullet('digest        ' + contract.digestCompared);
+  bullet('exception     ' + contract.digestObservationOnly.join(', '));
+  lines.push('                for those content types the RAW digest is ' +
+    'RECORDED AS AN OBSERVATION and');
+  lines.push('                does not fail the gate. ' +
+    contract.digestObservationOnlyReason);
+  bullet('declared by   ' + contract.digestObservationOnlyDeclaredBy);
+  bullet('structure     ' + contract.archiveStructureCompared);
+  bullet('not compared  ' + contract.archiveStructureNotCompared);
+  bullet('asserted by   ' + contract.entryLevelAssertedBy.join('; '));
+  bullet('coverage lost ' + contract.coverageLost);
+
+  renderArchiveRegister(lines, contract.archiveRegister, heading, bullet);
+  renderArchiveProbes(lines, result, heading);
+  renderArchiveMeasurements(lines, result, heading, bullet);
+
+  suppression = result.comparisonContract.frameworkCookieSuppression;
+
+  if (suppression) {
+    heading('SET-COOKIE ON A 500 - the one framework-imposed exemption, ' +
+      'REGISTERED');
+
+    bullet('rule          ' + suppression.framework +
+      ' emits only cookie CLEARS when the response carries a 500 error');
+    // Not read straight off the record: an exemption whose register metadata
+    // went missing used to render as `registered in undefined`, which reads as
+    // an exemption in force and is the one failure this section exists to
+    // surface. The guard refuses to describe it at all instead.
+    published = describeFrameworkExemption(suppression);
+
+    bullet('rule id       ' + published.id +
+      ' - a RULE over a framework predicate, not a per-scenario marker');
+    bullet('registered in ' + published.register);
+
+    if (suppression.registerVerified) {
+      bullet('register READ ' + suppression.registerVerified.documentPath +
+        ', resolved from ' + suppression.registerVerified.resolvedFrom +
+        '; entry ' + JSON.stringify(suppression.registerVerified.entryHeading) +
+        ' present, ' + suppression.registerVerified.entryLength +
+        ' characters, naming this rule id. Verified at startup, and the ' +
+        'verification proved fail-closed against ' +
+        suppression.registerVerified.probes.length + ' rejection branches.');
+    } else {
+      bullet('register READ no - this record carries no startup verification ' +
+        'of its register, so the pointer above is a citation and not a ' +
+        'checked fact');
+    }
+
+    bullet('measured      ' + suppression.measurement);
+    bullet('why exempt    ' + suppression.why);
+    bullet('what it costs ' + suppression.costs);
+    bullet('still exact   ' + suppression.retained);
+  }
+}
+
+/**
+ * The frozen archive register: what each writer is held to, and what moved.
+ *
+ * In the report because the register IS the registered change: a reader
+ * accepting that the downloaded ZIP bytes are different should see both
+ * columns and the field list without opening a source file, and a reader
+ * auditing the raw-digest exemption should see what replaced it.
+ *
+ * @param {Array.<string>} lines
+ * @param {(Object|null)} register
+ * @param {function(string): undefined} heading
+ * @param {function(string): undefined} bullet
+ * @returns {undefined}
+ */
+function renderArchiveRegister(lines, register, heading, bullet) {
+  if (!register) {
+    return;
+  }
+
+  heading('ARCHIVE CONTAINERS - the frozen writer profiles, and the ' +
+    'registered change');
+
+  bullet('registered    ' + register.registered);
+  bullet('measurement   ' + register.measurement);
+
+  register.writers.forEach(function(writer) {
+    lines.push('');
+    lines.push('  ' + writer.id + '  [' + writer.routes.join(', ') + ']');
+    bullet('writer       ' + writer.writer + '  (' + writer.dependencyChange +
+      ')');
+    bullet('baseline     ' + writer.baselineNote);
+
+    writer.changed.forEach(function(entry) {
+      lines.push('        changed  ' + entry);
+    });
+
+    ARCHIVE_PROFILE_FIELDS.forEach(function(field) {
+      var expected = writer.expected[field];
+      var baseline = writer.baseline[field];
+
+      lines.push('        ' + field + ': ' +
+        (baseline === null || baseline === undefined
+          ? '(not stated by the baseline measurement)'
+          : JSON.stringify(baseline)) +
+        ' -> ' + JSON.stringify(expected === undefined ? null : expected));
+    });
+  });
+}
+
+/**
+ * The archive reader's startup probes, as measured.
+ *
+ * @param {Array.<string>} lines
+ * @param {Object} result
+ * @param {function(string): undefined} heading
+ * @returns {undefined}
+ */
+function renderArchiveProbes(lines, result, heading) {
+  var probes = result.comparisonContract.archiveContainerProbes || [];
+
+  if (!probes.length) {
+    return;
+  }
+
+  heading('ARCHIVE READER EXERCISED AT STARTUP (' + probes.length +
+    ' probes, all of which must hold or the run refuses to start)');
+
+  probes.forEach(function(probe) {
+    lines.push('    ' + (probe.ok ? 'ok  ' : 'FAIL') + '  ' + probe.id);
+    lines.push('          ' + probe.what);
+    lines.push('          ' + probe.measured);
+  });
+}
+
+/**
+ * Every archive container the run opened, per pass.
+ *
+ * The evidence a reviewer diffs instead of re-running the tool: the entry
+ * table, the writer profile verdict and the fingerprint of each archive
+ * response, beside the raw digest that is exempt.
+ *
+ * @param {Array.<string>} lines
+ * @param {Object} result
+ * @param {function(string): undefined} heading
+ * @param {function(string): undefined} bullet
+ * @returns {undefined}
+ */
+function renderArchiveMeasurements(lines, result, heading, bullet) {
+  var any = result.passes.some(function(pass) {
+    return (pass.archives || []).length;
+  });
+
+  if (!any) {
+    return;
+  }
+
+  heading('ARCHIVE CONTAINERS OPENED - what each response actually held');
+
+  result.passes.forEach(function(pass) {
+    (pass.archives || []).forEach(function(record) {
+      lines.push('');
+      lines.push('  ' + record.scenario + '  [' + pass.name + ' pass]');
+      bullet('route        ' + record.route + '  ' + record.target);
+      bullet('container    ' + record.contentType + ', ' + record.byteLength +
+        ' bytes, state ' + record.state +
+        (record.reason ? ' - ' + record.reason : ''));
+      bullet('raw digest   ' + record.recordedDigest + ' -> ' +
+        record.observedDigest + '  (exempt: a clock read)');
+      bullet('fingerprint  ' + record.fingerprint + '  [' +
+        record.fingerprintComparison + ', compared against ' +
+        record.fingerprintComparedAgainst + ']');
+      // Both sides, always, and named: a reader has to be able to see WHICH
+      // value gated the container without reconstructing the precedence rule.
+      // The recording state is printed even when the pin decided, because the
+      // corpus-side gap is what a re-capture would close.
+      bullet('  recording  ' + (record.recordedFingerprint || '(none)') +
+        '  [' + record.recordingFingerprintState + ']');
+      bullet('  register   ' + (record.pinnedFingerprint || '(no pin)') +
+        (record.pinnedEntryCount === null
+          ? ''
+          : ', ' + record.pinnedEntryCount + ' entries, ' +
+            record.pinnedByteLength + ' bytes') +
+        (record.pinComparison
+          ? '  [' + (record.pinComparison.ok
+            ? 'matches the pin'
+            : 'DIFFERS from the pin on ' +
+              record.pinComparison.mismatches.map(function(entry) {
+                return entry.field;
+              }).join(', ')) + ']'
+          : ''));
+      bullet('entries      ' + record.entryCount +
+        (record.entriesTruncated ? ' (listing bounded)' : ''));
+
+      (record.entries || []).forEach(function(entry) {
+        lines.push('        ' + entry.name + '  ' + entry.method +
+          ', flags ' + entry.flags + ', versionNeeded ' + entry.versionNeeded +
+          '/' + entry.localVersionNeeded + ', madeBy ' + entry.versionMadeBy +
+          ', attrs ' + entry.externalAttributes +
+          (entry.unixMode ? ' (' + entry.unixMode + ')' : '') +
+          ', crc32 ' + entry.crc32Declared +
+          (entry.crc32DeclaredMatchesContent === false
+            ? ' (DOES NOT match its content: ' + entry.crc32Computed + ')'
+            : '') +
+          ', size ' + entry.uncompressedSizeDeclared +
+          ', content ' + String(entry.contentDigest).slice(0, 16));
+      });
+
+      if (record.writer) {
+        bullet('profile      ' + record.writer + ', selected by ' +
+          record.writerSelectedBy + ': ' +
+          (record.profileComparison && record.profileComparison.ok
+            ? 'every registered field matched'
+            : 'MISMATCH on ' + (record.profileComparison
+              ? record.profileComparison.mismatches.map(function(entry) {
+                return entry.field;
+              }).join(', ')
+              : '(no comparison)')));
+      }
+      else if (record.state === 'parsed') {
+        bullet('profile      NO REGISTERED WRITER for this route');
+      }
+
+      (record.profileComparison
+        ? record.profileComparison.undetermined
+        : []).forEach(function(entry) {
+        lines.push('        undetermined  ' + entry.field + ' (expected ' +
+          JSON.stringify(entry.expected) + '): ' + entry.why);
+      });
+    });
+  });
+}
+
+/**
+ * The approved-deviation section: separate, and before the differences.
+ *
+ * @param {Array.<string>} lines
+ * @param {Object} result
+ * @param {function(string): undefined} heading
+ * @param {function(string): undefined} bullet
+ * @returns {undefined}
+ */
+function renderApprovedSection(lines, result, heading, bullet) {
+  heading('APPROVED DEVIATIONS');
+
+  if (!result.approvedDeviations.length) {
+    lines.push('  none. Every compared scenario either matched its baseline or ' +
+      'failed.');
+    lines.push('');
+    lines.push('  Note that the corpus carries exactly one approved deviation - ' +
+      DEVIATION_SCENARIO_ID + ' - so');
+    lines.push('  "none" is expected only when that scenario was outside the ' +
+      'selection, when this is a');
+    lines.push('  --self-check run against the baseline tree, or when a ' +
+      'captured corpus was replayed');
+    lines.push('  without --annotations to join the marker back on.');
+    return;
+  }
+
+  result.approvedDeviations.forEach(function(record) {
+    lines.push('');
+    lines.push('  ' + record.id + '  [' + record.pass + ' pass]');
+    bullet('route        ' + record.route);
+    bullet('approved by  ' + (record.approvedBy || '(unstated)') +
+      ', under rule ' + (record.rule || '(unstated)'));
+    bullet('marker from  ' + record.markerSource);
+    bullet('verified     ' + (record.verified
+      ? 'yes - the change was checked field by field against what was approved'
+      : 'by marker only - no structured contract for this scenario'));
+    bullet('baseline     ' + (record.baseline || '(unstated)'));
+    bullet('target       ' + (record.target || '(unstated)'));
+    bullet('why approved ' + (record.reason || '(unstated)'));
+    lines.push('    the change, field by field:');
+    record.differences.forEach(function(entry) {
+      lines.push('      ' + entry.field + ': ' + JSON.stringify(entry.baselineValue) +
+        ' -> ' + JSON.stringify(entry.targetValue));
+    });
+  });
+
+  lines.push('');
+  lines.push('  This run\'s clean exit therefore does NOT mean "nothing ' +
+    'changed": it means nothing');
+  lines.push('  changed except the deviation above, which was approved in ' +
+    'advance and verified here.');
+}
+
+/**
+ * The authorized rendered-output differences, per finding and per field.
+ *
+ * Rendered whatever the verdict and in its own section, because "N authorized,
+ * M unauthorized" is the honest statement of what a clean exit means on this
+ * tree and a bare PASS is not. A reader who wants to know WHY a difference did
+ * not fail gets the finding that authorized it and the place that finding is
+ * argued, without opening the register.
+ *
+ * @param {Array.<string>} lines
+ * @param {Object} result
+ * @param {function(string): undefined} heading
+ * @param {function(string): undefined} bullet
+ * @returns {undefined}
+ */
+function renderAuthorizedSection(lines, result, heading, bullet) {
+  var account = result.authorizedDifferences;
+
+  heading('AUTHORIZED RENDERED-OUTPUT DIFFERENCES');
+
+  lines.push('  This is NOT the approved-deviation register above. That one is ' +
+    'closed at the two');
+  lines.push('  deviations AAP §0.7 decided. This is a generated, ' +
+    'digest-bound allowlist of the');
+  lines.push('  rendered-output differences that LATER order-0 remediations ' +
+    'mandated - one record per');
+  lines.push('  pass, scenario, step and comparison field, pinning both ' +
+    'values and naming the finding');
+  lines.push('  that authorized it. A record that does not materialize FAILS ' +
+    'the run; anything not in');
+  lines.push('  it fails exactly as it did before the register existed.');
+  lines.push('');
+
+  bullet('register     ' + (account.registerPresent
+    ? account.registerPath + ' (' + account.registerRecords + ' record(s))'
+    : 'none read - every difference in this run is unauthorized'));
+  bullet('authorized   ' + account.total.authorized +
+    ' difference(s) across ' + result.passes.length + ' pass(es)');
+  bullet('unauthorized ' + account.total.unauthorized + ' difference(s)');
+  bullet('stale        ' + account.total.stale +
+    ' registered record(s) did not materialize' +
+    (account.total.stale ? ' <- FAILURE' : ''));
+
+  lines.push('');
+  lines.push('  AUTHORITIES THIS RUN WOULD FILE A RECORD UNDER (' +
+    account.authorities.length + ', asserted at startup)');
+
+  account.authorities.forEach(function(authority) {
+    lines.push('    ' + authority.finding);
+    lines.push('      ' + (authority.summary || '(no summary)'));
+    lines.push('      argued in : ' + authority.arguedIn);
+    lines.push('      routes    : ' + (authority.routes
+      ? authority.routes.join(', ')
+      : '(any)'));
+    lines.push('      fields    : ' + authority.fields.join(' '));
+    lines.push('      guard     : ' + authority.guard);
+  });
+
+  account.byPass.forEach(function(entry) {
+    lines.push('');
+    // "N unauthorized" is what this line used to say, and on a PASSING run it
+    // read as the report contradicting its own verdict: the GATES block above
+    // prints `0 unauthorized` and the gate fails on the first unaccounted
+    // difference, so a passing run cannot have any. The figure is real but it
+    // is a different quantity - differences this REGISTER did not match, which
+    // on a passing run are the ones accounted for by an approved-deviation
+    // marker on the scenario or by a registered framework rule. Naming the
+    // quantity rather than mislabelling it changes no predicate: the gate's
+    // own count is computed elsewhere and is untouched.
+    lines.push('  ' + entry.pass.toUpperCase() + ' PASS: ' + entry.authorized +
+      ' authorized across ' + entry.scenarios + ' scenario(s), ' +
+      entry.unauthorized + ' difference(s) not matched by this register ' +
+      '(on a passing run each of those is accounted for by an ' +
+      'approved-deviation marker or a registered framework rule, because an ' +
+      'unaccounted difference fails the gate)');
+    lines.push('    registered for this pass: ' + entry.registeredForThisPass +
+      ', matched: ' + entry.matched);
+
+    Object.keys(entry.byFinding).forEach(function(finding) {
+      lines.push('      ' + entry.byFinding[finding] + ' x ' + finding);
+    });
+
+    if (Object.keys(entry.byField).length) {
+      lines.push('    by comparison field (indices collapsed):');
+      Object.keys(entry.byField).forEach(function(field) {
+        lines.push('      ' + entry.byField[field] + ' x ' + field);
+      });
+    }
+
+    entry.stale.forEach(function(record) {
+      lines.push('    ! DID NOT MATERIALIZE  ' + record.scenario + ' ' +
+        record.field + ' (' + record.finding + ')');
+      lines.push('        registered: ' + JSON.stringify(record.baseline) +
+        ' -> ' + JSON.stringify(record.target));
+    });
+
+    if (entry.harnessOrigin) {
+      lines.push('    harness origin: ' + (entry.harnessOrigin.installed
+        ? entry.harnessOrigin.occurrences + ' occurrence(s) of ' +
+          entry.harnessOrigin.origin + ' reconciled to ' +
+          entry.harnessOrigin.token + '; ports seen ' +
+          (entry.harnessOrigin.ports.length
+            ? entry.harnessOrigin.ports.map(function(port) {
+              return port.port + ' x' + port.occurrences;
+            }).join(', ')
+            : 'none')
+        : entry.harnessOrigin.note));
+    }
+  });
+
+  if (account.generation) {
+    lines.push('');
+    lines.push('  GENERATION (--authorize)');
+    bullet('written      ' + (account.generation.written
+      ? 'yes, ' + account.generation.records.length + ' record(s) to ' +
+        account.generation.path
+      : 'NO'));
+
+    if (account.generation.reason) {
+      bullet('residue      ' + account.generation.reason);
+    }
+
+    (account.generation.skipped || []).forEach(function(entry) {
+      lines.push('    skipped  ' + entry.scenario + ' (' + entry.differences +
+        ' difference(s)): ' + entry.reason);
+    });
+
+    (account.generation.unattributable || []).forEach(function(entry) {
+      lines.push('    ! UNATTRIBUTABLE  [' + entry.pass + '] ' +
+        entry.scenario + ' ' + entry.field);
+      lines.push('        ' + JSON.stringify(entry.baseline) + ' -> ' +
+        JSON.stringify(entry.target));
+    });
+  }
+}
+
+/**
+ * The pairwise short-code reconciliation, with everything it removed.
+ *
+ * Rendered even when it removed nothing, because "nothing was reconciled" is
+ * the fact a reviewer needs about a mechanism that CAN remove differences. The
+ * common case is an empty list: the committed rule's exemption is only reached
+ * when a minted code comes out with no letter in it.
+ *
+ * @param {Array.<string>} lines
+ * @param {Object} result
+ * @param {function(string): undefined} heading
+ * @param {function(string): undefined} bullet
+ * @returns {undefined}
+ */
+function renderHeldBackShortCodeSection(lines, result, heading, bullet) {
+  var contract = (result.comparisonContract || {}).heldBackShortCodes;
+  var probes;
+
+  if (!contract) {
+    return;
+  }
+
+  probes = (contract.probes && contract.probes.probes) || [];
+
+  heading('THE HELD-BACK SHORT CODE, RECONCILED PAIRWISE');
+
+  lines.push('  A second reconciliation, decided on both sides of a ' +
+    'comparison together and so');
+  lines.push('  outside the single-sided volatile set. ' + contract.why);
+  lines.push('');
+  lines.push('  WHAT IT COSTS. ' + contract.costs);
+  lines.push('');
+
+  bullet('rule        ' + contract.rule);
+  bullet('placeholder ' + contract.placeholder);
+  bullet('tokens      ' + contract.expression);
+  bullet('probes      ' + probes.length + ', all of which passed before a ' +
+    'request was driven (' +
+    ((contract.probes && contract.probes.binding) || 0) +
+    ' of them drive normalizeText itself and bind this mechanism to the ' +
+    'committed rule)');
+
+  probes.forEach(function(probe) {
+    lines.push('    ' + (probe.binding ? 'binding ' : 'refusal ') +
+      probe.name);
+  });
+
+  (contract.byPass || []).forEach(function(entry) {
+    lines.push('');
+    lines.push('  PASS ' + entry.pass + ': ' + (entry.entries || []).length +
+      ' difference(s) reconciled across ' + (entry.steps || 0) + ' step(s), ' +
+      (entry.tokens || 0) + ' token pair(s)');
+
+    if (!(entry.entries || []).length) {
+      lines.push('    ' + entry.note);
+
+      return;
+    }
+
+    entry.entries.forEach(function(record) {
+      lines.push('    ' + record.scenario + ' [' + record.step + ' #' +
+        record.stepIndex + '] ' + record.field);
+      lines.push('        ' + JSON.stringify(record.baseline) + ' <-> ' +
+        JSON.stringify(record.target));
+    });
+  });
+}
+
+/**
+ * One pass: its differences, its coverage, its checks and its evidence.
+ *
+ * @param {Array.<string>} lines
+ * @param {Object} pass
+ * @param {Object} result
+ * @param {function(string): undefined} heading
+ * @param {function(string): undefined} bullet
+ * @returns {undefined}
+ */
+function renderPass(lines, pass, result, heading, bullet) {
+  heading('PASS: ' + pass.name.toUpperCase() +
+    (pass.differential ? ' (derived differential)' : ''));
+
+  bullet('served       ' + (pass.baseUrl || '(not started)') +
+    ' from ' + pass.appRoot + (pass.appHead ? ' @ ' + pass.appHead : ''));
+  bullet('scenarios    ' + pass.driven + ' driven of ' + pass.scenarios +
+    ', ' + pass.failingScenarios + ' failing');
+  bullet('outcomes     ' + JSON.stringify(pass.counts));
+  bullet('node flags   ' + (pass.nodeFlags.length
+    ? pass.nodeFlags.join(' ')
+    : '(none)') + describeWarningFlags(pass));
+  bullet('stderr       ' + (pass.stderrPath || '(none)'));
+  bullet('database     ' + (pass.mongo
+    ? pass.mongo.host + ':' + pass.mongo.port + '/' + pass.mongo.database
+    : '(none)'));
+  bullet('sessions     ' + JSON.stringify(pass.sessions &&
+    pass.sessions.established));
+  bullet('order        ' + pass.ordering.readOnly + ' read-only then ' +
+    pass.ordering.mutating + ' mutating, in the corpus\'s own order' +
+    (pass.ordering.readOnlyBeforeMutating
+      ? ''
+      : ' - NOTE: the corpus interleaves them, so a mutation ran before a ' +
+        'read-only case'));
+
+  if (pass.fatal) {
+    lines.push('');
+    lines.push('  THIS PASS WAS NOT PERFORMED: ' + pass.fatal);
+  }
+
+  if (pass.differential) {
+    lines.push('');
+    lines.push('  This pass has no recorded baseline of its own: the corpus ' +
+      'was captured through the');
+    lines.push('  launcher\'s non-secure default. It replays the SAME ' +
+      'scenarios in the SAME order - a');
+    lines.push('  subset would change the cross-request session state some ' +
+      'responses embed, which was');
+    lines.push('  measured - and asserts the documented cookie differential: ' +
+      'Secure becomes true on');
+    lines.push('  every session cookie, SameSite does NOT move (it is set ' +
+      'once on the state definition,');
+    lines.push('  and the private-field patch appends the Expires horizon ' +
+      'alone - approved deviation 7,');
+    lines.push('  docs/preserved-quirks.md §11.11), the horizon itself is ' +
+      'unchanged, and EVERY OTHER');
+    lines.push('  FIELD is compared exactly.');
+    lines.push('  Capture a corpus with capture.js against a --secure server ' +
+      'and pass --secure-corpus');
+    lines.push('  for an exact comparison instead of a derived one.');
+  }
+
+  if (pass.applicationDied.died) {
+    lines.push('');
+    lines.push('  THE APPLICATION DIED during this pass, on ' +
+      pass.applicationDied.lastScenario + ' (case ' +
+      (pass.applicationDied.lastIndex + 1) + ').');
+    lines.push('  ' + pass.applicationDied.remaining + ' scenario(s) were ' +
+      'never reached. Only the first transport failure is');
+    lines.push('  meaningful; the rest describe a server that was no longer ' +
+      'there. Its stderr is at');
+    lines.push('  ' + (pass.applicationDied.stderrPath || '(unknown)') + '.');
+  }
+
+  if ((pass.reseeds || []).length) {
+    lines.push('');
+    lines.push('  ' + pass.reseeds.length + ' forced reseed(s) ran, one ' +
+      'before each destructive case, as the capture did.');
+    (pass.reseeds || []).filter(function(entry) {
+      return !entry.ok;
+    }).forEach(function(entry) {
+      lines.push('  RESEED BEFORE ' + entry.beforeScenario + ' FAILED: ' +
+        entry.reason);
+    });
+  }
+  else if (pass.reseedBeforeDestructive === false) {
+    lines.push('');
+    lines.push('  no forced reseed ran, because the corpus records that its ' +
+      'capture did not force one either.');
+  }
+
+  if ((pass.recordedDeaths || []).length) {
+    lines.push('');
+    lines.push('  ' + pass.recordedDeaths.length + ' scenario(s) took the ' +
+      'application down, as the recorded baseline did:');
+    pass.recordedDeaths.forEach(function(entry) {
+      lines.push('    ' + entry.id + ' (case ' + (entry.index + 1) + ') - ' +
+        (entry.relaunched
+          ? 'restarted and re-seeded, ' + entry.remaining +
+            ' scenario(s) driven after it'
+          : entry.remaining
+            ? 'NOT restarted'
+            : 'the last case of the pass, nothing to restart'));
+    });
+    lines.push('  The corpus holds a transport failure for each of them, so ' +
+      'the two trees agree there. Each');
+    lines.push('  restart provisions its own database and its own run ' +
+      'directory, which is why the evidence');
+    lines.push('  counts above are a sum over ' +
+      ((pass.relaunches || []).length + 1) + ' segment(s).');
+
+    (pass.relaunches || []).filter(function(entry) {
+      return !entry.ok;
+    }).forEach(function(entry) {
+      lines.push('  RESTART ' + entry.attempt + ' FAILED after ' +
+        entry.afterScenario + ': ' + entry.reason);
+    });
+  }
+
+  if ((pass.stateRealignments || []).length) {
+    lines.push('');
+    lines.push('  ' + pass.stateRealignments.length + ' scenario(s) that the ' +
+      'corpus records a transport failure for were ANSWERED by this tree, so ' +
+      'the');
+    lines.push('  application was restarted and re-seeded after each one - ' +
+      'the baseline recording continued');
+    lines.push('  from a restart at the same point, and the rest of the pass ' +
+      'is only comparable against the');
+    lines.push('  same fixture state. The difference measured AT each ' +
+      'scenario stands and is reported above:');
+    pass.stateRealignments.forEach(function(entry) {
+      lines.push('    ' + entry.id + ' (case ' + (entry.index + 1) + ') - ' +
+        (entry.relaunched
+          ? 'restarted and re-seeded, ' + entry.remaining +
+            ' scenario(s) driven after it'
+          : 'NOT restarted (' + entry.reason + '), ' + entry.remaining +
+            ' scenario(s) not driven'));
+    });
+  }
+
+  renderDifferences(lines, pass);
+  renderChecks(lines, pass, bullet);
+  renderCoverage(lines, pass, bullet);
+  renderObservations(lines, pass);
+}
+
+/**
+ * The differences, each with everything a reviewer needs to act on it.
+ *
+ * @param {Array.<string>} lines
+ * @param {Object} pass
+ * @returns {undefined}
+ */
+function renderDifferences(lines, pass) {
+  lines.push('');
+  lines.push('  DIFFERENCES (' + pass.differences.length + ' listed)');
+
+  if (!pass.differences.length) {
+    lines.push('    none.');
+    return;
+  }
+
+  pass.differences.forEach(function(entry, index) {
+    lines.push('');
+    lines.push('  [' + (index + 1) + '] ' + entry.scenario +
+      '  ' + entry.route + '  step ' + entry.step);
+    lines.push('      field    ' + entry.field);
+    lines.push('      request  ' + (entry.target === undefined
+      ? '(unknown)'
+      : entry.identity + ' -> ' + entry.target));
+    lines.push('      baseline ' + JSON.stringify(entry.baselineValue));
+    lines.push('      target   ' + JSON.stringify(entry.targetValue));
+
+    if (entry.note) {
+      lines.push('      note     ' + entry.note);
+    }
+
+    if (entry.baselineDetail !== undefined || entry.targetDetail !== undefined) {
+      lines.push('      detail   baseline ' + JSON.stringify(entry.baselineDetail) +
+        ', target ' + JSON.stringify(entry.targetDetail));
+    }
+  });
+}
+
+/**
+ * The flag audit, beside the flags themselves in the report.
+ *
+ * Read off the pass's own warning check rather than from a second copy, so the
+ * line a human reads and the field a machine reads cannot disagree. Printed
+ * next to `node flags` because that is where a reader looks when asking whether
+ * this run could have SEEN a warning at all - the question the zero-warning
+ * gate turns on, and the one a flagless run answers "no" to without saying so.
+ *
+ * @param {Object} pass A summarized pass.
+ * @returns {string}
+ */
+function describeWarningFlags(pass) {
+  var check = (pass.checks || []).filter(function(entry) {
+    return entry.name === warningPolicy.CHECK_NAME;
+  })[0];
+
+  if (!check || !check.flags) {
+    return '';
+  }
+
+  if (check.flags.complete) {
+    return '  [warning evidence: the required flags were in force]';
+  }
+
+  return '  [NO WARNING EVIDENCE: ' + (check.flags.missing.length
+    ? 'missing ' + check.flags.missing.join(' ')
+    : 'suppressed by ' + check.flags.suppressors.join(' ')) + ']';
+}
+
+/**
+ * The named checks.
+ *
+ * @param {Array.<string>} lines
+ * @param {Object} pass
+ * @param {function(string): undefined} bullet
+ * @returns {undefined}
+ */
+function renderChecks(lines, pass, bullet) {
+  lines.push('');
+  lines.push('  CHECKS');
+
+  pass.checks.forEach(function(check) {
+    lines.push('    ' + (check.ok ? 'PASS' : 'FAIL') + '  ' + check.name +
+      '  (' + check.asserted + ' asserted' +
+      // A check that knows how many assertions it OWES prints the
+      // denominator, so "5 asserted" can never be read off a set of four.
+      // `minimum` is the field the accounting functions carry it in; a
+      // numeric `required` is honoured too, and the auth check's `required`
+      // is the list of ids rather than a count, which is why the type is
+      // tested rather than assumed.
+      (check.minimum === undefined || check.minimum === null
+        ? (typeof check.required === 'number'
+          ? ' of ' + check.required + ' required'
+          : '')
+        : ' of ' + check.minimum + ' required') +
+      (check.skipped ? ', skipped' : '') + ')');
+
+    if (check.reason) {
+      lines.push('          ' + check.reason);
+    }
+
+    check.failures.forEach(function(failure) {
+      lines.push('          ! ' + failure);
+    });
+  });
+
+  // The auth outcomes are listed one by one whatever the verdict, because "all
+  // five were asserted" is itself the claim being made.
+  pass.checks.forEach(function(check) {
+    if (check.name !== 'auth-scheme outcomes' || !check.entries.length) {
+      return;
+    }
+
+    lines.push('');
+    lines.push('  AUTH-SCHEME OUTCOMES, one by one');
+    check.entries.forEach(function(entry) {
+      var state;
+
+      if (!entry.present) {
+        state = entry.filteredOut ? 'filtered' : 'ABSENT ';
+      }
+      else if (entry.asserted) {
+        state = 'asserted';
+      }
+      else if (!entry.driven) {
+        state = entry.exempt ? 'exempt ' : 'UNDRIVEN';
+      }
+      else if (entry.differences) {
+        state = 'DIFFERS';
+      }
+      else if (!entry.compared) {
+        state = 'no base';
+      }
+      else {
+        state = 'NOT MET';
+      }
+
+      lines.push('    ' + state + '  ' + entry.id +
+        (entry.route ? '  (' + entry.route + ', as ' + entry.identity + ')' : ''));
+      lines.push('        outcome: ' + entry.outcome);
+
+      if (entry.description) {
+        lines.push('        ' + entry.description);
+      }
+
+      // Printed when present, and never as a justification: an outcome that
+      // carries one and was not driven prints UNDRIVEN above it.
+      if (entry.unreachableReason) {
+        lines.push('        claimed unreachable: ' +
+          String(entry.unreachableReason).slice(0, 160));
+      }
+
+      if (entry.exempt) {
+        lines.push('        exempt: ' + entry.exempt.reason +
+          ' (' + entry.exempt.aap + ')');
+      }
+
+      // The injected-fault reconciliation, printed whenever the scenario arms
+      // one. "expectation met" and "the fault was actually injected" are two
+      // claims and the report says both.
+      if (entry.faultCheck) {
+        lines.push('        injected faults: ' +
+          (entry.faultCheck.ok ? 'confirmed ' : 'NOT CONFIRMED ') +
+          '(' + entry.faultCheck.expected + ' armed, ' +
+          (entry.faultCheck.observed === null
+            ? 'no record'
+            : entry.faultCheck.observed + ' recorded') + ')');
+
+        if (!entry.faultCheck.ok) {
+          lines.push('        ' + entry.faultCheck.reason);
+        }
+      }
+    });
+  });
+
+  // The warning gate's own evidence, listed whatever the verdict, for the same
+  // reason the auth outcomes are: "the whole exercise was measured under the
+  // tracing flags" is itself a claim, and a reader must be able to see which
+  // part of it holds. A clean stderr over 137 anonymous GETs is not the gate,
+  // and printing only PASS would let it look like one.
+  pass.checks.forEach(function(check) {
+    if (check.name !== warningPolicy.CHECK_NAME) {
+      return;
+    }
+
+    lines.push('');
+    lines.push('  ZERO-WARNING GATE (' + check.policy.id + ', ' +
+      check.policy.allowances.length + ' allowance(s))');
+    lines.push('    flags        ' + (check.flags.effective.length
+      ? check.flags.effective.join(' ')
+      : '(none)') + (check.flags.complete
+        ? ''
+        : '  <- REQUIRED: ' + check.flags.required.join(' ')));
+    lines.push('    stream       ' + (check.stderrPath || '(none)') + ', ' +
+      check.notices.length + ' notice(s)');
+    lines.push('    applies      ' + (check.gateApplies
+      ? 'yes - the tree under test is this worktree'
+      : 'NO - measurement only; ' + check.reason));
+
+    check.notices.forEach(function(notice) {
+      lines.push('    notice       ' + notice.summary);
+
+      if (notice.origin.length) {
+        lines.push('                 raised at ' + notice.origin[0]);
+      }
+    });
+
+    (check.requirements || []).forEach(function(item) {
+      lines.push('    ' + (item.met ? 'met      ' : 'NOT MET  ') + '    ' +
+        item.id + (item.met ? '' : ': ' + item.detail));
+    });
+
+    if (check.workerEvidence) {
+      lines.push('    worker       ' + (check.workerEvidence.supplied
+        ? check.workerEvidence.path + ' (' +
+          (check.workerEvidence.qualifying ? 'clean under the flags' : 'not qualifying')
+          + ')'
+        : '(not supplied)'));
+    }
+  });
+}
+
+/**
+ * Coverage, including the unreachable entries with their stated reasons.
+ *
+ * @param {Array.<string>} lines
+ * @param {Object} pass
+ * @param {function(string): undefined} bullet
+ * @returns {undefined}
+ */
+function renderCoverage(lines, pass, bullet) {
+  lines.push('');
+  lines.push('  COVERAGE');
+  bullet('routes represented   ' + pass.coverage.represented + ' of ' +
+    pass.coverage.routes);
+  bullet('unrepresented        ' + (pass.coverage.unrepresented.length || 'none'));
+
+  pass.coverage.unrepresented.slice(0, 50).forEach(function(key) {
+    lines.push('      ! ' + key);
+  });
+
+  if (pass.coverage.unrepresented.length > 50) {
+    lines.push('      ! ... and ' + (pass.coverage.unrepresented.length - 50) +
+      ' more; the machine-readable result lists them all');
+  }
+
+  bullet('unknown route keys   ' + (pass.coverage.unknownRoutes.length || 'none'));
+  bullet('failure paths        ' +
+    (pass.coverage.routes - pass.coverage.successPathOnly.length -
+      pass.coverage.unrepresented.length) +
+    ' route(s) were driven on a failure path as well as a success path; ' +
+    pass.coverage.successPathOnly.length + ' on a success path only');
+  lines.push('      (one minimal request per route exercises success paths ' +
+    'only. The changed-error-edge');
+  lines.push('      checklist in docs/error-edge-inventory.md is what ' +
+    'supplies the rest, and the corpus');
+  lines.push('      decides which routes carry an error edge worth driving.)');
+
+  if (pass.coverage.unreachable.length) {
+    lines.push('');
+    lines.push('  UNREACHABLE BY DESIGN, each with its stated reason');
+    pass.coverage.unreachable.forEach(function(entry) {
+      lines.push('    ' + entry.id + '  (' + entry.route + ')');
+      lines.push('      ' + entry.reason);
+    });
+  }
+}
+
+/**
+ * Observations: reported, never gating.
+ *
+ * @param {Array.<string>} lines
+ * @param {Object} pass
+ * @returns {undefined}
+ */
+function renderObservations(lines, pass) {
+  var grouped = {};
+
+  pass.observations.forEach(function(entry) {
+    grouped[entry.field] = (grouped[entry.field] || 0) + 1;
+  });
+
+  lines.push('');
+  lines.push('  OBSERVATIONS (not gate fields; inside the volatile set)');
+
+  if (!pass.observations.length) {
+    lines.push('    none.');
+    return;
+  }
+
+  Object.keys(grouped).sort().forEach(function(field) {
+    lines.push('    ' + grouped[field] + ' x ' + field);
+  });
+
+  lines.push('    the machine-readable result carries each one with its ' +
+    'values and its reason.');
+}
+
+/**
+ * The volatile set, in the report, because a reader has to be able to see what
+ * was NOT compared without reading the source.
+ *
+ * @param {Array.<string>} lines
+ * @param {Object} result
+ * @param {function(string): undefined} heading
+ * @param {function(string): undefined} bullet
+ * @returns {undefined}
+ */
+function renderVolatileSection(lines, result, heading, bullet) {
+  heading('WHAT WAS NOT COMPARED - the volatile set, in full');
+
+  lines.push('  ' + result.volatileSet.categories.length + ' categories, ' +
+    'fixed. Everything else is compared exactly.');
+
+  result.volatileSet.categories.forEach(function(category) {
+    lines.push('');
+    lines.push('  ' + category.id + ' - ' + category.title);
+    bullet('why           ' + category.why);
+    bullet('seeding       ' + category.seedingAlternative);
+    bullet('coverage lost ' + category.coverageLost);
+
+    if (category.headersRemoved.length) {
+      bullet('headers       ' + category.headersRemoved.join(', '));
+    }
+
+    if (category.headersComparedForPresenceOnly.length) {
+      bullet('presence only ' + category.headersComparedForPresenceOnly.join(', '));
+    }
+
+    if (category.cookieFieldsNotCompared.length) {
+      bullet('cookie fields ' + category.cookieFieldsNotCompared.join(', '));
+    }
+
+    if (category.recordedFieldsNotCompared.length) {
+      bullet('record fields ' + category.recordedFieldsNotCompared.join(', '));
+    }
+
+    if (category.binaryDigestExemptTypes.length) {
+      bullet('archive types ' + category.binaryDigestExemptTypes.join(', '));
+      lines.push('                the RAW DIGEST only: the length is compared ' +
+        'exactly and the container is');
+      lines.push('                opened and compared structurally in the same ' +
+        'step - writer profile against');
+      lines.push('                the frozen ARCHIVE_CONTAINER_REGISTER, and ' +
+        'the entry-table fingerprint');
+      lines.push('                against the recording where it carries one ' +
+        'and against that register\'s');
+      lines.push('                pinned measurement where it does not. Both ' +
+        'fail the run.');
+    }
+
+    category.textPatterns.forEach(function(pattern) {
+      bullet('pattern       ' + pattern.name + '  ' + pattern.expression);
+    });
+  });
+
+  if (result.volatileSet.normalizationProbes.length) {
+    lines.push('');
+    lines.push('  RULES EXERCISED AT STARTUP (' +
+      result.volatileSet.normalizationProbes.length + ' probes, all of which ' +
+      'must hold or the run refuses to start)');
+
+    result.volatileSet.normalizationProbes.forEach(function(probe) {
+      lines.push('    ' + (probe.ok ? 'ok  ' : 'FAIL') + '  ' + probe.id);
+      lines.push('          ' + probe.what);
+      lines.push('          ' + JSON.stringify(probe.input) + ' -> ' +
+        JSON.stringify(probe.normalizedTo) +
+        (probe.rulesApplied.length
+          ? '  [' + probe.rulesApplied.join(', ') + ']'
+          : '  [no rule fired]'));
+    });
+
+    lines.push('');
+    lines.push('  ' + result.volatileSet.normalizationProbeNote);
+  }
+
+  lines.push('');
+  lines.push('  These justifications belong in docs/baseline-parity.md and are ' +
+    'emitted into the');
+  lines.push('  machine-readable result so they can be cited verbatim rather ' +
+    'than paraphrased.');
+}
+
+/**
+ * The closing lines: where the artifacts are, and what to do next.
+ *
+ * @param {Array.<string>} lines
+ * @param {Object} result
+ * @param {Object} options
+ * @param {function(string): undefined} heading
+ * @returns {undefined}
+ */
+function renderClosing(lines, result, options, heading) {
+  heading('ARTIFACTS');
+  lines.push('  result      ' + options.out + ' (provenance embedded)');
+  lines.push('  provenance  ' + options.out + '.provenance.json (run output; ' +
+    'the same block plus a digest of the result\'s bytes)');
+  lines.push('  report      ' + options.report);
+  lines.push('');
+  lines.push('  ' + (result.exitCode === EXIT_OK
+    ? 'Nothing to act on.'
+    : 'Act on the differences above. Each names its scenario, its route, its ' +
+      'field and both'));
+
+  if (result.exitCode !== EXIT_OK) {
+    lines.push('  values, so no re-run is needed to see what changed. R-d ' +
+      'prohibits behaviour');
+    lines.push('  improvements, so a difference is a failure even where the ' +
+      'new behaviour looks');
+    lines.push('  better - the only exception is a scenario carrying an ' +
+      'approved-deviation marker.');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Artifacts
+// ---------------------------------------------------------------------------
+
+// Counter behind the temporary filenames below, so two artifacts written in
+// the same millisecond by the same process cannot collide.
+var artifactSequence = 0;
+
+/**
+ * Writes one artifact atomically, creating its directory if it is not there.
+ *
+ * The bytes go to a unique temporary file in the artifact's own directory,
+ * which is flushed, closed and then renamed over the target. A same-directory
+ * rename is atomic, so a reader sees either the previous artifact or the
+ * complete new one - never a half-written file. Writing in place would let an
+ * interruption or a full filesystem truncate the last known-good result, and a
+ * truncated gate artifact reads as a gate that was never run.
+ *
+ * The temporary file is removed on failure, so a failed run leaves the
+ * previous artifacts exactly as it found them.
+ *
+ * @param {string} target
+ * @param {string} text
+ * @returns {undefined}
+ * @throws {ToolError} If it cannot be written.
+ */
+function writeArtifact(target, text) {
+  var resolved = path.resolve(target);
+  var temporary;
+  var descriptor = null;
+
+  try {
+    fs.mkdirSync(path.dirname(resolved), { recursive: true });
+  }
+  catch (err) {
+    throw new ToolError('could not create the directory for ' + target + ': ' +
+      reasonOf(err));
+  }
+
+  artifactSequence += 1;
+  temporary = resolved + '.parity-tmp-' + process.pid + '-' + artifactSequence;
+
+  try {
+    // 'wx' rather than 'w': a temporary name that already exists is a
+    // collision worth failing on, not a file to overwrite.
+    descriptor = fs.openSync(temporary, 'wx');
+    fs.writeFileSync(descriptor, text);
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = null;
+    fs.renameSync(temporary, resolved);
+  }
+  catch (err) {
+    if (descriptor !== null) {
+      try {
+        fs.closeSync(descriptor);
+      }
+      catch (closeError) {
+        // Swallowed deliberately: the write failure below is the reason worth
+        // reporting, and a close error while already failing would mask it.
+      }
+    }
+
+    try {
+      fs.unlinkSync(temporary);
+    }
+    catch (unlinkError) {
+      // The temporary file may never have been created. Either way the
+      // artifact itself is untouched, which is the guarantee that matters.
+    }
+
+    throw new ToolError('could not write ' + target + ': ' + reasonOf(err));
+  }
+}
+
+/**
+ * Writes the result - provenance embedded - its sidecar and the human report.
+ *
+ * All three, always, whatever the verdict. A failing run is exactly the run
+ * whose artifacts someone needs. Nothing here declares any of the three
+ * mandatory to READ another: the result carries its own provenance, so it is
+ * attributable on its own.
+ *
+ * @param {Object} result
+ * @param {Object} options
+ * @returns {string} the rendered report
+ */
+function writeArtifacts(result, options) {
+  var report = renderReport(result, options);
+  var record = buildProvenance(options, result);
+  var text;
+
+  // Embedded AND written beside, for the reason the corpus is: the result
+  // itself must say which tree it drove and which evidence it consumed,
+  // without depending on a companion file that a delivery may not carry.
+  // `attach` hash-links the two, so a block copied in from another run fails
+  // its own payload digest.
+  manifest.provenance.attach(result, record);
+  text = serialize(result);
+
+  writeArtifact(options.out, text);
+  // A run output: it adds a digest over the exact bytes just written, which is
+  // what a byte-for-byte comparison of two results wants outside the compared
+  // region.
+  writeArtifact(options.out + '.provenance.json',
+    serialize(manifest.provenance.sidecar(record, text)));
+  writeArtifact(options.report, report);
+
+  note('wrote ' + options.out + ' (role ' + record.role + ', tree under test ' +
+    ((record.analysedTree && record.analysedTree.headShort) ||
+      'not a checkout') + ', generator blob ' +
+    String(record.generator.blob).slice(0, 12) +
+    (record.generator.verified
+      ? ' verified in ' + String(record.generator.commit).slice(0, 7)
+      : ' (' + record.generator.commitState + ')') + ')');
+  note('wrote ' + options.out + '.provenance.json (run output; the result ' +
+    'carries the same block embedded)');
+  note('wrote ' + options.report);
+
+  return report;
+}
+
+// ---------------------------------------------------------------------------
+// Entry point
+// ---------------------------------------------------------------------------
+
+/**
+ * The CLI.
+ *
+ * @param {Array.<string>} [argv]
+ * @returns {Promise<number>} the exit code
+ */
+async function main(argv) {
+  var options;
+  var result;
+  var report;
+
+  try {
+    options = parseArguments(argv || process.argv.slice(2));
+  }
+  catch (err) {
+    note(reasonOf(err));
+    process.stderr.write(USAGE + '\n');
+    return EXIT_ERROR;
+  }
+
+  if (options.help) {
+    process.stderr.write(USAGE + '\n');
+    return EXIT_OK;
+  }
+
+  try {
+    result = await replay(options);
+  }
+  catch (err) {
+    note(reasonOf(err));
+
+    if (err && err.usage) {
+      process.stderr.write(USAGE + '\n');
+    }
+    else if (err && err.stack && !(err instanceof ToolError)) {
+      // An unexpected fault, as opposed to a reported one. The stack is worth
+      // more than the tidiness of hiding it.
+      process.stderr.write(err.stack + '\n');
+    }
+
+    // A replay that could not be performed is never a pass. There is no path
+    // through this file that returns EXIT_OK without a completed comparison.
+    return EXIT_ERROR;
+  }
+
+  report = writeArtifacts(result, options);
+
+  if (options.printReport) {
+    process.stdout.write(report);
+  }
+
+  // The report also goes to stderr, so a human running this sees the verdict
+  // and the differences without opening a file - while the file remains the
+  // citable copy.
+  process.stderr.write(report);
+
+  note('VERDICT ' + result.verdict + ' (exit ' + result.exitCode + ')' +
+    (result.gateQualifying ? '' : ' - NOT A GATE RUN: ' +
+      result.gateQualifyingReason));
+
+  return result.exitCode;
+}
+
+module.exports = {
+  replay: replay,
+  runPass: runPass,
+  runScenario: runScenario,
+
+  // Every one of these has a failure mode worth testing directly rather than
+  // through a spawned server: a comparator that cannot fail in a category is
+  // not comparing it.
+  compareStep: compareStep,
+  compareHeaders: compareHeaders,
+  compareCookies: compareCookies,
+  compareBody: compareBody,
+  compareJson: compareJson,
+
+  // The archive-container reader and its two comparisons. Exported for the
+  // same reason as the comparators above and for one more: the reader is what
+  // stands behind the raw-digest exemption, so a check must be able to hand it
+  // bytes directly - including malformed ones - rather than only reach it
+  // through a spawned server that serves well-formed archives.
+  readArchiveContainer: readArchiveContainer,
+  archiveWriterProfile: archiveWriterProfile,
+  archiveFingerprint: archiveFingerprint,
+  archiveCanonicalJson: archiveCanonicalJson,
+  archiveContainerKind: archiveContainerKind,
+  crc32Of: crc32Of,
+  compareArchive: compareArchive,
+  compareArchiveProfile: compareArchiveProfile,
+  compareArchivePin: compareArchivePin,
+  describeArchiveComparison: describeArchiveComparison,
+  describeArchiveEntryDivergence: describeArchiveEntryDivergence,
+  selectArchiveWriter: selectArchiveWriter,
+  accountArchives: accountArchives,
+  accountArchiveCheck: accountArchiveCheck,
+  assertArchiveReader: assertArchiveReader,
+  ARCHIVE_CONTAINER_REGISTER: ARCHIVE_CONTAINER_REGISTER,
+  ARCHIVE_PROFILE_FIELDS: ARCHIVE_PROFILE_FIELDS,
+  ARCHIVE_PROFILE_METHOD_FIELDS: ARCHIVE_PROFILE_METHOD_FIELDS,
+  ARCHIVE_PIN_FIELDS: ARCHIVE_PIN_FIELDS,
+  ARCHIVE_SUMMARY_SCHEMA: ARCHIVE_SUMMARY_SCHEMA,
+  ARCHIVE_MAX_RECORDED_ENTRIES: ARCHIVE_MAX_RECORDED_ENTRIES,
+  ARCHIVE_MAX_INFLATE_BYTES: ARCHIVE_MAX_INFLATE_BYTES,
+  compareMarkup: compareMarkup,
+  compareLists: compareLists,
+  compareCrossLocations: compareCrossLocations,
+  markupSurface: markupSurface,
+  flattenJson: flattenJson,
+  parseAttributes: parseAttributes,
+  secureDifferential: secureDifferential,
+  typeWithoutCharset: typeWithoutCharset,
+  outcomeOf: outcomeOf,
+  transportCodeOf: transportCodeOf,
+
+  // Every normalization rule comes from the volatile set, and these are the
+  // accessors that prove it.
+  normalizeText: normalizeText,
+  normalized: normalized,
+
+  // The write-time subset, exported for the RECORDER. capture.js applies these
+  // before it writes a body or a header, so the committed corpus carries no
+  // credential-format value and no absolute path from the capturing machine,
+  // and the placeholder it writes is the one this file normalizes a live
+  // response to. Exported from here rather than duplicated there because two
+  // copies of a regular expression that must agree is a drift waiting to
+  // happen, and the drift's symptom would be a difference on every redacted
+  // field.
+  redactForRecording: redactForRecording,
+  recordingRedactions: recordingRedactions,
+  assertVolatileSetIntegrity: assertVolatileSetIntegrity,
+  assertNormalizationRules: assertNormalizationRules,
+  describeVolatileSet: describeVolatileSet,
+  describeBinaryBodyContract: describeBinaryBodyContract,
+  volatileField: volatileField,
+  categoryForHeader: categoryForHeader,
+
+  readCorpus: readCorpus,
+  readCorpusFile: readCorpusFile,
+  verifyCorpusBlock: verifyCorpusBlock,
+  validateCorpusProvenance: validateCorpusProvenance,
+  // The provenance checks that stand between an artifact and this tool
+  // consuming it, exported so each refusal is exercisable on a fixture file
+  // rather than only through a full replay.
+  validateArtifactProvenance: validateArtifactProvenance,
+  sidecarBeside: sidecarBeside,
+  baselineExpectation: baselineExpectation,
+  provenancePayload: provenancePayload,
+  verifiedManifest: verifiedManifest,
+  buildPlan: buildPlan,
+  readStep: readStep,
+  matchDefinitionStep: matchDefinitionStep,
+  compileFilter: compileFilter,
+  assertReplayable: assertReplayable,
+  securePassPlan: securePassPlan,
+  classifyScenario: classifyScenario,
+  accountPass: accountPass,
+  accountCoverage: accountCoverage,
+  accountCoverageCheck: accountCoverageCheck,
+  accountAuthOutcomes: accountAuthOutcomes,
+  accountHeaderResolvedChains: accountHeaderResolvedChains,
+  accountGuestBrowsing: accountGuestBrowsing,
+  accountFixtureProfiles: accountFixtureProfiles,
+  accountWarnings: accountWarnings,
+  qualifyWarningEvidence: qualifyWarningEvidence,
+  readWorkerEvidence: readWorkerEvidence,
+  isIdentified: isIdentified,
+  mergeEvidenceInputs: mergeEvidenceInputs,
+  warningShortfalls: warningShortfalls,
+  accountManifestCardinality: accountManifestCardinality,
+  accountDeclaredExpectations: accountDeclaredExpectations,
+  corpusRouteKeys: corpusRouteKeys,
+  describeCapturedCookieMode: describeCapturedCookieMode,
+  qualifyGate: qualifyGate,
+  unmetGateReason: unmetGateReason,
+  flattenNodeFlags: flattenNodeFlags,
+  assertExpectationSchema: assertExpectationSchema,
+  evaluateExpectation: evaluateExpectation,
+  compareCrossLocations: compareCrossLocations,
+  compareCrossBodies: compareCrossBodies,
+  verifyApprovedDeviation: verifyApprovedDeviation,
+  approvedDeviationContract: approvedDeviationContract,
+  approvedDeviationRegister: approvedDeviationRegister,
+  isFailurePathScenario: isFailurePathScenario,
+  describeOrdering: describeOrdering,
+
+  drive: drive,
+  Jar: Jar,
+  encodePayload: encodePayload,
+  parseSetCookie: parseSetCookie,
+  recordHeaders: recordHeaders,
+  selectProfile: selectProfile,
+  selectModelFault: selectModelFault,
+  disarmModelFault: disarmModelFault,
+  readEvidenceLog: readEvidenceLog,
+  collectEvidence: collectEvidence,
+  serverAlive: serverAlive,
+  // The framework-cookie exemption and its conditions, exported so the
+  // fail-closed behaviour can be exercised directly and not only through the
+  // startup assertion that already runs it.
+  frameworkCookieSuppression: frameworkCookieSuppression,
+  assertFrameworkCookieSuppression: assertFrameworkCookieSuppression,
+  // The register-authority check: the pointer the exemption carries is
+  // READ rather than trusted, and both the pure verifier and the
+  // fail-closed assertion are exported so every rejection branch can be
+  // exercised without driving a request.
+  verifyRegisterAuthority: verifyRegisterAuthority,
+  assertRegisterAuthority: assertRegisterAuthority,
+  describeFrameworkExemption: describeFrameworkExemption,
+  REGISTER_DOCUMENT: REGISTER_DOCUMENT,
+  REGISTER_ANCHORS: REGISTER_ANCHORS,
+  isCookieClear: isCookieClear,
+  FRAMEWORK_COOKIE_SUPPRESSION: FRAMEWORK_COOKIE_SUPPRESSION,
+  establishSessions: establishSessions,
+  refererFor: refererFor,
+  launcherOptions: launcherOptions,
+  mergeGoogleStub: mergeGoogleStub,
+  markRemainingUndriven: markRemainingUndriven,
+  // The recorded-death machinery. Exported so the predicate, the budget and
+  // the two folds a restart depends on can be exercised without a database or
+  // a listening socket - the restart itself needs both, so its parts are what
+  // a check can reach.
+  baselineLostTransport: baselineLostTransport,
+  countRecordedDeaths: countRecordedDeaths,
+  mergeEvidence: mergeEvidence,
+  combineStderrLogs: combineStderrLogs,
+  seedFixtures: seedFixtures,
+  prepareS3Seed: prepareS3Seed,
+  resolveManifest: resolveManifest,
+  gitHead: gitHead,
+
+  buildResult: buildResult,
+  buildProvenance: buildProvenance,
+  // The provenance building blocks, exported for the same reason the checks
+  // above are: a block must be inspectable without a database, a listening
+  // socket or a corpus that carries recorded baselines.
+  inputIdentity: inputIdentity,
+  pathLabelFor: pathLabelFor,
+  portableReason: portableReason,
+  renderReport: renderReport,
+  writeArtifacts: writeArtifacts,
+  writeArtifact: writeArtifact,
+  serialize: serialize,
+  sortedKeys: sortedKeys,
+  sha256Hex: sha256Hex,
+  elapsedBucket: elapsedBucket,
+  isTextualType: isTextualType,
+  firstDivergence: firstDivergence,
+  reasonOf: reasonOf,
+
+  // Building blocks and reference values, so a harness asserts against the
+  // same constants this file uses rather than a second copy of them.
+  parseArguments: parseArguments,
+  defaultOptions: defaultOptions,
+  VOLATILE_SET: VOLATILE_SET,
+  VOLATILE_CATEGORY_COUNT: VOLATILE_CATEGORY_COUNT,
+  VOLATILE_HEADERS: VOLATILE_HEADERS,
+  PRESENCE_ONLY_HEADERS: PRESENCE_ONLY_HEADERS,
+  VOLATILE_COOKIE_FIELDS: VOLATILE_COOKIE_FIELDS,
+  VOLATILE_RESPONSE_FIELDS: VOLATILE_RESPONSE_FIELDS,
+  ARCHIVE_DIGEST_EXEMPT: ARCHIVE_DIGEST_EXEMPT,
+  isArchiveDigestExempt: isArchiveDigestExempt,
+  EXPIRES_HORIZON_TOLERANCE_DAYS: EXPIRES_HORIZON_TOLERANCE_DAYS,
+  APPROVED_DEVIATION: APPROVED_DEVIATION,
+  APPROVED_DEVIATIONS: APPROVED_DEVIATIONS,
+  APPROVED_DEVIATION_IDS: APPROVED_DEVIATION_IDS,
+  DEVIATION_SCENARIO_ID: DEVIATION_SCENARIO_ID,
+
+  // The authorized rendered-output difference register and the harness-origin
+  // reconciliation, exported so a harness asserts against the same values and
+  // the same probes this file applies rather than a second copy of them.
+  DEFAULT_SECURE_CORPUS: DEFAULT_SECURE_CORPUS,
+  DEFAULT_AUTHORIZED_DIFFERENCES: DEFAULT_AUTHORIZED_DIFFERENCES,
+  AUTHORIZED_REGISTER_SCHEMA: AUTHORIZED_REGISTER_SCHEMA,
+  RENDERED_CHANGE_AUTHORITIES: RENDERED_CHANGE_AUTHORITIES,
+  AUTHORITY_GUARDS: AUTHORITY_GUARDS,
+  assertAuthorityRegister: assertAuthorityRegister,
+  authorityForDifference: authorityForDifference,
+  readAuthorizedRegister: readAuthorizedRegister,
+  authorizedRegisterFor: authorizedRegisterFor,
+  authorizeGeneratedRecords: authorizeGeneratedRecords,
+  accountAuthorizedRegister: accountAuthorizedRegister,
+  encodeAuthorizedValue: encodeAuthorizedValue,
+  authorizedValueMatches: authorizedValueMatches,
+  HARNESS_ORIGIN_TOKEN: HARNESS_ORIGIN_TOKEN,
+  HARNESS_ORIGIN_RULE: HARNESS_ORIGIN_RULE,
+  HARNESS_ORIGIN_EXPRESSION: HARNESS_ORIGIN_EXPRESSION,
+  HARNESS_ORIGIN_PROBES: HARNESS_ORIGIN_PROBES,
+  SHORT_CODE_PLACEHOLDER: SHORT_CODE_PLACEHOLDER,
+  HELD_BACK_SHORT_CODE_RULE: HELD_BACK_SHORT_CODE_RULE,
+  HELD_BACK_SHORT_CODE_EXPRESSION: HELD_BACK_SHORT_CODE_EXPRESSION,
+  HELD_BACK_SHORT_CODE_PROBES: HELD_BACK_SHORT_CODE_PROBES,
+  splitOnShortCodeTokens: splitOnShortCodeTokens,
+  isHeldBackShortCodePair: isHeldBackShortCodePair,
+  heldBackShortCodePair: heldBackShortCodePair,
+  heldBackShortCodeReconciliation: heldBackShortCodeReconciliation,
+  heldBackShortCodeAccounting: heldBackShortCodeAccounting,
+  resetHeldBackShortCodeTally: resetHeldBackShortCodeTally,
+  accountHeldBackShortCodes: accountHeldBackShortCodes,
+  assertHeldBackShortCodeReconciliation: assertHeldBackShortCodeReconciliation,
+  installHarnessOrigin: installHarnessOrigin,
+  releaseHarnessOrigin: releaseHarnessOrigin,
+  reconcileHarnessOrigin: reconcileHarnessOrigin,
+  harnessOriginAccounting: harnessOriginAccounting,
+  accountHarnessOrigin: accountHarnessOrigin,
+  assertHarnessOriginReconciliation: assertHarnessOriginReconciliation,
+  HEADER_RESOLVED_GROUP: HEADER_RESOLVED_GROUP,
+  HEADER_RESOLVED_CHAIN_COUNT: HEADER_RESOLVED_CHAIN_COUNT,
+  AUTH_OUTCOME_GROUP: AUTH_OUTCOME_GROUP,
+  AUTH_OUTCOME_IDS: AUTH_OUTCOME_IDS,
+  MIN_AUTH_OUTCOMES_DRIVEN: MIN_AUTH_OUTCOMES_DRIVEN,
+  REQUIRED_NODE_FLAGS: REQUIRED_NODE_FLAGS,
+  BASELINE_COMMIT: BASELINE_COMMIT,
+  PROVENANCE_SUFFIX: PROVENANCE_SUFFIX,
+  CAPTURE_GENERATOR: CAPTURE_GENERATOR,
+  NORMALIZATION_PROBES: NORMALIZATION_PROBES,
+  EXPECTATION_KEYS: EXPECTATION_KEYS,
+  EXPECTATION_STEP_KEYS: EXPECTATION_STEP_KEYS,
+  EXPECTATION_STEP_OPERATORS: EXPECTATION_STEP_OPERATORS,
+  EXPECTATION_CROSS_KEYS: EXPECTATION_CROSS_KEYS,
+  ERROR_PAGE_HEADERS: ERROR_PAGE_HEADERS,
+  NAMED_HEADERS: NAMED_HEADERS,
+  COOKIE_ATTRIBUTES: COOKIE_ATTRIBUTES,
+  IDENTITIES: IDENTITIES,
+  PASSWORD_IDENTITIES: PASSWORD_IDENTITIES,
+  GOOGLE_STUB: GOOGLE_STUB,
+  ACCEPT_HTML: ACCEPT_HTML,
+  ACCEPT_JSON: ACCEPT_JSON,
+  DEFAULT_CORPUS: DEFAULT_CORPUS,
+
+  // The artifact-destination policy. `COMMITTED_MANIFEST` is a READ default;
+  // there is no write default, so a caller resolves a destination the same way
+  // this tool does rather than rebuilding one.
+  COMMITTED_MANIFEST: COMMITTED_MANIFEST,
+  ARTIFACT_DIR_ENV: ARTIFACT_DIR_ENV,
+  ARTIFACT_NAMES: ARTIFACT_NAMES,
+  resolveArtifactPath: resolveArtifactPath,
+  manifestDestination: manifestDestination,
+  DEFAULT_TIMEOUT_MS: DEFAULT_TIMEOUT_MS,
+  MAX_TEXT_BYTES: MAX_TEXT_BYTES,
+  MAX_DIFFERENCES_PER_STEP: MAX_DIFFERENCES_PER_STEP,
+  PASS_NON_SECURE: PASS_NON_SECURE,
+  PASS_SECURE: PASS_SECURE,
+  PASS_BOTH: PASS_BOTH,
+  STATUS_MATCH: STATUS_MATCH,
+  STATUS_APPROVED: STATUS_APPROVED,
+  STATUS_AUTHORIZED: STATUS_AUTHORIZED,
+  STATUS_DIFFERENCE: STATUS_DIFFERENCE,
+  STATUS_UNDRIVEN: STATUS_UNDRIVEN,
+  STATUS_UNREACHABLE: STATUS_UNREACHABLE,
+  STATUS_NO_BASELINE: STATUS_NO_BASELINE,
+  OUTCOME_ANSWERED: OUTCOME_ANSWERED,
+  OUTCOME_TIMED_OUT: OUTCOME_TIMED_OUT,
+  OUTCOME_TRANSPORT: OUTCOME_TRANSPORT,
+  OUTCOME_MISSING: OUTCOME_MISSING,
+  EXIT_OK: EXIT_OK,
+  EXIT_DIFFERENCE: EXIT_DIFFERENCE,
+  EXIT_ERROR: EXIT_ERROR,
+  ToolError: ToolError,
+  USAGE: USAGE,
+  main: main
+};
+
+if (require.main === module) {
+  main()
+    .then(function(code) {
+      process.exitCode = code;
+    })
+    .catch(function(err) {
+      note(reasonOf(err));
+
+      if (err && err.stack) {
+        process.stderr.write(err.stack + '\n');
+      }
+
+      process.exitCode = EXIT_ERROR;
+    });
+}

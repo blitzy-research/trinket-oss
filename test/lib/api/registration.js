@@ -71,7 +71,35 @@ module.exports = function() {
 
       it('should include a link to the default course on the welcome page', function(done) {
         flow.welcome(function() {
-          flow.lastResponse.text.should.contain('/' + libraryUser.username + '/courses/' + sampleCourse.slug + '/copy');
+          // CORRECTED to what both trees answer: /welcome renders no page, so
+          // there is no welcome page to carry the sampler link.
+          //
+          // `pages.welcome` (lib/controllers/pages.js) redirects to /home
+          // UNCONDITIONALLY, and does so on both trees - the baseline source is
+          // `reply().redirect('/home')` at
+          // `git show 2f8712a:lib/controllers/pages.js`, the same unconditional
+          // redirect the converted handler performs. The 2013 expectation
+          // describes a rendered welcome page this application has not served
+          // since; the sampler course itself is still reachable, and the case
+          // below this one drives that copy route directly and passes.
+          //
+          // MEASURED, GET /welcome immediately after the signup that opened this
+          // session, through
+          //   node test/parity/mongo.js --overlay -- \
+          //     node test/parity/server.js --app <tree> --port <3260|3261>
+          // Target (this tree): 302, `location: /home`, 0-byte body, 0
+          // occurrences of the `/courses/the-sampler/copy` link. Baseline
+          // (2f8712a): 302, `location: /home`, 0-byte body, the same 0
+          // occurrences. IDENTICAL.
+          //
+          // The containment assertion on a body that is always empty becomes
+          // three exact assertions on the response that is actually served -
+          // status, redirect target and the empty body - so the case still fails
+          // if /welcome ever starts rendering something. Its entry in the
+          // assertion-correction record is in test/lib/api/index.js.
+          flow.lastResponse.statusCode.should.eql(302);
+          flow.lastRedirect.pathname.should.eql('/home');
+          flow.lastResponse.text.should.eql('');
           done();
         });
       });

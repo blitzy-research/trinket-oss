@@ -1,1 +1,220 @@
+# What may enter the build context, stated as an allowlist.
+#
+# The Dockerfile assembles the image with two `COPY . <workdir>` instructions --
+# one in the `assets` stage and one in the final stage -- so this file, and
+# nothing else, decides what those two immutable layers contain. Both of them
+# say so at their own site, and this is the file they name.
+#
+# It used to hold one line, `**/.git`, which meant every path that happened to
+# be on the builder's disk was baked in: `config/local.*` and
+# `config/runtime.json` (a live session secret and runtime state),
+# `config/development.*` and `config/production.*` deployment config,
+# `node_modules`, the 435 MB `public/components` tree, the generated CSS, and any
+# workstation residue sitting alongside them.
+#
+# With the staged build that shape is not merely untidy, it is a build failure,
+# and that is measured rather than predicted. The final stage copies the source
+# in and then lays the production-only dependency tree over it with
+# `COPY --from=deps ... ./node_modules`, which MERGES into whatever is already
+# at that path instead of replacing it. A single-stage build was safe from this
+# because its `npm ci` deleted `node_modules` before installing; nothing in the
+# final stage does that. So a host `node_modules` in the context survives into
+# the shipped layer, and the final stage's own audit -- the step that asserts no
+# declared devDependency has a directory under `node_modules` -- exits 1 and
+# fails the build. The same mechanism is why a host `public/components` would be
+# shipped twice, once from the context and once from the `assets` stage, with
+# the first copy's bytes still occupying the lower layer.
+#
+# A deny-list is not sufficient here, and that is a measurement rather than a
+# preference: this checkout carries an untracked directory (`blitzy/`) that
+# `.gitignore` does not name, so a .dockerignore that merely mirrored
+# `.gitignore` would still have copied it in. An allowlist makes the default
+# "excluded", so a top-level path nobody has thought about yet needs no new
+# rule to stay out.
+#
+# WHERE THAT DEFAULT REACHES, STATED EXACTLY, BECAUSE THE SCOPE IS EASY TO
+# OVERSTATE. Section 1's `*` is a single-segment pattern, so it denies
+# TOP-LEVEL entries only. Section 2 then re-admits a tracked directory by name,
+# and that re-admits everything beneath it -- including an untracked file
+# sitting in there on the builder's disk. So "excluded by default" is a
+# guarantee about the top level, and below it the guarantee is only as wide as
+# the patterns in section 3.
+#
+# `config/` is therefore allowlisted FILE BY FILE in section 3 rather than by
+# excluded-name, because it is the directory that holds secrets by convention
+# and enumerating the bad names only ever covers the names already thought of.
+# The source directories (`lib`, `public`, `test`, `docs`, `scripts`, `static`,
+# `serverside`) are admitted wholesale: a per-file allowlist over their ~548
+# tracked files would go stale on every added file, silently and with nothing
+# checking it, which trades a small hygiene exposure for a large correctness
+# one. The residual is real and bounded: an UNTRACKED file left inside one of
+# those directories is copied into the image. `git status --porcelain` shows
+# any such file, and `git archive HEAD | docker build -` builds from committed
+# content only when a guaranteed-clean context is wanted.
+#
+# The two maintenance costs of this shape, written down because they are
+# invisible otherwise:
+#   1. A NEW TRACKED TOP-LEVEL ENTRY MUST BE RE-ADMITTED IN SECTION 2 BELOW OR
+#      IT WILL NOT REACH THE IMAGE. That list is the output of
+#      `git ls-files | cut -d/ -f1 | sort -u`, so that command is also how it
+#      is checked.
+#   2. A NEW TRACKED FILE UNDER `config/` MUST BE RE-ADMITTED IN SECTION 3, for
+#      the same reason. That list is `git ls-files config`. A new file under any
+#      other admitted directory needs no edit.
+#
+# Docker matches these patterns against the whole context-relative path with Go
+# path matching, where a single `*` does not cross a `/`. Two consequences are
+# load-bearing below: a single-segment `*` excludes only top-level entries, so
+# re-admitting a directory re-admits everything under it (which `**` would not
+# do), and the last pattern that matches a path wins, so the three sections
+# have to stay in this order.
+
+# ---------------------------------------------------------------------------
+# 1. Exclude every top-level entry, including dotfiles and untracked residue.
+# ---------------------------------------------------------------------------
+*
+
+# ---------------------------------------------------------------------------
+# 2. Re-admit the tracked top-level entries, and only those.
+#
+# Deliberately the complete tracked set rather than a hand-picked minimum: it
+# keeps the image's contents identical to what the previous whole-checkout COPY
+# produced apart from the residue this file exists to keep out, which is the
+# smallest change that fixes the problem. Pruning tracked source would be a
+# separate decision with its own risk.
+# ---------------------------------------------------------------------------
+!.bowerrc
+!.dockerignore
+!.gitignore
+!.nvmrc
+!CHANGELOG.md
+!CODE_OF_CONDUCT.md
+!COMPONENTS.md
+!CONTRIBUTING.md
+!Dockerfile
+!GETTING_STARTED.md
+!LICENSE
+!README.md
+!app.js
+!catalog-info.yaml
+!config
+!docker-compose.yml
+!docs
+!lib
+!mkdocs.yml
+!package-lock.json
+!package.json
+!public
+!scripts
+!serverside
+!static
+!test
+!vite.config.mjs
+
+# ---------------------------------------------------------------------------
+# 3. Re-exclude the ignored, generated and secret-bearing paths that live
+#    inside the directories section 2 just re-admitted.
+#
+# Section 2 pulls whole directories back in, so everything here would otherwise
+# return with them. `**/` prefixes reach any depth, matching the unanchored
+# `.gitignore` entries they correspond to; paths without one are anchored at the
+# context root exactly as their `.gitignore` counterparts are.
+# ---------------------------------------------------------------------------
+
+# Nested repository metadata, at any depth.
 **/.git
+
+# Local, runtime and deployment configuration -- the secret-bearing half of this
+# file's purpose, and the one directory admitted file by file.
+#
+# `config/*` denies every direct child, then the tracked files are re-admitted
+# by name below. That is deliberately not the same thing as listing the files to
+# KEEP OUT, which is what this block used to do: an excluded-name list covers
+# `config/local.yaml` and `config/runtime.json` because someone thought of them,
+# and covers `config/customer-acme-secrets.yaml` not at all. Denying the
+# directory and naming what may enter inverts that, so an unanticipated file
+# dropped in here -- by an operator, a tool, or a half-finished deployment --
+# cannot reach a shipped layer, and no rule has to be added to keep it out.
+#
+# This also subsumes what the excluded-name list did: `config/*` matches
+# `config/local.{yaml,yml,json}`, `config/runtime.json`,
+# `config/runtime.json.tmp-*`, `config/development.*`, `config/production.*`,
+# `config/migration.json` and `config/migrationDb.json`, none of which is
+# re-admitted.
+#
+# Note the two tracked lookalikes that MUST stay in the context and are
+# re-admitted explicitly below: `config/local.example.yaml` and
+# `config/production.yaml.dist` are build inputs, and they are exactly the
+# names a `config/local.*` or `config/production.*` wildcard would have eaten,
+# because `*` happily matches "example.yaml" and "yaml.dist".
+#
+# The list is `git ls-files config`, all 13 entries, all at depth 1 -- there is
+# no subdirectory under config/, so no nested re-admission is needed. A tracked
+# file added here, or a subdirectory introduced here, must be added below.
+config/*
+!config/api_routes.js
+!config/app.config.js
+!config/aws.js
+!config/constants.js
+!config/db.js
+!config/default.yaml
+!config/local.example.yaml
+!config/log.js
+!config/production.yaml.dist
+!config/redis.js
+!config/reserved.yaml
+!config/routes.js
+!config/test.yaml
+
+# Installed dependencies, at any depth: the root install is performed by
+# `npm ci` inside the image, and each serverside unit installs its own, so a
+# host tree copied in would only shadow them with the wrong platform's binaries
+# -- and at the final stage it would survive into the shipped layer and fail
+# that stage's devDependency audit, which is the failure described at the top of
+# this file.
+**/node_modules
+
+# Fetched and generated frontend assets. `scripts/fetch-components.js` publishes
+# public/components inside the image and `npm run build:css` writes
+# public/css/base.css and public/css/embed.css there, so copies from the host are
+# stale by construction -- and shipped twice, because the final stage copies both
+# out of the `assets` stage by name.
+#
+# Note the shapes here, because two of them are one character apart:
+# public/css/base.css and public/css/embed.css are the two generated files,
+# while public/css/challenge.css and everything under public/css/embed/ are
+# tracked assets. The literal pattern `public/css/embed.css` cannot match
+# `public/css/embed/embed.css`, which has a `/` where the pattern has a `.`, so
+# the tracked assets stay in the context -- verified by listing the context.
+public/components
+public/vendor
+public/_published
+public/404.html
+public/50x.html
+public/maintenance.html
+public/js/dist
+public/css/base.css
+public/css/base.css.map
+public/css/embed.css
+public/css/embed.css.map
+public/css/publish
+lib/views/courses/download/course.css
+lib/views/courses/download/course.css.map
+
+# Migration backups written next to the migrations they came from.
+lib/migrations/backups
+
+# Build and editor residue. The top-level forms are already excluded by section
+# 1; these reach the nested copies, matching the unanchored `.gitignore` rules.
+**/.sass-cache
+**/npm-debug.log
+**/build.log
+**/test-*.js
+**/.DS_Store
+**/*.swp
+**/*.pyc
+**/*.sublime-project
+**/*.sublime-workspace
+**/Vagrantfile
+**/.vagrant
+**/.agignore

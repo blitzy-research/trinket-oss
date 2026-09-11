@@ -138,6 +138,30 @@ app:
     user: ''      # SMTP username
     pass: ''      # SMTP password
     secure: false # true for port 465, false for other ports
+    # HMAC key for the email-share capability token that authorizes
+    # POST /api/trinkets/{trinketId}/email. Set it, in config/local.yaml or the
+    # runtime environment, to a high-entropy value of your own; treat it as a
+    # credential and never commit one. It is declared here, empty like its
+    # siblings above, because it is read by name on both sides of that token -
+    # lib/util/helpers.js's emailTokenSecret, which the three jwt.sign sites in
+    # lib/controllers/trinket.js also call - and an undeclared key resolved to
+    # the literal string "undefined", which combined with the trinket's public
+    # short code made the whole key derivable by anyone.
+    #
+    # Left unset, emailTokenSecret follows the treatment the session cookie
+    # password already uses: outside production it derives one ephemeral value
+    # per process and logs a single line, so share tokens work but do not
+    # survive a restart; in production it derives nothing and the share route
+    # refuses, because a per-worker key in a clustered deployment would accept
+    # or refuse depending on which worker answered.
+    #
+    # This key is the one addition this migration makes to config/default.yaml.
+    # AAP 0.2.2 holds the file unchanged, and rule R-d preserves the baseline
+    # quirk the undeclared key produced; both yield here to a remediation an
+    # earlier QA round mandated and this checkpoint's report no longer raises,
+    # on the same ground AAP 0.7 states for the assignment-embed authorization:
+    # withdrawing a closed remediation re-opens the finding that closed it.
+    secret: ''
   cachePrefix: cache-prefix-
   prefixes: # static routes
     components:

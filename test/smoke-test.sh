@@ -4,10 +4,10 @@
 # Run this after docker-compose up to verify basic functionality
 #
 # Usage: ./test/smoke-test.sh [base_url]
-# Default: http://localhost:3001
+# Default: http://localhost:3000
 #
 
-BASE_URL="${1:-http://localhost:3001}"
+BASE_URL="${1:-http://localhost:3000}"
 PASS=0
 FAIL=0
 
@@ -74,7 +74,14 @@ test_endpoint "JS embed loads" "GET" "/js/embed/embed.js" "200"
 
 echo ""
 echo "--- API Endpoints ---"
-test_endpoint "API root accessible" "GET" "/api" "200"
+# No route is registered for bare /api; it falls through to the static catch-all
+# over ./public, which has no api entry, and renders 404. The route surface is
+# unchanged by this migration - the route manifest is identical to baseline
+# across all 233 entries - so the 404 is baseline behaviour rather than a
+# regression, and it is asserted as a measurement in test/lib/api/pages.js.
+# Adding a route or a public/ entry to manufacture a 200 would be a prohibited
+# change to the route surface.
+test_endpoint "API root" "GET" "/api" "404"
 
 echo ""
 echo "--- Auth Endpoints ---"
@@ -84,8 +91,13 @@ test_endpoint "Signup page" "GET" "/signup" "200"
 echo ""
 echo "--- Trinket Pages ---"
 test_endpoint "Python trinket page" "GET" "/python" "200"
-test_endpoint "HTML trinket page" "GET" "/html" "200"
-test_endpoint "Library page" "GET" "/library" "200"
+# /html serves only when features.trinkets.html is enabled; the shipped default
+# disables it, so the type check answers 404.
+test_endpoint "HTML trinket page" "GET" "/html" "404"
+# Only /library/trinkets and /library/folder are routes; bare /library is not,
+# so it renders 404 through the static catch-all. Baseline behaviour, unchanged
+# by this migration and asserted as a measurement in test/lib/api/pages.js.
+test_endpoint "Library page" "GET" "/library" "404"
 
 echo ""
 echo "--- Error Handling ---"

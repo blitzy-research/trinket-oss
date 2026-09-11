@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
-// Add Q-compatible methods to native Promise for Mongoose 6 compatibility
+// Mongoose 6 resolves native promises, while models and controllers call
+// `.spread()` and `.fail()` on the values they get back. Both are defined here,
+// at the head of the entry point, so they exist before any of that code loads.
 if (!Promise.prototype.spread) {
   Promise.prototype.spread = function(fn) {
     return this.then(function(result) {
@@ -25,9 +27,10 @@ const Vision         = require('@hapi/vision');
 const Yar            = require('@hapi/yar');
 const config         = require('./config/app.config');
 const Helpers        = require('./lib/util/helpers');
-const Authentication = require('./lib/auth/passport.js');
-// gleak is not compatible with Node 16+ (uses GLOBAL which was removed)
-// Use a no-op fallback for now
+// `gleak` is not a declared dependency and it reads the removed `GLOBAL`, so
+// this require throws and the no-op fallback is what the process actually runs:
+// `detectLeaks` below reports nothing and `gleak.ignore` does nothing. The
+// interval that calls it still holds the event loop open.
 let gleak;
 try {
   gleak = require('gleak')();
@@ -44,11 +47,17 @@ config.viewEngine = viewEngine;
 
 const cache_control = 'private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate';
 
-// Main async initialization
+// Builds, configures and (under `app.start`) starts the server.
 const init = async () => {
-  // Validate required configuration
+  // The session cookie password must be at least 32 characters. It is checked
+  // here, ahead of the Yar registration below, so a misconfigured process
+  // reports the setting to fix instead of failing inside plugin registration.
   const sessionPassword = config.app.plugins.session.cookieOptions.password;
-  if (!sessionPassword || sessionPassword.length < 32) {
+  const sessionPasswordMissing = !sessionPassword || sessionPassword.length < 32;
+
+  // Production fails fast. This guard runs before the non-production fallback
+  // below, so no production process can reach the generated secret.
+  if (sessionPasswordMissing && config.isProd) {
     console.error('\n' + '='.repeat(70));
     console.error('ERROR: Session cookie password not configured!');
     console.error('');
@@ -64,7 +73,28 @@ const init = async () => {
     console.error('='.repeat(70) + '\n');
     process.exit(1);
   }
-  // Create server with Hapi 20+ configuration
+
+  // Outside production an ephemeral secret is derived so that a checkout with no
+  // config/local.yaml boots: that file is gitignored and config/default.yaml
+  // ships an empty password, so there is otherwise no value to register with.
+  //
+  // A data descriptor, not a plain assignment: the `config` package exposes every
+  // property through an accessor that persists what is assigned to
+  // config/runtime.json, which is layered over every other source. Persisting
+  // this secret would put it on disk, let it outlive the process, and let a
+  // later production run boot on a development secret instead of exiting above.
+  // Replacing the accessor keeps the value visible to the read in
+  // server.register below and writes nothing.
+  if (sessionPasswordMissing) {
+    Object.defineProperty(config.app.plugins.session.cookieOptions, 'password', {
+      value: require('crypto').randomBytes(32).toString('hex'),
+      writable: true,
+      enumerable: true,
+      configurable: true
+    });
+    log.info('Session cookie password is not configured; generated an ephemeral one for this non-production process. Set app.plugins.session.cookieOptions.password in config/local.yaml to keep sessions valid across restarts.');
+  }
+
   const server = Hapi.server({
     host: config.app.hostname || 'localhost',
     port: config.app.port || 3000,
@@ -86,7 +116,13 @@ const init = async () => {
     }]
   });
 
-  // Register plugins
+  // Sessions are held server-side: `maxCookieSize: 0` keeps the session data in
+  // the MongoDB-backed cache declared above and leaves only the session id on
+  // the wire, so raising it changes the cookie's format. The cookie is secure by
+  // default - `isSecure !== false` means only an explicit `false` in
+  // configuration turns the flag off, where a truthiness test would let an unset
+  // value serve it insecurely - and it is scoped by the configured session name,
+  // which the cookie-expiry extension below matches on.
   await server.register([
     Inert,  // Static file serving
     Vision, // Template rendering
@@ -110,33 +146,39 @@ const init = async () => {
     }
   ]);
 
-  // Add _logIn method to yar for session-based login
-  // Also ensure request.user is set from auth credentials (for inject() calls)
-  // Touch session on each request to implement sliding expiration
   server.ext('onPreHandler', (request, h) => {
     if (request.yar) {
+      // `_logIn` is what every login path calls to establish a session: the
+      // stored `userId` is the only thing the auth scheme below reads, and the
+      // attached user serves the rest of this request without a second lookup.
+      // Callers pass a callback, which is invoked with a null error once the
+      // session has been written; it never reports a failure.
       request.yar._logIn = function(user, cb) {
-        // Store user id in session
         request.yar.set('userId', user._id ? user._id.toString() : user.id);
-        // Also attach user to request for immediate use
         request.user = user;
         if (cb) cb(null);
       };
 
-      // Sliding expiration: touch session to reset TTL on each authenticated request
+      // Touching the session on every request that has one resets its cache
+      // TTL, so a session expires after 24 hours of inactivity rather than 24
+      // hours after login.
       if (request.yar.get('userId')) {
         request.yar.touch();
       }
     }
-    // Set request.user from auth credentials if not already set
-    // This handles inject() calls that pass credentials directly
+    // A request carrying credentials directly - a server.inject with
+    // `credentials` set - skips the auth scheme, so nothing has attached
+    // `request.user` yet and the credentials themselves are the user.
     if (!request.user && request.auth.credentials && request.auth.credentials._id) {
       request.user = request.auth.credentials;
     }
     return h.continue;
   });
 
-  // Configure view engine (Vision) - use nunjucks compile function
+  // Vision renders through the compile function in lib/util/nunjucks, which
+  // owns the environment carrying the application's filters and globals;
+  // rendering any other way would lose them. Caching is on in production only,
+  // so a template edit is visible without a restart elsewhere.
   server.views({
     engines: {
       html: {
@@ -148,27 +190,77 @@ const init = async () => {
     isCached: config.isProd
   });
 
-  // Add onPreResponse extension for cache headers and error pages
+  // Turns an error into the response its client can use, and stamps the
+  // no-store cache headers on everything else.
+  //
+  // The four branches below return immediately, BEFORE the header assignments
+  // that follow them. So a rendered HTML error page carries no Cache-Control,
+  // Pragma, Expires or X-Frame-Options, while an API or JSON error, a Boom
+  // status outside those four (a 400, for instance) and every non-error
+  // response do. Moving the assignments above the branches would change what
+  // is sent on the error pages.
+  //
+  // WHAT THIS EXTENSION CANNOT DO ABOUT COOKIES ON A 500, recorded here
+  // because it looks like something this mapper forgot and is not.
+  //
+  // hapi 21 writes only cookie CLEARS when the response carries a 500 error:
+  // node_modules/@hapi/hapi/lib/headers.js `exports.state` gates the whole of
+  // `request._states` on `response._error?.output.statusCode === 500`, where
+  // hapi 20.3.0 pushed every entry unconditionally. The yar session commit IS
+  // such an entry, and the writer runs in the framework's marshal cycle
+  // (lib/route.js:335) - after this extension and after the cookie patch
+  // below - so on a 500 the session Set-Cookie is not on the wire, whether the
+  // handler threw, returned a Boom, or failed while marshalling. A 500 a later
+  // extension REPLACES carries no `_error`, which is why the 50x.html pages
+  // this mapper renders still send it.
+  //
+  // A marshal-time failure is worse than late: it is invisible from here. This
+  // extension runs exactly once for such a request and sees a response whose
+  // `isBoom` is false, and the 500 the client receives is built AFTERWARDS by
+  // `internals.fail` in node_modules/@hapi/hapi/lib/transmit.js, which re-runs
+  // the marshal cycle and not the request lifecycle. Measured: a header set
+  // here does not reach that response at all - which is how the seven
+  // /admin/* and /account/* view-render failures answer a 96-byte JSON 500
+  // carrying none of the Pragma or Expires stamped below, while a handler-time
+  // Boom 500 carries both. That pair is the on-wire discriminator between the
+  // two arrival paths.
+  //
+  // So the divergence is REGISTERED, not patched: docs/preserved-quirks.md
+  // section 12 carries the measurement, the AAP T-6 conflict argument and the
+  // decision, and test/parity/replay.js's `hapi21-500-clear-only-states` rule
+  // is the gate. No state is re-attached on 5xx here. Doing so would mean
+  // hand-sealing a yar cookie through `server.states.format` into
+  // `boom.output.headers` - authored behaviour no AAP requirement describes,
+  // outside R-a's four permitted diff categories, deliberately defeating an
+  // upstream security change - and it could not cover the marshal-time subset
+  // in any case.
   server.ext('onPreResponse', (request, h) => {
     const response = request.response;
+    // Framing is denied only on the exact paths config.app.xframeDeny lists,
+    // which by default are the landing, login, signup, contact and educators
+    // pages - the embed routes other sites load in an iframe are deliberately
+    // absent. The match is on the path alone, so a query string cannot defeat
+    // it, and a path not listed to the byte is not protected.
     const addXFrame = config.app.xframeDeny && config.app.xframeDeny.indexOf(request.url.pathname) >= 0;
 
     if (response.isBoom) {
       const statusCode = response.output.statusCode;
 
-      // Check if this is an HTML request (not API/JSON)
+      // An /api/ or /partials/ path, or an Accept naming JSON, is answered with
+      // the Boom payload; anything else that will accept HTML gets a page.
       const acceptHeader = request.headers.accept || '';
       const isApiRequest = request.path.startsWith('/api/') ||
                            acceptHeader.includes('application/json') ||
                            request.path.startsWith('/partials/');
 
-      // Render HTML error pages for browser requests
       const wantsHtml = acceptHeader.includes('text/html') ||
                         (!acceptHeader.includes('application/json') && !isApiRequest);
 
       if (!isApiRequest && wantsHtml) {
         if (statusCode === 401) {
-          // Redirect to login for unauthorized page requests
+          // A browser reaching a route it is not authenticated for is sent to
+          // the login form; `takeover` stops the remaining extensions so the
+          // 401 payload is not what gets written.
           return h.redirect('/login').takeover();
         } else if (statusCode === 404) {
           return h.view('404.html').code(404);
@@ -187,6 +279,8 @@ const init = async () => {
         response.output.headers['X-Frame-Options'] = 'deny';
       }
     }
+    // A Boom exposes its headers on `output`, any other response sets them
+    // through `header()` - the same three values by two different routes.
     else if (response.header) {
       response.header('Cache-Control', cache_control);
       response.header('Pragma', 'no-cache');
@@ -200,17 +294,65 @@ const init = async () => {
     return h.continue;
   });
 
-  // Add onPreResponse extension for cookie expiration
+  // Gives the session cookie a one-year Expires, so a browser keeps it across
+  // restarts instead of dropping it at the end of the session.
+  //
+  // This works by wrapping `_header`, a private field on the response, and it
+  // is guarded on that field being a function: `request.cookie` is set by the
+  // route wrapper in lib/util/routeParser for a request that establishes a
+  // session, but if the framework stops populating `_header` the guard simply
+  // fails and the whole extension becomes a silent no-op: the cookie is still
+  // sent, just without the Expires this adds, and nothing reports it. It is
+  // NOT a no-op on hapi 21.4.10: a login here emits
+  // `session=<sealed>; HttpOnly; SameSite=Lax; Path=/; Expires=<+1y>`,
+  // measured.
+  //
+  // On a 500 there is no Set-Cookie for this to rewrite, and that is upstream
+  // rather than local: hapi 21 writes only cookie CLEARS when the response
+  // carries a 500 error (see the mapper above for the headers.js branch and
+  // the marshal-cycle ordering). A 500 therefore loses no horizon that this
+  // extension had appended, because it never appended one there: `Expires` is
+  // added only where `request.cookie` is set, i.e. on the response that
+  // establishes the session, and hapi 20 repeated the cookie on a 500 with
+  // `HttpOnly; Path=/; SameSite=Lax` and no `Expires` or `Max-Age` at all.
+  // Measured in a real browser store, receiving that shape DOWNGRADES a
+  // persistent record to session-only while receiving no header leaves it
+  // exactly as held - so the suppression is the safer of the two shapes for a
+  // client, not a loss. The session id is unchanged either way, since yar
+  // re-sets the id it received, and the server-side store write happens in
+  // both. Registered, with its conflict argument, its measurements and its
+  // gate, at docs/preserved-quirks.md section 12; deliberately not repaired
+  // here, because re-attaching state on a 5xx is authored behaviour outside
+  // this migration's four permitted diff categories.
+  //
+  // THE SECOND APPEND, `"; SameSite=None; Secure"`, IS PART OF THE CONTRACT and
+  // is applied whenever the session cookie is served secure. AAP §0.6.1 names
+  // both appends when it describes this patch, and the baseline emits both:
+  // measured on /tmp/trinket-baseline-2f8712a in the secure pass, one
+  // `POST /login` answered
+  // `session=<sealed>; Secure; HttpOnly; SameSite=Lax; Path=/; Expires=<+1y>; SameSite=None; Secure`.
+  //
+  // So the serialised value deliberately carries `SameSite` twice: the state
+  // definition above sets `isSameSite: 'Lax'` and hapi serialises it, and this
+  // appends `SameSite=None` after it, which is the occurrence a browser
+  // applies. The effect is a session cookie that IS attached to cross-site
+  // requests in secure deployments. That is the baseline's observable
+  // behaviour, it is what every client of a secure deployment has, and rule
+  // R-d places it out of reach of this migration - narrowing it would be a
+  // behaviour improvement, not a migration. `cookieIsSecure` is read from
+  // configuration once, below, and spelled `!== false` rather than as a
+  // truthiness test: AAP §0.6.1 is explicit that the default is secure and
+  // that only an explicit `false` may turn the flag off, so a truthiness test
+  // would invert the default for an unset value.
   const cookieIsSecure = config.app.plugins.session.cookieOptions.isSecure !== false;
   server.ext('onPreResponse', (request, h) => {
-    // if this is a cookie-setting request and we have a _header method
     if (request.cookie && request.response && typeof request.response._header === "function") {
       const header = request.response._header;
       const sessionName = config.app.plugins.session.name || 'session';
 
       request.response._header = function(key, value) {
-        // find the 'set-cookie' header
         if (key.match(/^set\-cookie$/i)) {
+          // A single Set-Cookie arrives as a string, several as an array.
           if (!Array.isArray(value)) {
             value = [value];
           }
@@ -218,9 +360,10 @@ const init = async () => {
           nextYear.setFullYear(nextYear.getFullYear() + 1);
 
           for (let i = 0; i < value.length; i++) {
-            // find the session portion of the cookie
+            // Only the session cookie is rewritten, and only when it does not
+            // already carry an Expires of its own - matching by prefix, since
+            // the value follows the name.
             if (value[i].indexOf(sessionName) === 0) {
-              // add a custom expires if an expires is not already present
               if (!value[i].match(/;\s*Expires=/i)) {
                 value[i] += "; Expires=" + nextYear.toUTCString();
               }
@@ -231,7 +374,8 @@ const init = async () => {
             }
           }
         }
-        // call the original _header method
+        // Every other header, and the rewritten value, still go through the
+        // framework's own implementation.
         header.call(request.response, key, value);
       }
     }
@@ -239,25 +383,28 @@ const init = async () => {
     return h.continue;
   });
 
-  // Simple session-based auth scheme for Hapi 20+
+  // Resolves the session's `userId` into the request's credentials.
+  //
+  // Every outcome other than a valid, enabled user answers through
+  // `h.unauthenticated`, which under the 'try' default below leaves the request
+  // to continue as a guest rather than rejecting it - so a route that does not
+  // require auth still serves, and one that does gets the 401 the error mapper
+  // above turns into a redirect to /login. A session naming a user who has been
+  // removed or disabled is cleared here, so the next request arrives clean.
   server.auth.scheme('session', (server, options) => {
     return {
       authenticate: async (request, h) => {
-        // Get user from session via yar
         const userId = request.yar.get('userId');
 
         if (!userId) {
-          // Not authenticated - continue as guest (for 'try' mode)
           return h.unauthenticated(Boom.unauthorized('Not logged in'), { credentials: {} });
         }
 
         try {
-          const user = await new Promise((resolve, reject) => {
-            User.findById(userId, (err, user) => {
-              if (err) reject(err);
-              else resolve(user);
-            });
-          });
+          // The model layer in lib/models/model.js returns the query itself and
+          // only feeds an optional callback from it, so awaiting it here yields
+          // the document, null, or a rejection this catch handles.
+          const user = await User.findById(userId);
 
           if (!user) {
             request.yar.clear('userId');
@@ -269,7 +416,7 @@ const init = async () => {
             return h.unauthenticated(Boom.unauthorized('Account disabled'), { credentials: {} });
           }
 
-          // Attach user to request
+          // Handlers read `request.user`; the credentials are the same document.
           request.user = user;
           return h.authenticated({ credentials: user });
         } catch (err) {
@@ -280,13 +427,18 @@ const init = async () => {
     };
   });
 
-  // Register the session auth strategy
   server.auth.strategy('session', 'session');
 
-  // Make session auth the default but don't require it
+  // 'try' rather than 'required': the scheme runs on every route, but a failed
+  // authentication continues as a guest instead of answering 401, which is what
+  // lets a route serve both signed-in and anonymous visitors. A route that must
+  // be protected declares `auth: 'session'` for itself.
   server.auth.default({ strategy: 'session', mode: 'try' });
 
-  // Load models (global for backwards compatibility)
+  // Models are assigned to bare globals because controllers, models and views
+  // reference them by name (`User`, `Course`, ...) instead of requiring them.
+  // The assignments happen before the routes are registered, so a handler
+  // always finds them; `gleak.ignore` below lists the same names.
   User     = require('./lib/models/user');
   Course   = require('./lib/models/course');
   Lesson   = require('./lib/models/lesson');
@@ -297,13 +449,16 @@ const init = async () => {
   Folder   = require('./lib/models/folder');
   CourseInvitation = require('./lib/models/courseInvitation');
 
-  // Register helpers
+  // Installs the server methods that a route's string-form pre-handler is
+  // resolved through (`server.methods[name]`). Registering the routes before
+  // this would leave those names unresolvable.
   Helpers.register(server);
 
-  // Register routes
+  // `config.routes` is the parsed route table that config/app.config produces by
+  // handing lib/util/routeParser the declarations in config/routes.js and
+  // config/api_routes.js; every registered route comes from that one call.
   server.route(config.routes);
 
-  // Start the server
   if (config.app.start) {
     await server.start();
     log.info('Server started on port: ' + server.info.port);
@@ -347,7 +502,9 @@ gleak.ignore("DEFAULT_FILE_PATH", "Promise");
 // Poll for new leaks every 60 seconds
 setInterval(detectLeaks, 60*1000);
 
-// Initialize and export
+// The export is the promise of the configured server, which the test harness
+// awaits. A failure to start is terminal for the process rather than a rejected
+// promise handed to whoever required this module.
 const serverPromise = init().catch(err => {
   log.error('Failed to start server:', err);
   process.exit(1);

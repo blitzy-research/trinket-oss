@@ -1,0 +1,52 @@
+{
+  "provenanceSchema": 2,
+  "artifact": "corpus.authorized.json",
+  "role": "analysis",
+  "generator": {
+    "path": "test/parity/replay.js",
+    "blob": "04f0c8fe2b378700e92a49df80ea8458e5153e1e",
+    "commit": "9f6573cec6f85877b7e21eeb2ccc48a76f64d906",
+    "commitState": "contains-this-exact-source",
+    "verified": true,
+    "deliveredHead": "9f6573cec6f85877b7e21eeb2ccc48a76f64d906",
+    "deliveredHeadShort": "9f6573c",
+    "matchesDeliveredHead": true
+  },
+  "analysedTree": {
+    "head": "9f6573cec6f85877b7e21eeb2ccc48a76f64d906",
+    "headShort": "9f6573c",
+    "subject": "QA o002: re-seal the two generated inventories against the port-independent run",
+    "isBaselineCommit": false,
+    "worktreeState": "clean"
+  },
+  "delivered": {
+    "head": "9f6573cec6f85877b7e21eeb2ccc48a76f64d906",
+    "headShort": "9f6573c",
+    "subject": "QA o002: re-seal the two generated inventories against the port-independent run",
+    "isBaselineCommit": false,
+    "worktreeState": "clean"
+  },
+  "baselineCommit": "2f8712a112db46f923918c4507c75abc732d83d0",
+  "runtime": {
+    "node": "v22.23.2",
+    "platform": "linux"
+  },
+  "detail": {
+    "registerSchema": 1,
+    "records": 240,
+    "authorities": 7,
+    "corpusDigest": "bc80401fb4de8811d8c6d185e14e61bc6b1eead7066c70851d57f0c9566ca798",
+    "secureCorpusDigest": "13fa998efd74b3503b54dcb1d11f202049c18e52dc1b5becb4216908ee38d0b1"
+  },
+  "payloadDigest": {
+    "algorithm": "sha256",
+    "canonicalization": "JSON with object keys sorted lexicographically and no whitespace",
+    "value": "b222fc0d8d2424f49e931fc67038a1037527937d1db6c68f6d3e6b26db7e3341"
+  },
+  "artifactDigest": {
+    "algorithm": "sha256",
+    "canonicalization": "the artifact bytes as written, verbatim",
+    "value": "8f806157a9a2d13ac43f227dfab4db122b920204c44b8a1ec6a695e8fc4b862a"
+  },
+  "note": "RUN OUTPUT - not a delivery artifact, and not to be committed. Every field above except artifactDigest is also embedded in corpus.authorized.json under its own `provenance` key, which is the committed record; this file adds only a digest of the exact bytes written, for a scratch run that compares two artifacts byte for byte and needs the provenance outside the compared region."
+}

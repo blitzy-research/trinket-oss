@@ -1,0 +1,5130 @@
+{
+  "schema": 1,
+  "artifact": "corpus.authorized.json",
+  "tool": "test/parity/replay.js --authorize",
+  "what": "A CLOSED allowlist of the rendered-output differences that later order-0 remediations mandated, keyed by pass, scenario, step and comparison field, pinning both values and naming the finding that authorized each. It is not the approved-deviation register: that one is closed at the two deviations AAP 0.7 decided and is argued in docs/preserved-quirks.md 11. A record here that no longer materializes FAILS the run, and any difference not here fails.",
+  "sources": {
+    "corpus": {
+      "artifact": "corpus.json",
+      "digest": "bc80401fb4de8811d8c6d185e14e61bc6b1eead7066c70851d57f0c9566ca798"
+    },
+    "secureCorpus": {
+      "artifact": "corpus.secure.json",
+      "digest": "13fa998efd74b3503b54dcb1d11f202049c18e52dc1b5becb4216908ee38d0b1"
+    }
+  },
+  "authorities": [
+    {
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "summary": "multipart parsing restored with the same per-part file output, so an upload answers instead of 415 and a non-multipart body no longer echoes its absolute spooled path",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES",
+      "evidence": [
+        "config/routes.js",
+        "config/api_routes.js"
+      ],
+      "routes": [
+        "POST /file",
+        "POST /file/avatar",
+        "POST /api/users/assets",
+        "POST /api/users/assets/{fileId}"
+      ],
+      "fields": [
+        "/^status$/",
+        "/^statusMessage$/",
+        "/^header\\./",
+        "/^cookies\\./",
+        "/^cookie\\[/",
+        "/^body\\./"
+      ],
+      "guard": "notServerError"
+    },
+    {
+      "finding": "order-0 F2 (colour swatches exposed as named, focusable buttons)",
+      "summary": "the 141 /docs/colors swatches are buttons with accessible names instead of unnamed divs, so the page's form-control surface and its rendered size both change",
+      "arguedIn": "qa/testing/o000_75576941e3f7e7ff.md F2; docs/preserved-quirks.md",
+      "evidence": [
+        "lib/views/docs/colors.html"
+      ],
+      "routes": [
+        "GET /docs/colors"
+      ],
+      "fields": [
+        "/^html\\./",
+        "/^body\\.(truncated|text|length|digest)$/",
+        "/^header\\.content-length$/"
+      ],
+      "guard": "statusPreserved"
+    },
+    {
+      "finding": "order-0 F67/F68/F69 (the sign-up form ships every validated field and its failure redirect resolves)",
+      "summary": "the form gains the `fullname` and `username` inputs its own route validates, and the hidden `formName` submits `signup` - the route that exists - instead of `sign-up`",
+      "arguedIn": "qa/testing/o000_75576941e3f7e7ff.md F67/F68/F69; docs/preserved-quirks.md",
+      "evidence": [
+        "lib/views/signup.html"
+      ],
+      "routes": [
+        "GET /signup"
+      ],
+      "fields": [
+        "/^html\\./",
+        "/^body\\.(truncated|text|length|digest)$/",
+        "/^header\\.content-length$/"
+      ],
+      "guard": "statusPreserved"
+    },
+    {
+      "finding": "order-0 R8 (course comment and material projections restored)",
+      "summary": "the comment and submission projections carry their view and metrics keys again",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/preserved-quirks.md",
+      "evidence": [
+        "lib/controllers/course.js"
+      ],
+      "routes": [
+        "POST /api/comments/{trinketId}",
+        "POST /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/acceptSubmission"
+      ],
+      "fields": [
+        "/^body\\.json\\.(?:data\\.)?(?:lastView|metrics)\\./",
+        "/^header\\.content-length$/"
+      ],
+      "guard": "statusPreserved"
+    },
+    {
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "summary": "the move route reaches its handler instead of throwing in its pre-handler, so it answers 200 carrying the move it performed where the baseline answered 500 from the pre-handler",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard",
+      "evidence": [
+        "lib/util/helpers.js"
+      ],
+      "routes": [
+        "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move"
+      ],
+      "fields": [
+        "/^status$/",
+        "/^statusMessage$/",
+        "/^header\\.(cache-control|content-length)$/",
+        "/^body\\./"
+      ],
+      "guard": "notServerError"
+    },
+    {
+      "finding": "order-0 R9 (the accessibility contract, compiled into the served stylesheet)",
+      "summary": "public/css/base.css carries the rules the accessibility markup renders with - skip link, focus ring, form error and flash dismissal - so the served stylesheet is larger and differs in content",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md",
+      "evidence": [
+        "static/scss/_forms.scss",
+        "static/scss/_generic.scss",
+        "static/scss/_login.scss",
+        "static/scss/_nav.scss",
+        "static/scss/_library.scss"
+      ],
+      "routes": [
+        "GET /cache-prefix-{timestamp}/{assetType}/{path*}"
+      ],
+      "fields": [
+        "/^body\\.(truncated|text|length|digest)$/",
+        "/^header\\.content-length$/"
+      ],
+      "guard": "statusPreserved"
+    },
+    {
+      "finding": "order-0 R9 (the accessibility contract)",
+      "summary": "landmarks, the skip link, `#main-content tabindex=\"-1\"`, the screen-reader page heading, error-outlet ids with `role=\"alert\"`, `aria-invalid`, `aria-describedby` and `autocomplete`, plus the favicon and viewport the two standalone error templates lacked",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R9; docs/baseline-parity.md",
+      "evidence": [
+        "lib/views/base.html",
+        "lib/views/404.html",
+        "lib/views/50x.html",
+        "lib/views/login.html",
+        "lib/views/users/includes/profile.html",
+        "lib/views/users/includes/password.html",
+        "lib/views/embed/base.html"
+      ],
+      "routes": null,
+      "fields": [
+        "/^html\\./",
+        "/^header\\.content-length$/",
+        "/^body\\.(truncated|length|digest)$/"
+      ],
+      "guard": "markupStatusPreserved"
+    }
+  ],
+  "summary": {
+    "records": 240,
+    "scenarios": 22,
+    "passes": [
+      "non-secure",
+      "secure"
+    ],
+    "byPass": {
+      "non-secure": 120,
+      "secure": 120
+    },
+    "byFinding": {
+      "order-0 R1 (multipart accepted again on the upload routes)": 214,
+      "order-0 R8 (the material-move pre-handler answers again)": 26
+    },
+    "byField": {
+      "body.json.bytes": 12,
+      "body.json.context": 8,
+      "body.json.error": 8,
+      "body.json.file.@kind": 4,
+      "body.json.file.hidden": 4,
+      "body.json.file.id": 4,
+      "body.json.file.lastUpdated": 4,
+      "body.json.file.metrics.@kind": 4,
+      "body.json.file.metrics.trinkets": 4,
+      "body.json.file.mime": 4,
+      "body.json.file.name": 4,
+      "body.json.file.size": 4,
+      "body.json.file.url": 4,
+      "body.json.flash.@kind": 8,
+      "body.json.flash.validation.": 12,
+      "body.json.flash.validation.bytes": 12,
+      "body.json.flash.validation.file": 4,
+      "body.json.flash.validation.path": 12,
+      "body.json.flash.validation.upload": 8,
+      "body.json.host": 2,
+      "body.json.id": 2,
+      "body.json.message": 10,
+      "body.json.mime": 2,
+      "body.json.name": 2,
+      "body.json.newIndex": 2,
+      "body.json.newParent": 2,
+      "body.json.oldIndex": 2,
+      "body.json.oldParent": 2,
+      "body.json.path": 14,
+      "body.json.size": 2,
+      "body.json.statusCode": 8,
+      "body.json.type": 2,
+      "cookie[session].present": 8,
+      "cookies.count": 8,
+      "header.cache-control": 8,
+      "header.content-length": 16,
+      "header.set-cookie": 8,
+      "status": 8,
+      "statusMessage": 8
+    },
+    "skippedScenarios": [
+      {
+        "pass": "non-secure",
+        "scenario": "quirk.reply-chain.never-settles.image-download",
+        "route": "GET /api/files/{fileId}/{fileName}",
+        "differences": 1,
+        "reason": "the scenario carries an approved-deviation marker, so it belongs to the closed AAP §0.7 register in approvedDeviationRegister and the generated register may not also cover it"
+      },
+      {
+        "pass": "non-secure",
+        "scenario": "route.post.api-admin-user-userId.json",
+        "route": "POST /api/admin/user/{userId}",
+        "differences": 1,
+        "reason": "the scenario carries an approved-deviation marker, so it belongs to the closed AAP §0.7 register in approvedDeviationRegister and the generated register may not also cover it"
+      },
+      {
+        "pass": "non-secure",
+        "scenario": "route.post.api-users-email.json",
+        "route": "POST /api/users/email",
+        "differences": 1,
+        "reason": "the scenario carries an approved-deviation marker, so it belongs to the closed AAP §0.7 register in approvedDeviationRegister and the generated register may not also cover it"
+      },
+      {
+        "pass": "non-secure",
+        "scenario": "route.post.userSlug-courses-courseSlug-copy.html",
+        "route": "POST /{userSlug}/courses/{courseSlug}/copy",
+        "differences": 1,
+        "reason": "the scenario carries an approved-deviation marker, so it belongs to the closed AAP §0.7 register in approvedDeviationRegister and the generated register may not also cover it"
+      },
+      {
+        "pass": "non-secure",
+        "scenario": "route.post.userSlug-courses-courseSlug-copy.json",
+        "route": "POST /{userSlug}/courses/{courseSlug}/copy",
+        "differences": 1,
+        "reason": "the scenario carries an approved-deviation marker, so it belongs to the closed AAP §0.7 register in approvedDeviationRegister and the generated register may not also cover it"
+      },
+      {
+        "pass": "secure",
+        "scenario": "quirk.reply-chain.never-settles.image-download",
+        "route": "GET /api/files/{fileId}/{fileName}",
+        "differences": 1,
+        "reason": "the scenario carries an approved-deviation marker, so it belongs to the closed AAP §0.7 register in approvedDeviationRegister and the generated register may not also cover it"
+      },
+      {
+        "pass": "secure",
+        "scenario": "route.post.api-admin-user-userId.json",
+        "route": "POST /api/admin/user/{userId}",
+        "differences": 1,
+        "reason": "the scenario carries an approved-deviation marker, so it belongs to the closed AAP §0.7 register in approvedDeviationRegister and the generated register may not also cover it"
+      },
+      {
+        "pass": "secure",
+        "scenario": "route.post.api-users-email.json",
+        "route": "POST /api/users/email",
+        "differences": 1,
+        "reason": "the scenario carries an approved-deviation marker, so it belongs to the closed AAP §0.7 register in approvedDeviationRegister and the generated register may not also cover it"
+      },
+      {
+        "pass": "secure",
+        "scenario": "route.post.userSlug-courses-courseSlug-copy.html",
+        "route": "POST /{userSlug}/courses/{courseSlug}/copy",
+        "differences": 1,
+        "reason": "the scenario carries an approved-deviation marker, so it belongs to the closed AAP §0.7 register in approvedDeviationRegister and the generated register may not also cover it"
+      },
+      {
+        "pass": "secure",
+        "scenario": "route.post.userSlug-courses-courseSlug-copy.json",
+        "route": "POST /{userSlug}/courses/{courseSlug}/copy",
+        "differences": 1,
+        "reason": "the scenario carries an approved-deviation marker, so it belongs to the closed AAP §0.7 register in approvedDeviationRegister and the generated register may not also cover it"
+      }
+    ],
+    "unattributableAtGeneration": []
+  },
+  "records": [
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.api-users-assets.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "header.content-length",
+      "baseline": {
+        "value": "238",
+        "digest": null
+      },
+      "target": {
+        "value": "64",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.api-users-assets.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.bytes",
+      "baseline": {
+        "value": "number:0",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.api-users-assets.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:\"value\" must be of type object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.api-users-assets.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.bytes",
+      "baseline": {
+        "value": "string:\"bytes\" is not allowed",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.api-users-assets.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.file",
+      "baseline": {
+        "value": "string:\"file\" is required",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.api-users-assets.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.path",
+      "baseline": {
+        "value": "string:\"path\" is not allowed",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.api-users-assets.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.path",
+      "baseline": {
+        "value": "string:<upload-path>",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.api-users-assets-fileId.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "header.content-length",
+      "baseline": {
+        "value": "238",
+        "digest": null
+      },
+      "target": {
+        "value": "64",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.api-users-assets-fileId.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.bytes",
+      "baseline": {
+        "value": "number:0",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.api-users-assets-fileId.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:\"value\" must be of type object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.api-users-assets-fileId.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.bytes",
+      "baseline": {
+        "value": "string:\"bytes\" is not allowed",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.api-users-assets-fileId.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.file",
+      "baseline": {
+        "value": "string:\"file\" is required",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.api-users-assets-fileId.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.path",
+      "baseline": {
+        "value": "string:\"path\" is not allowed",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.api-users-assets-fileId.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.path",
+      "baseline": {
+        "value": "string:<upload-path>",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file.html",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "header.content-length",
+      "baseline": {
+        "value": "242",
+        "digest": null
+      },
+      "target": {
+        "value": "64",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file.html",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.bytes",
+      "baseline": {
+        "value": "number:0",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file.html",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:\"value\" must be of type object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file.html",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.bytes",
+      "baseline": {
+        "value": "string:\"bytes\" is not allowed",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file.html",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.path",
+      "baseline": {
+        "value": "string:\"path\" is not allowed",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file.html",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.upload",
+      "baseline": {
+        "value": "string:\"upload\" is required",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file.html",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.path",
+      "baseline": {
+        "value": "string:<upload-path>",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file.json",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "header.content-length",
+      "baseline": {
+        "value": "242",
+        "digest": null
+      },
+      "target": {
+        "value": "64",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file.json",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.bytes",
+      "baseline": {
+        "value": "number:0",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file.json",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:\"value\" must be of type object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file.json",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.bytes",
+      "baseline": {
+        "value": "string:\"bytes\" is not allowed",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file.json",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.path",
+      "baseline": {
+        "value": "string:\"path\" is not allowed",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file.json",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.upload",
+      "baseline": {
+        "value": "string:\"upload\" is required",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file.json",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.path",
+      "baseline": {
+        "value": "string:<upload-path>",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file-avatar.html",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "header.content-length",
+      "baseline": {
+        "value": "242",
+        "digest": null
+      },
+      "target": {
+        "value": "64",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file-avatar.html",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.bytes",
+      "baseline": {
+        "value": "number:0",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file-avatar.html",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:\"value\" must be of type object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file-avatar.html",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.bytes",
+      "baseline": {
+        "value": "string:\"bytes\" is not allowed",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file-avatar.html",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.path",
+      "baseline": {
+        "value": "string:\"path\" is not allowed",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file-avatar.html",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.upload",
+      "baseline": {
+        "value": "string:\"upload\" is required",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file-avatar.html",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.path",
+      "baseline": {
+        "value": "string:<upload-path>",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file-avatar.json",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "header.content-length",
+      "baseline": {
+        "value": "242",
+        "digest": null
+      },
+      "target": {
+        "value": "64",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file-avatar.json",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.bytes",
+      "baseline": {
+        "value": "number:0",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file-avatar.json",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:\"value\" must be of type object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file-avatar.json",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.bytes",
+      "baseline": {
+        "value": "string:\"bytes\" is not allowed",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file-avatar.json",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.path",
+      "baseline": {
+        "value": "string:\"path\" is not allowed",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file-avatar.json",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.upload",
+      "baseline": {
+        "value": "string:\"upload\" is required",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.post.file-avatar.json",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.path",
+      "baseline": {
+        "value": "string:<upload-path>",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "status",
+      "baseline": {
+        "value": 500,
+        "digest": null
+      },
+      "target": {
+        "value": 200,
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "statusMessage",
+      "baseline": {
+        "value": "Internal Server Error",
+        "digest": null
+      },
+      "target": {
+        "value": "OK",
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "header.cache-control",
+      "baseline": {
+        "value": "no-cache",
+        "digest": null
+      },
+      "target": {
+        "value": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "header.content-length",
+      "baseline": {
+        "value": "96",
+        "digest": null
+      },
+      "target": {
+        "value": "133",
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.context",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "null",
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.error",
+      "baseline": {
+        "value": "string:Internal Server Error",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.@kind",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "object",
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.message",
+      "baseline": {
+        "value": "string:An internal server error occurred",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.newIndex",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:0",
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.newParent",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:000000000000000000000311",
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.oldIndex",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "number:0",
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.oldParent",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:000000000000000000000311",
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.statusCode",
+      "baseline": {
+        "value": "number:500",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "status",
+      "baseline": {
+        "value": 415,
+        "digest": null
+      },
+      "target": {
+        "value": 200,
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "statusMessage",
+      "baseline": {
+        "value": "Unsupported Media Type",
+        "digest": null
+      },
+      "target": {
+        "value": "OK",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "header.cache-control",
+      "baseline": {
+        "value": "no-cache",
+        "digest": null
+      },
+      "target": {
+        "value": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "header.set-cookie",
+      "baseline": {
+        "value": null,
+        "digest": null
+      },
+      "target": {
+        "value": "[\"session=<cookie-value>; HttpOnly; SameSite=Lax; Path=/\"]",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "cookies.count",
+      "baseline": {
+        "value": 0,
+        "digest": null
+      },
+      "target": {
+        "value": 1,
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "cookie[session].present",
+      "baseline": {
+        "value": false,
+        "digest": null
+      },
+      "target": {
+        "value": true,
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.context",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "null",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.error",
+      "baseline": {
+        "value": "string:Unsupported Media Type",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.@kind",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.hidden",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "boolean:false",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.id",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:<generated-objectid>",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.lastUpdated",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:<timestamp>",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.metrics.@kind",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.metrics.trinkets",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "number:0",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.mime",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:image/gif",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.name",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:parity-asset.gif",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.size",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "number:27",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.url",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:https://your-assets-bucket.example.com/a3e133512b4ae0f3216c1d08b2dd5800a0d6fad2-<generated-objectid>.gif",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.flash.@kind",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.message",
+      "baseline": {
+        "value": "string:Unsupported Media Type",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.statusCode",
+      "baseline": {
+        "value": "number:415",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "status",
+      "baseline": {
+        "value": 415,
+        "digest": null
+      },
+      "target": {
+        "value": 200,
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "statusMessage",
+      "baseline": {
+        "value": "Unsupported Media Type",
+        "digest": null
+      },
+      "target": {
+        "value": "OK",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "header.cache-control",
+      "baseline": {
+        "value": "no-cache",
+        "digest": null
+      },
+      "target": {
+        "value": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "header.set-cookie",
+      "baseline": {
+        "value": null,
+        "digest": null
+      },
+      "target": {
+        "value": "[\"session=<cookie-value>; HttpOnly; SameSite=Lax; Path=/\"]",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "cookies.count",
+      "baseline": {
+        "value": 0,
+        "digest": null
+      },
+      "target": {
+        "value": 1,
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "cookie[session].present",
+      "baseline": {
+        "value": false,
+        "digest": null
+      },
+      "target": {
+        "value": true,
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.context",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "null",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.error",
+      "baseline": {
+        "value": "string:Unsupported Media Type",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.@kind",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.hidden",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "boolean:false",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.id",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:000000000000000000000503",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.lastUpdated",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:<timestamp>",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.metrics.@kind",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.metrics.trinkets",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "number:1",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.mime",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:image/gif",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.name",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:parity-asset.gif",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.size",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "number:33",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.url",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:https://your-assets-bucket.example.com/b648c4e3b35ace5a8b1c7e1a730049b745aada2f-000000000000000000000503.gif",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.flash.@kind",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.message",
+      "baseline": {
+        "value": "string:Unsupported Media Type",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.statusCode",
+      "baseline": {
+        "value": "number:415",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "status",
+      "baseline": {
+        "value": 415,
+        "digest": null
+      },
+      "target": {
+        "value": 200,
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "statusMessage",
+      "baseline": {
+        "value": "Unsupported Media Type",
+        "digest": null
+      },
+      "target": {
+        "value": "OK",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "header.cache-control",
+      "baseline": {
+        "value": "no-cache",
+        "digest": null
+      },
+      "target": {
+        "value": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "header.set-cookie",
+      "baseline": {
+        "value": null,
+        "digest": null
+      },
+      "target": {
+        "value": "[\"session=<cookie-value>; HttpOnly; SameSite=Lax; Path=/\"]",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "cookies.count",
+      "baseline": {
+        "value": 0,
+        "digest": null
+      },
+      "target": {
+        "value": 1,
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "cookie[session].present",
+      "baseline": {
+        "value": false,
+        "digest": null
+      },
+      "target": {
+        "value": true,
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.context",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "null",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.error",
+      "baseline": {
+        "value": "string:Unsupported Media Type",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.flash.@kind",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.host",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:127.0.0.1",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.id",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:<generated-objectid>",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.message",
+      "baseline": {
+        "value": "string:Unsupported Media Type",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.mime",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:text/plain",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.name",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:parity-material.txt",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.path",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:/api/files/<generated-objectid>/parity-material.txt",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.size",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "number:28",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.statusCode",
+      "baseline": {
+        "value": "number:415",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.type",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:embed",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.page-file-avatar",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "header.content-length",
+      "baseline": {
+        "value": "86",
+        "digest": null
+      },
+      "target": {
+        "value": "106",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.page-file-avatar",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "header.set-cookie",
+      "baseline": {
+        "value": null,
+        "digest": null
+      },
+      "target": {
+        "value": "[\"session=<cookie-value>; HttpOnly; SameSite=Lax; Path=/\"]",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.page-file-avatar",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "cookies.count",
+      "baseline": {
+        "value": 0,
+        "digest": null
+      },
+      "target": {
+        "value": 1,
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.page-file-avatar",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "cookie[session].present",
+      "baseline": {
+        "value": false,
+        "digest": null
+      },
+      "target": {
+        "value": true,
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "non-secure",
+      "scenario": "client-contract.multipart-upload.page-file-avatar",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.message",
+      "baseline": {
+        "value": "string:Unsupported Media Type",
+        "digest": null
+      },
+      "target": {
+        "value": "string:unsupported image type, must be png or jpg",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.api-users-assets.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "header.content-length",
+      "baseline": {
+        "value": "224",
+        "digest": null
+      },
+      "target": {
+        "value": "64",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.api-users-assets.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.bytes",
+      "baseline": {
+        "value": "number:0",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.api-users-assets.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:\"value\" must be of type object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.api-users-assets.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.bytes",
+      "baseline": {
+        "value": "string:\"bytes\" is not allowed",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.api-users-assets.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.file",
+      "baseline": {
+        "value": "string:\"file\" is required",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.api-users-assets.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.path",
+      "baseline": {
+        "value": "string:\"path\" is not allowed",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.api-users-assets.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.path",
+      "baseline": {
+        "value": "string:<upload-path>",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.api-users-assets-fileId.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "header.content-length",
+      "baseline": {
+        "value": "224",
+        "digest": null
+      },
+      "target": {
+        "value": "64",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.api-users-assets-fileId.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.bytes",
+      "baseline": {
+        "value": "number:0",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.api-users-assets-fileId.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:\"value\" must be of type object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.api-users-assets-fileId.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.bytes",
+      "baseline": {
+        "value": "string:\"bytes\" is not allowed",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.api-users-assets-fileId.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.file",
+      "baseline": {
+        "value": "string:\"file\" is required",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.api-users-assets-fileId.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.path",
+      "baseline": {
+        "value": "string:\"path\" is not allowed",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.api-users-assets-fileId.json",
+      "group": "route-sweep",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.path",
+      "baseline": {
+        "value": "string:<upload-path>",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file.html",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "header.content-length",
+      "baseline": {
+        "value": "228",
+        "digest": null
+      },
+      "target": {
+        "value": "64",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file.html",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.bytes",
+      "baseline": {
+        "value": "number:0",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file.html",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:\"value\" must be of type object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file.html",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.bytes",
+      "baseline": {
+        "value": "string:\"bytes\" is not allowed",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file.html",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.path",
+      "baseline": {
+        "value": "string:\"path\" is not allowed",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file.html",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.upload",
+      "baseline": {
+        "value": "string:\"upload\" is required",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file.html",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.path",
+      "baseline": {
+        "value": "string:<upload-path>",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file.json",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "header.content-length",
+      "baseline": {
+        "value": "228",
+        "digest": null
+      },
+      "target": {
+        "value": "64",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file.json",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.bytes",
+      "baseline": {
+        "value": "number:0",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file.json",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:\"value\" must be of type object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file.json",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.bytes",
+      "baseline": {
+        "value": "string:\"bytes\" is not allowed",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file.json",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.path",
+      "baseline": {
+        "value": "string:\"path\" is not allowed",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file.json",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.upload",
+      "baseline": {
+        "value": "string:\"upload\" is required",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file.json",
+      "group": "route-sweep",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.path",
+      "baseline": {
+        "value": "string:<upload-path>",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file-avatar.html",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "header.content-length",
+      "baseline": {
+        "value": "228",
+        "digest": null
+      },
+      "target": {
+        "value": "64",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file-avatar.html",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.bytes",
+      "baseline": {
+        "value": "number:0",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file-avatar.html",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:\"value\" must be of type object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file-avatar.html",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.bytes",
+      "baseline": {
+        "value": "string:\"bytes\" is not allowed",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file-avatar.html",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.path",
+      "baseline": {
+        "value": "string:\"path\" is not allowed",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file-avatar.html",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.upload",
+      "baseline": {
+        "value": "string:\"upload\" is required",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file-avatar.html",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.path",
+      "baseline": {
+        "value": "string:<upload-path>",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file-avatar.json",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "header.content-length",
+      "baseline": {
+        "value": "228",
+        "digest": null
+      },
+      "target": {
+        "value": "64",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file-avatar.json",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.bytes",
+      "baseline": {
+        "value": "number:0",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file-avatar.json",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:\"value\" must be of type object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file-avatar.json",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.bytes",
+      "baseline": {
+        "value": "string:\"bytes\" is not allowed",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file-avatar.json",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.path",
+      "baseline": {
+        "value": "string:\"path\" is not allowed",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file-avatar.json",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.validation.upload",
+      "baseline": {
+        "value": "string:\"upload\" is required",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.post.file-avatar.json",
+      "group": "route-sweep",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.path",
+      "baseline": {
+        "value": "string:<upload-path>",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "status",
+      "baseline": {
+        "value": 500,
+        "digest": null
+      },
+      "target": {
+        "value": 200,
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "statusMessage",
+      "baseline": {
+        "value": "Internal Server Error",
+        "digest": null
+      },
+      "target": {
+        "value": "OK",
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "header.cache-control",
+      "baseline": {
+        "value": "no-cache",
+        "digest": null
+      },
+      "target": {
+        "value": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "header.content-length",
+      "baseline": {
+        "value": "96",
+        "digest": null
+      },
+      "target": {
+        "value": "133",
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.context",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "null",
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.error",
+      "baseline": {
+        "value": "string:Internal Server Error",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.flash.@kind",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "object",
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.message",
+      "baseline": {
+        "value": "string:An internal server error occurred",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.newIndex",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:0",
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.newParent",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:000000000000000000000311",
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.oldIndex",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "number:0",
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.oldParent",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:000000000000000000000311",
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "secure",
+      "scenario": "route.put.api-courses-courseId-lessons-lessonId-materials-materialId-move.json",
+      "group": "route-sweep",
+      "route": "PUT /api/courses/{courseId}/lessons/{lessonId}/materials/{materialId}/move",
+      "identity": "user",
+      "step": "drive",
+      "stepIndex": 0,
+      "field": "body.json.statusCode",
+      "baseline": {
+        "value": "number:500",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R8 (the material-move pre-handler answers again)",
+      "arguedIn": "qa/testing/o001_ca41be2c45857013.md regression row R8; docs/baseline-parity.md, joi-matrix section; test/parity/joi-matrix.js AUTHORIZATION_RULES R8-material-move-guard"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "status",
+      "baseline": {
+        "value": 415,
+        "digest": null
+      },
+      "target": {
+        "value": 200,
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "statusMessage",
+      "baseline": {
+        "value": "Unsupported Media Type",
+        "digest": null
+      },
+      "target": {
+        "value": "OK",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "header.cache-control",
+      "baseline": {
+        "value": "no-cache",
+        "digest": null
+      },
+      "target": {
+        "value": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "header.set-cookie",
+      "baseline": {
+        "value": null,
+        "digest": null
+      },
+      "target": {
+        "value": "[\"session=<cookie-value>; Secure; HttpOnly; SameSite=Lax; Path=/\"]",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "cookies.count",
+      "baseline": {
+        "value": 0,
+        "digest": null
+      },
+      "target": {
+        "value": 1,
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "cookie[session].present",
+      "baseline": {
+        "value": false,
+        "digest": null
+      },
+      "target": {
+        "value": true,
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.context",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "null",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.error",
+      "baseline": {
+        "value": "string:Unsupported Media Type",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.@kind",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.hidden",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "boolean:false",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.id",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:<generated-objectid>",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.lastUpdated",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:<timestamp>",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.metrics.@kind",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.metrics.trinkets",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "number:0",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.mime",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:image/gif",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.name",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:parity-asset.gif",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.size",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "number:27",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.url",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:https://your-assets-bucket.example.com/a3e133512b4ae0f3216c1d08b2dd5800a0d6fad2-<generated-objectid>.gif",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.flash.@kind",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.message",
+      "baseline": {
+        "value": "string:Unsupported Media Type",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.statusCode",
+      "baseline": {
+        "value": "number:415",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "status",
+      "baseline": {
+        "value": 415,
+        "digest": null
+      },
+      "target": {
+        "value": 200,
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "statusMessage",
+      "baseline": {
+        "value": "Unsupported Media Type",
+        "digest": null
+      },
+      "target": {
+        "value": "OK",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "header.cache-control",
+      "baseline": {
+        "value": "no-cache",
+        "digest": null
+      },
+      "target": {
+        "value": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "header.set-cookie",
+      "baseline": {
+        "value": null,
+        "digest": null
+      },
+      "target": {
+        "value": "[\"session=<cookie-value>; Secure; HttpOnly; SameSite=Lax; Path=/\"]",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "cookies.count",
+      "baseline": {
+        "value": 0,
+        "digest": null
+      },
+      "target": {
+        "value": 1,
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "cookie[session].present",
+      "baseline": {
+        "value": false,
+        "digest": null
+      },
+      "target": {
+        "value": true,
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.context",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "null",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.error",
+      "baseline": {
+        "value": "string:Unsupported Media Type",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.@kind",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.hidden",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "boolean:false",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.id",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:000000000000000000000503",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.lastUpdated",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:<timestamp>",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.metrics.@kind",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.metrics.trinkets",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "number:1",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.mime",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:image/gif",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.name",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:parity-asset.gif",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.size",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "number:33",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.file.url",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:https://your-assets-bucket.example.com/b648c4e3b35ace5a8b1c7e1a730049b745aada2f-000000000000000000000503.gif",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.flash.@kind",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.message",
+      "baseline": {
+        "value": "string:Unsupported Media Type",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.api-user-assets-replace",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /api/users/assets/{fileId}",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.statusCode",
+      "baseline": {
+        "value": "number:415",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "status",
+      "baseline": {
+        "value": 415,
+        "digest": null
+      },
+      "target": {
+        "value": 200,
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "statusMessage",
+      "baseline": {
+        "value": "Unsupported Media Type",
+        "digest": null
+      },
+      "target": {
+        "value": "OK",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "header.cache-control",
+      "baseline": {
+        "value": "no-cache",
+        "digest": null
+      },
+      "target": {
+        "value": "private, s-maxage=0, max-age=0, no-cache, no-store, must-revalidate, proxy-revalidate",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "header.set-cookie",
+      "baseline": {
+        "value": null,
+        "digest": null
+      },
+      "target": {
+        "value": "[\"session=<cookie-value>; Secure; HttpOnly; SameSite=Lax; Path=/\"]",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "cookies.count",
+      "baseline": {
+        "value": 0,
+        "digest": null
+      },
+      "target": {
+        "value": 1,
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "cookie[session].present",
+      "baseline": {
+        "value": false,
+        "digest": null
+      },
+      "target": {
+        "value": true,
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.context",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "null",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.error",
+      "baseline": {
+        "value": "string:Unsupported Media Type",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.flash.@kind",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "object",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.host",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:127.0.0.1",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.id",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:<generated-objectid>",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.message",
+      "baseline": {
+        "value": "string:Unsupported Media Type",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.mime",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:text/plain",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.name",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:parity-material.txt",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.path",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:/api/files/<generated-objectid>/parity-material.txt",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.size",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "number:28",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.statusCode",
+      "baseline": {
+        "value": "number:415",
+        "digest": null
+      },
+      "target": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.page-file-upload",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.type",
+      "baseline": {
+        "value": "(absent)",
+        "digest": null
+      },
+      "target": {
+        "value": "string:embed",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.page-file-avatar",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "header.content-length",
+      "baseline": {
+        "value": "86",
+        "digest": null
+      },
+      "target": {
+        "value": "106",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.page-file-avatar",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "header.set-cookie",
+      "baseline": {
+        "value": null,
+        "digest": null
+      },
+      "target": {
+        "value": "[\"session=<cookie-value>; Secure; HttpOnly; SameSite=Lax; Path=/\"]",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.page-file-avatar",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "cookies.count",
+      "baseline": {
+        "value": 0,
+        "digest": null
+      },
+      "target": {
+        "value": 1,
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.page-file-avatar",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "cookie[session].present",
+      "baseline": {
+        "value": false,
+        "digest": null
+      },
+      "target": {
+        "value": true,
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    },
+    {
+      "pass": "secure",
+      "scenario": "client-contract.multipart-upload.page-file-avatar",
+      "group": "client-contract.multipart-upload",
+      "route": "POST /file/avatar",
+      "identity": "user",
+      "step": "multipart-body",
+      "stepIndex": 0,
+      "field": "body.json.message",
+      "baseline": {
+        "value": "string:Unsupported Media Type",
+        "digest": null
+      },
+      "target": {
+        "value": "string:unsupported image type, must be png or jpg",
+        "digest": null
+      },
+      "finding": "order-0 R1 (multipart accepted again on the upload routes)",
+      "arguedIn": "docs/baseline-parity.md, route-manifest section; test/parity/manifest.js AUTHORIZED_SURFACE_CHANGES"
+    }
+  ],
+  "provenance": {
+    "provenanceSchema": 2,
+    "artifact": "corpus.authorized.json",
+    "role": "analysis",
+    "generator": {
+      "path": "test/parity/replay.js",
+      "blob": "04f0c8fe2b378700e92a49df80ea8458e5153e1e",
+      "commit": "9f6573cec6f85877b7e21eeb2ccc48a76f64d906",
+      "commitState": "contains-this-exact-source",
+      "verified": true,
+      "deliveredHead": "9f6573cec6f85877b7e21eeb2ccc48a76f64d906",
+      "deliveredHeadShort": "9f6573c",
+      "matchesDeliveredHead": true
+    },
+    "analysedTree": {
+      "head": "9f6573cec6f85877b7e21eeb2ccc48a76f64d906",
+      "headShort": "9f6573c",
+      "subject": "QA o002: re-seal the two generated inventories against the port-independent run",
+      "isBaselineCommit": false,
+      "worktreeState": "clean"
+    },
+    "delivered": {
+      "head": "9f6573cec6f85877b7e21eeb2ccc48a76f64d906",
+      "headShort": "9f6573c",
+      "subject": "QA o002: re-seal the two generated inventories against the port-independent run",
+      "isBaselineCommit": false,
+      "worktreeState": "clean"
+    },
+    "baselineCommit": "2f8712a112db46f923918c4507c75abc732d83d0",
+    "runtime": {
+      "node": "v22.23.2",
+      "platform": "linux"
+    },
+    "detail": {
+      "registerSchema": 1,
+      "records": 240,
+      "authorities": 7,
+      "corpusDigest": "bc80401fb4de8811d8c6d185e14e61bc6b1eead7066c70851d57f0c9566ca798",
+      "secureCorpusDigest": "13fa998efd74b3503b54dcb1d11f202049c18e52dc1b5becb4216908ee38d0b1"
+    },
+    "payloadDigest": {
+      "algorithm": "sha256",
+      "canonicalization": "JSON with object keys sorted lexicographically and no whitespace",
+      "value": "b222fc0d8d2424f49e931fc67038a1037527937d1db6c68f6d3e6b26db7e3341"
+    }
+  }
+}

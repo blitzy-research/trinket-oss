@@ -258,6 +258,7 @@ serverside/
 │   │   ├── Dockerfile
 │   │   ├── manager.js
 │   │   ├── package.json
+│   │   ├── package-lock.json
 │   │   └── config/
 │   │       ├── default.json
 │   │       ├── production.json
@@ -267,7 +268,8 @@ serverside/
 │       ├── requirements.txt
 │       └── trinket/
 │           ├── server.js
-│           └── package.json
+│           ├── package.json
+│           └── package-lock.json
 ├── java/
 │   ├── manager/
 │   └── shell/
@@ -292,8 +294,10 @@ These ports are internal to the Docker network. Only nginx port 8080 is exposed 
 | java-shell | 8010 | Code execution |
 | r-manager | 8300 | WebSocket routing |
 | r-shell | 8010 | Code execution |
-| pygame-manager | 8400 | WebSocket routing |
+| pygame-manager | 8100 | WebSocket routing |
 | pygame-worker | 8010, 6080 | Code execution + VNC |
+
+`pygame-manager` uses the same internal port as `python3-manager` (8100): the two run under separate Compose profiles (`profiles: ["python3"]` and `profiles: ["pygame"]`) and are reached by service name on the Docker network, so they are never up together under one profile.
 
 ## Troubleshooting
 
@@ -339,7 +343,9 @@ docker compose --profile python3 exec python3-manager \
 
 ## Generated File Cleanup
 
-When users run code that produces files (matplotlib plots, R graphics, etc.), these files are stored in Docker volumes and served via nginx. To prevent disk space exhaustion, each manager automatically cleans up old generated files.
+When users run code that produces files (matplotlib plots, R graphics, etc.), these files are stored in Docker volumes and served via nginx. To prevent disk space exhaustion, the python3, java and r managers automatically clean up old generated files.
+
+The pygame manager is the exception: it implements no cleanup and carries no `manager.cleanup` key, so files written to its `pygame-generated` volume (`/tmp/pygame-generated`) are never pruned automatically and have to be cleared with the manual steps below.
 
 ### How It Works
 
@@ -349,7 +355,7 @@ When users run code that produces files (matplotlib plots, R graphics, etc.), th
 
 ### Configuration
 
-Each manager's cleanup is configured in its `config/default.json`:
+Cleanup is configured in each of those three managers' `config/default.json`:
 
 ```json
 {
@@ -390,6 +396,7 @@ docker compose exec python3-manager rm -rf /tmp/python-generated/*
 docker volume rm serverside_python-generated
 docker volume rm serverside_java-generated
 docker volume rm serverside_r-generated
+docker volume rm serverside_pygame-generated
 ```
 
 Note: Removing volumes requires restarting the containers.
@@ -404,21 +411,25 @@ Python shells have a 60-second timeout. For long-running computations:
 
 ## Development (without Docker)
 
-For local development, you can run services directly:
+For local development, you can run services directly on Node 22, the version these
+images are built on and the one pinned in the repository's root `.nvmrc`:
 
 **Shell** (requires language runtime):
 ```bash
 cd python/shell/trinket
-npm install
+npm ci
 node server.js  # Listens on port 8010
 ```
 
 **Manager**:
 ```bash
 cd python/manager
-npm install
+npm ci
 node manager.js  # Listens on port 8100, connects to shell
 ```
+
+Each unit now commits a `package-lock.json`, so `npm ci` installs the same graph the
+image builds with; `npm install` would resolve fresh ranges instead.
 
 Update `config/default.json` shell URLs to match your local setup.
 

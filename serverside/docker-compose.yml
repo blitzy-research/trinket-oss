@@ -15,7 +15,10 @@ services:
       # - ./nginx/ssl:/etc/nginx/ssl:ro
     depends_on: []  # Will be populated by profiles
 
-  # Python 3 - Manager 8100, Shell 8110
+  # Python 3 - Manager 8100, Shell 8010 (both container-internal)
+  # Every shell/worker image in this directory listens on 8010; only the
+  # manager port differs per unit. On this network the shell is reached as
+  # python3-shell:8010 (see the manager's config/production.json).
   python3-shell:
     build: ./python/shell
     profiles: ["python3"]
@@ -46,8 +49,24 @@ services:
       - python3-shell
     environment:
       - NODE_ENV=production
+      # GENERATED_URL must name the reverse proxy that actually serves the
+      # generated volume, not the manager's own port: the manager only writes
+      # the file into manager.generatedDir (the python-generated volume), and
+      # nginx is what publishes it, from the same volume mounted read-only at
+      # the /python3-generated/ alias. The manager hands this value straight
+      # back to the browser as the file's `url`, so a URL pointing at the
+      # manager (as config/default.json's local-development value does) is not
+      # fetchable by anything. The variable lands on manager.generatedUrl
+      # through the unit's config/custom-environment-variables.json mapping -
+      # that file is the only reason the environment can reach this setting,
+      # and it maps no other key (notably not `shells`, which is why the shell
+      # URLs live in config/production.json instead). A deployment behind a
+      # different host or scheme overrides this same variable, as
+      # serverside/README.md documents.
+      - GENERATED_URL=http://localhost:8080/python3-generated
 
-  # Java - Manager 8200, Shell 8210
+  # Java - Manager 8200, Shell 8010 (both container-internal)
+  # Reached as java-shell:8010 on this network; see java/manager/config/production.json.
   java-shell:
     build: ./java/shell
     profiles: ["java"]
@@ -73,8 +92,14 @@ services:
       - java-shell
     environment:
       - NODE_ENV=production
+      # The reverse proxy that serves the java-generated volume, not this
+      # manager's own port - see the python3-manager note above for why, and
+      # for the config/custom-environment-variables.json mapping that puts the
+      # value on manager.generatedUrl.
+      - GENERATED_URL=http://localhost:8080/java-generated
 
-  # R - Manager 8300, Shell 8310
+  # R - Manager 8300, Shell 8010 (both container-internal)
+  # Reached as r-shell:8010 on this network; see r/manager/config/production.json.
   r-shell:
     build: ./r/shell
     profiles: ["r"]
@@ -100,8 +125,15 @@ services:
       - r-shell
     environment:
       - NODE_ENV=production
+      # The reverse proxy that serves the r-generated volume, not this
+      # manager's own port - see the python3-manager note above for why, and
+      # for the config/custom-environment-variables.json mapping that puts the
+      # value on manager.generatedUrl.
+      - GENERATED_URL=http://localhost:8080/r-generated
 
-  # Pygame - Manager 8400, Worker 8010 + VNC 6080
+  # Pygame - Manager 8100, Worker 8010 + VNC 6080 (all container-internal)
+  # The manager's port comes from pygame/manager/config/default.json, which sets
+  # 8100; the 8400 this comment carried before is a port nothing binds.
   pygame-worker:
     build: ./pygame/worker
     profiles: ["pygame"]

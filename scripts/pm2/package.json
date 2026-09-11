@@ -1,0 +1,12 @@
+{
+  "name": "trinket-pm2",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Locks the pm2 process-manager tree that the root image's CMD (pm2-docker start app.js) invokes; it is not part of the application's dependency graph and is never published. The js-yaml override lifts pm2's transitive ~4.1.0 range past the 4.x quadratic-CPU advisories (fixed in 4.3.1) to the same 4.3.2 the application resolves, so the shipped image carries no high-severity advisory outside the one the plan approves.",
+  "dependencies": {
+    "pm2": "5.4.3"
+  },
+  "overrides": {
+    "js-yaml": "4.3.2"
+  }
+}

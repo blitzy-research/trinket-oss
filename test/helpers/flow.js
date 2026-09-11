@@ -4,7 +4,10 @@ var _        = require('underscore'),
     querystring = require('querystring'),
     defaults = require('./defaults'),
     config   = require('../../config/app.config'),
-    app      = require('../../app.js');
+    // Holder that test/lib/00-ready.js publishes the resolved hapi server on.
+    // Its `server` property must be read at call time, in createRequest: this
+    // module is loaded during file collection, before that root `before` runs.
+    ready    = require('../lib/ready');
 
 // public interface
 var methods = {
@@ -143,7 +146,26 @@ var methods = {
   },
 
   getCourseWithOutline : function(id, cb) {
-    return this.get('/api/courses/' + id + '?outline=yes')
+    // `outline=true`, not `outline=yes`.
+    //
+    // `GET /api/courses/{courseId}` declares `outline : Joi.boolean().optional()`
+    // (config/api_routes.js:41), and the string 'yes' is not a boolean joi
+    // coerces: measured, joi 17.13.3 and joi 18.2.5 BOTH answer
+    // `"outline" must be a boolean`, so this helper never reached
+    // `course.getCourse` at all - the hand-rolled validation block answered
+    // instead, with a body carrying `flash.validation` and no `data`, which is
+    // why every case whose `before` hook calls this helper failed on
+    // `Cannot read properties of undefined`.
+    //
+    // `true` is what the application's own client sends, at all four of its
+    // call sites: public/js/classPage/app.js:57,
+    // public/js/courseEditor/controllers/root.js:147,
+    // public/js/courseEditor/controllers/materialControl.js:91 and
+    // public/js/courseEditor/course.js:15 all pass `{outline: true}`. So this
+    // is a helper defect corrected to the client contract, not a value bent to
+    // get past validation: the schema, the route and every validation outcome
+    // are untouched, and no assertion or expected value in any spec changes.
+    return this.get('/api/courses/' + id + '?outline=true')
       .end(this.setLastResponse(cb));
   },
 
@@ -407,6 +429,24 @@ var methods = {
 }
 
 function createRequest(flow, type, url) {
+  // The agent is resolved on the first request rather than in the constructor,
+  // because `new Flow()` at the bottom of this module runs while Mocha is
+  // collecting files, before any server exists. `ready.server` is read through
+  // the module object on every call, never into a local at require time, which
+  // is what keeps the resolution lazy.
+  if (!flow.agent) {
+    if (!ready.server || !ready.server.listener) {
+      throw new Error('No resolved hapi server on test/lib/ready.js: the root ' +
+        '`before` in test/lib/00-ready.js must publish it before the first ' +
+        'request. (app.js exports a promise, and boot failure exits the process.)');
+    }
+
+    // Cached on the instance so every request in the run shares one agent, and
+    // therefore one keep-alive socket pool. Sessions do not depend on it:
+    // cookies are carried manually below.
+    flow.agent = server(ready.server.listener);
+  }
+
   var request = flow.agent[type](url);
   if (flow.activeUser && flow.cookies[flow.activeUser]) {
     request.set('cookie', flow.cookies[flow.activeUser]);
@@ -416,7 +456,9 @@ function createRequest(flow, type, url) {
 }
 
 function Flow() {
-  this.agent      = server(app.listener);
+  // Filled in by createRequest on the first request, once the resolved server
+  // has been published.
+  this.agent      = null;
   this.activeUser = 'user';
   this.cookies    = {};
 

@@ -31,6 +31,19 @@ module.exports = [
   },
   {
     // get a course by id
+    //
+    // SEAM-F167. This route declares no `auth`, so it inherits `mode: 'try'`
+    // and an anonymous caller reaches it, and `populate(pre.course,query.with)`
+    // is what fetches the owner's user document when the caller asks for
+    // `with=_owner`. What that response may disclose is bounded in the
+    // PROJECTION, not in the schema below: `tagSafeCourseProjection` in
+    // lib/controllers/course.js reduces a populated `_owner` to `{name,
+    // username}` unconditionally. The `with` schema is deliberately left as it
+    // is, because three client call sites legitimately send `with=['_owner']`
+    // (public/js/classPage/app.js:57,
+    // public/js/courseEditor/controllers/root.js:147 and
+    // public/js/courseEditor/controllers/materialControl.js:91) and refusing
+    // the parameter here would break all three.
     route : 'GET /api/courses/{courseId} course.getCourse',
     config : {
       pre  : ['course(params.courseId)', 'populate(pre.course,query.with)'],
@@ -677,6 +690,69 @@ module.exports = [
     }
   },
   {
+    // PRESERVED VALIDATION QUIRK, two of them, both on the folder-name round
+    // trip and both measured A/B against baseline 2f8712a rather than inferred:
+    // the target's responses below are the baseline's, byte for byte once
+    // generated ids are set aside. They are QA findings F48 (whitespace-only
+    // names accepted, LOW) and F15 (the rejection reason never reaches the
+    // user, MEDIUM), and because each is 2013 behaviour this migration did not
+    // touch, AAP rule R-d keeps them working and this comment is the record AAP
+    // 0.2.2 asks for in place of a fix.
+    //
+    // 1. A WHITESPACE-ONLY NAME IS ACCEPTED WHERE THE EMPTY STRING IS REJECTED.
+    // `min(1)` measures raw length and the schema carries no `.trim()`, so `''`
+    // is refused with `"name" is not allowed to be empty`, while `'    '`,
+    // `'\t\n'`, a single space and U+00A0 all pass, reach folders.create and are
+    // persisted verbatim -- a folder whose name renders as nothing (its `<h3>`
+    // innerText is the empty string, measured in the browser) under a random
+    // 8-character slug, because the name transliterates to nothing for the
+    // slug. Measured on both trees: 200 with
+    // `{"success":true,"folder":{"name":"    ","slug":"<8 random>",...}}`.
+    //   `Joi.string().trim().min(1)` is not available here, for three
+    // independently sufficient reasons. AAP 0.2.1 confines this file's
+    // authorized change to the inline pre-handler on the login declaration --
+    // "its 116 declarations untouched". AAP 0.6.2's gate compares the accept and
+    // reject outcome of all 102 validation targets against
+    // test/parity/joi-baseline.json, whose `POST /api/folders payload` entry was
+    // captured from the baseline tree and records this target's coercion case as
+    // `applicable:false` on the ground that the section declares no boolean and
+    // no number leaf; `.trim()` is a convert-time coercion, so it would flip
+    // that field as well as the whitespace outcome, and the artifact's
+    // re-capture is not this unit's to make. And the application's own UI cannot
+    // send the input at all: AngularJS trims text inputs by default, so the
+    // create modal posts `{}` for a whitespace-only entry and is answered
+    // `"name" is required` (measured). The quirk is reachable only by a
+    // non-browser client, which is how QA reproduced it.
+    //
+    // 2. THE REJECTION REASON NEVER REACHES THE USER. A name over 140
+    // characters is refused by the hand-rolled validation block
+    // (lib/util/routeParser.js:867-884), which flashes the messages and calls
+    // request.fail, so the answer is HTTP **200** carrying the echoed payload
+    // plus `{"flash":{"validation":{"name":"\"name\" length must be less than or
+    // equal to 140 characters long"}}}` -- and no `success` key and no `message`
+    // key. The client
+    // (public/js/library/components/folders/new-folder-directive.js:19-47)
+    // branches `response.success`, then `response.message`, then a hardcoded
+    // "We had a problem creating your new folder. Please try again."; it never
+    // reads `flash.validation`, so the 140-character reason is dropped. Measured
+    // in the browser at 141 characters: a red NotifyJS alert carrying that
+    // generic string, appearing ~18ms after the click, rendered at +500ms,
+    // beginning to hide at ~+5.0s and gone by ~+5.2s, with the modal still open,
+    // no folder created and no console error. That ~5.2s lifetime is why a
+    // sample taken at +0ms and again at +6s sees no message at all, and it is
+    // the same figure QA measured for the over-length toast. Two further
+    // measured edges of the same discard: where the surrounding scope defines no
+    // `folderMessage` the directive's `messageFunc` is a no-op and nothing at
+    // all is shown, and a non-2xx answer lands in the client's error callback
+    // where `err.message` is undefined, so even the delivered duplicate-name 409
+    // is replaced by the same generic string.
+    //   Consuming `flash.validation` client-side would mean editing
+    // public/js/**, which AAP 0.2.2 states is not modified, against files this
+    // build leaves byte-identical to 2f8712a (verified by git object hash), and
+    // it would change client-visible page behaviour, which the request's
+    // PRESERVE directive protects and AAP 0.9.3's corpus compares as rendered
+    // text. The catalogue entry for both quirks belongs in
+    // docs/preserved-quirks.md.
     route : 'POST /api/folders folders.create',
     config : {
       auth: 'session',
@@ -688,6 +764,21 @@ module.exports = [
     }
   },
   {
+    // The rename half of the same round trip, and the second of the three
+    // baseline limits on a folder name: none on the create modal's input, 50
+    // here, 140 on the create schema above. Untrimmed for the same reason and
+    // with the same consequence -- `{"name":"   "}` is accepted and renames the
+    // folder to whitespace, measured 200 with `success:true` on both trees.
+    //   Its over-length path is UI-unreachable rather than silent: the inline
+    // editor on the folder page declares `e-maxlength="50"`, which renders a
+    // native `maxlength="50"`, so a 51st character is refused in the field and
+    // no request is issued (measured -- the browser sent no PUT). Were it
+    // reachable, the rejection would show nothing at all, because the rename
+    // handler (public/js/library/trinkets/list/folder-list-controller.js:183-210)
+    // branches `if (result.success)` at :189 and `else if (result.message)` at
+    // :198 with no final else, leaving a `$q` deferred that never settles.
+    // Preserved under R-d for
+    // the reasons recorded on the declaration above.
     route : 'PUT /api/folders/{folderId}/name folders.update',
     config : {
       auth: 'session',
@@ -926,6 +1017,17 @@ module.exports = [
       payload : {
         maxBytes : 10 * (1024 * 1024) // 10MB
       },
+      // PRESERVED VALIDATION QUIRK. This payload shorthand rejects unknown keys,
+      // and the embed's Copy/Remix control posts a nested `settings` object with
+      // jQuery, which bracket-keys it; form-encoded bodies are parsed with
+      // querystring.parse, so `settings[testsEnabled]` arrives as a literal
+      // top-level key and is rejected before trinket.createFork runs, leaving no
+      // fork. The rejection answers 200 with the payload echoed back through
+      // request.fail, byte-identical at baseline 2f8712a, so AAP rule R-d keeps
+      // the schema as-is; its accept/reject outcome is recorded in
+      // test/parity/joi-baseline.json and compared by the AAP 0.6.2 joi gate.
+      // POST /api/trinkets/{trinketId}/draft carries `.unknown(true)` and so
+      // accepts the same body; that difference is baseline, not an oversight.
       validate : {
         query : {
           library : Joi.boolean()
@@ -1004,6 +1106,18 @@ module.exports = [
       payload : {
         maxBytes : 10 * (1024 * 1024) // 10MB
       },
+      // PRESERVED VALIDATION QUIRK. This payload shorthand rejects unknown keys,
+      // and the embed's autosave posts a nested `settings` object with jQuery,
+      // which bracket-keys it; form-encoded bodies are parsed with
+      // querystring.parse, so `settings[autofocusEnabled]` arrives as a literal
+      // top-level key and is rejected before trinket.autosave runs at all, which
+      // is why its ownership check never executes. The rejection answers 200 with
+      // the payload, base64 `zipCode` included, echoed back through request.fail,
+      // byte-identical at baseline 2f8712a, so AAP rule R-d keeps the schema
+      // as-is; its accept/reject outcome is recorded in
+      // test/parity/joi-baseline.json and compared by the AAP 0.6.2 joi gate.
+      // POST /api/trinkets/{trinketId}/draft carries `.unknown(true)` and so
+      // accepts the same body; that difference is baseline, not an oversight.
       validate : {
         payload : {
           code     : Joi.string().optional(),
@@ -1101,7 +1215,8 @@ module.exports = [
     route : 'POST /api/users/login users.login',
     cookie : true,
     config  : {
-      pre : [{ method : helpers.lowerUserFields }, { method : function(req, reply) { return reply(true) }, assign : 'encryptRoles' }],
+      // encryptRoles is a flag only: the true value selects users.login's projected payload
+      pre : [{ method : helpers.lowerUserFields }, { method : function(request, h) { return true; }, assign : 'encryptRoles' }],
       validate : {
         payload : {
           email    : Joi.string().required(),
@@ -1239,6 +1354,24 @@ module.exports = [
     route : 'POST /api/users/assets users.assetUpload',
     config : {
       auth: 'session',
+      /*
+       * The base commit's declaration, unchanged. `output : 'file'` is the
+       * pre-hapi-17 spelling of `payload.multipart.output`, and
+       * lib/util/routeParser.js's `migratePayloadOutput` restates it while
+       * parsing -- the same translation the two upload routes in
+       * config/routes.js get, which carry the full reasoning.
+       *
+       * In short: `payload.multipart` defaults to FALSE in hapi
+       * [node_modules/@hapi/hapi/lib/config.js:144-149] and @hapi/subtext then
+       * answers 415 to a `multipart/form-data` body from the payload parser
+       * [node_modules/@hapi/subtext/lib/index.js:92-96], so the asset Dropzone
+       * at public/js/plugins/asset-browser.js:270-271 -- whose default
+       * paramName 'file' matches the key validated below -- could never upload
+       * anything. Subtext reads the part output from
+       * `options.multipart.output` [node_modules/@hapi/subtext/lib/index.js:290],
+       * so file parts still land on disk exactly as before, while a
+       * non-multipart body is parsed as data rather than spooled.
+       */
       payload : {
         maxBytes  : 1048576 * 5, // 5MB
         output : 'file'
@@ -1255,6 +1388,12 @@ module.exports = [
     config : {
       auth: 'session',
       pre : ['file(params.fileId)'],
+      // Same declaration as `POST /api/users/assets` above, and likewise the
+      // base commit's text. This is the asset-replace half of the same flow,
+      // driven by the same Dropzone at
+      // public/js/plugins/asset-browser.js:528-530, so it needs the same
+      // `migratePayloadOutput` translation: untranslated, the replace path
+      // would answer 415 while the upload path worked.
       payload : {
         maxBytes : 1048576 * 5, // 5MB
         output : 'file'

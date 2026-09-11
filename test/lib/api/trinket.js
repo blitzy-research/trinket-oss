@@ -1,8 +1,14 @@
 var flow     = require('../../helpers/flow'),
     defaults = require('../../helpers/defaults'),
     mail     = require('../../helpers/mail'),
-    queue    = require('../../helpers/queue'),
-    config   = require('config'),
+    // The share-token key is taken from the application's own single source
+    // rather than re-derived here. This case used to build it as
+    // `config.app.mail.secret + shortCode`, which was the same publicly
+    // derivable value the route accepted - so the test was asserting the
+    // capability by reproducing the defect that made it forgeable. The
+    // assertion, its expected 200 and the mail-send expectation are unchanged;
+    // only how the fixture token is signed has moved.
+    helpers  = require('../../../lib/util/helpers'),
     jwt      = require('jsonwebtoken');
 
 module.exports = function() {
@@ -91,7 +97,7 @@ module.exports = function() {
       });
 
       it('should allow me to share the trinket with a token', function(done) {
-        var secret = config.app.mail.secret + trinketShortCode;
+        var secret = helpers.emailTokenSecret(trinketShortCode);
         var token = jwt.sign({ shortCode: trinketShortCode }, secret);
         flow.emailTrinket(trinketId, { email: defaults.user.email, name: defaults.user.fullname, replyTo: defaults.user.email, token: token }, function(err, response) {
           flow.wasOk.should.be.true;

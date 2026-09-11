@@ -14,8 +14,8 @@ Trinket lets students and educators write and run code directly in the browser, 
 
 ## Prerequisites
 
-- Docker and Docker Compose
-- Node.js 18+ (for local development without Docker)
+- Docker and Docker Compose - the commands below use the Compose plugin (`docker compose`), not the standalone `docker-compose` script
+- Node.js 22 LTS with npm 10 (for local development without Docker). The requirement is the version, not any particular version manager: `package.json` declares `node >=22.0.0 <23.0.0` and `npm >=10.0.0 <11.0.0`, and `.nvmrc` contains `22`. If you use nvm, `nvm use 22` selects it; if you do not, install Node 22 however your platform prefers - `node -v` and `npm -v` are the whole of the check
 - MongoDB 5.0+
 - Redis (optional - falls back to in-memory)
 
@@ -32,12 +32,22 @@ Trinket lets students and educators write and run code directly in the browser, 
    cp config/local.example.yaml config/local.yaml
    ```
 
-3. Start the services:
+3. Build the stylesheets into the checkout:
    ```bash
-   docker-compose up
+   npm ci && npm run build
+   # or instead of that line, with no Node on the host, run the same build
+   # in a Node 22 container:
+   docker run --rm -v "$PWD":/app -w /app node:22-bookworm sh -c 'npm ci && npm run build'
    ```
 
-4. Visit http://localhost:3000 in your browser.
+   `docker-compose.yml` mounts the checkout over the application directory, so `/css/base.css` and `/css/embed.css` are served from `public/css/` in the checkout rather than from the copies the image built. Both are generated and gitignored, so on a fresh clone they are absent and those two requests answer 404 until this step has run. The build has to happen outside the `app` container: the shipped image installs production dependencies only, so `vite` and `sass` are not in it and `npm run build:css` there answers `vite: not found`. See [GETTING_STARTED.md](GETTING_STARTED.md) for the detail.
+
+4. Start the services:
+   ```bash
+   docker compose up
+   ```
+
+5. Visit http://localhost:3000 in your browser.
 
 ## Configuration
 
@@ -47,13 +57,15 @@ Configuration is managed through YAML files in the `config/` directory:
 - `local.yaml` - Local overrides and secrets (not committed)
 - `production.yaml` - Production overrides (not committed)
 
-Copy `config/local.example.yaml` to `config/local.yaml` and fill in the required values.
+Copy `config/local.example.yaml` to `config/local.yaml` and fill in the required values. **One value in that file is Compose-specific**: it ships `db.mongo.host: mongodb`, which is the service name inside the Compose network. Running the application directly on the host, set it to `localhost` — the example file carries the same note inline against that key (**measured**: `config/local.example.yaml:29`).
 
 ### Required Configuration
 
 | Setting | Description |
 |---------|-------------|
 | `app.plugins.session.cookieOptions.password` | Session cookie secret (min 32 chars) |
+
+Production requires a real secret and refuses to start without one. Development and test generate an ephemeral secret when none is set, so sessions there do not survive a restart until you set your own.
 
 ### Optional Integrations
 
@@ -72,12 +84,19 @@ See [GETTING_STARTED.md](GETTING_STARTED.md) for detailed setup of optional feat
 
 1. Install dependencies:
    ```bash
-   npm install
+   npm ci
    ```
 
-2. Start MongoDB locally (Redis is optional)
+2. Build the frontend assets:
+   ```bash
+   npm run build
+   ```
 
-3. Run the application:
+   The frontend components are not committed - they live in the gitignored `public/components/` and are distributed separately as `public-components.tgz`, so without them the SCSS build fails at `static/scss/_settings.scss:8`. `npm run build` retrieves and verifies them before compiling the CSS; `npm run fetch-components` retrieves them on their own. On a clean checkout the two commands above exit 0 and write `public/css/base.css` and `public/css/embed.css`; the SCSS compile prints 58 Sass deprecation notices from the vendored Foundation tree along the way, followed by two `WARNING: 435 repetitive deprecation warnings omitted` summaries, all of which are expected.
+
+3. Start MongoDB locally (Redis is optional)
+
+4. Run the application:
    ```bash
    node app.js
    ```
@@ -87,6 +106,8 @@ See [GETTING_STARTED.md](GETTING_STARTED.md) for detailed setup of optional feat
 ```bash
 npm test
 ```
+
+The suite provisions its own MongoDB instance, so a local MongoDB is not needed to run the tests.
 
 ## Architecture
 

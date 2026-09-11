@@ -1,0 +1,168 @@
+{
+  "provenanceSchema": 2,
+  "artifact": "corpus.json",
+  "role": "baseline",
+  "generator": {
+    "path": "test/parity/capture.js",
+    "blob": "93266288728d9a059fe3f95a2d1cd3ab6756f134",
+    "commit": "7f2cc64cc70416e8088c22ce3fafba1b274ae0a5",
+    "commitState": "contains-this-exact-source",
+    "verified": true,
+    "deliveredHead": "7f2cc64cc70416e8088c22ce3fafba1b274ae0a5",
+    "deliveredHeadShort": "7f2cc64",
+    "matchesDeliveredHead": true
+  },
+  "analysedTree": {
+    "head": "2f8712a112db46f923918c4507c75abc732d83d0",
+    "headShort": "2f8712a",
+    "subject": "chore: extend catalog tags (security, web-app)",
+    "isBaselineCommit": true,
+    "worktreeState": "clean"
+  },
+  "delivered": {
+    "head": "7f2cc64cc70416e8088c22ce3fafba1b274ae0a5",
+    "headShort": "7f2cc64",
+    "subject": "Withdraw the remaining unauthorized scope and reconcile every delivery document",
+    "isBaselineCommit": false,
+    "worktreeState": "dirty"
+  },
+  "baselineCommit": "2f8712a112db46f923918c4507c75abc732d83d0",
+  "runtime": {
+    "node": "v22.23.2",
+    "platform": "linux"
+  },
+  "detail": {
+    "corpusSchema": 1,
+    "baselineAsserted": true,
+    "baselineAssertionWaived": false,
+    "server": {
+      "launched": true,
+      "attached": false,
+      "secure": false,
+      "nodeFlags": [],
+      "scrubbedEnv": [],
+      "overlay": "tool:test/parity/server-overlay.json",
+      "nodeConfigDigest": {
+        "algorithm": "sha256",
+        "canonicalization": "secret-labelled values replaced with <redacted>, address-labelled values dropped, URI userinfo removed, then JSON with object keys sorted lexicographically and no whitespace",
+        "value": "0f16fa5ab6fedabbc1cfe7272a1213ae2f13c5e9a9f33ee4f31aac6e380975c8"
+      },
+      "nodeConfigKeys": [
+        "app",
+        "aws",
+        "db",
+        "features"
+      ],
+      "nodeConfigRedactedKeys": [
+        "app.auth.google.clientSecret",
+        "app.plugins.session.cookieOptions.password"
+      ],
+      "httpProfile": "default",
+      "objectStore": "ephemeral:s3",
+      "evidenceLogs": {
+        "http": "ephemeral:http.log",
+        "mail": "ephemeral:mail.log",
+        "s3": "ephemeral:s3.log"
+      }
+    },
+    "configuration": {
+      "secure": false,
+      "googleClient": {
+        "expectedClientId": "parity-harness-client-id.apps.example.invalid",
+        "state": "confirmed",
+        "confirmedInChildConfiguration": true,
+        "clientConfigured": true,
+        "childConfigurationObservable": true,
+        "interceptedTokenCalls": 3,
+        "interceptedUserinfoCalls": 3,
+        "oauthScenariosSelected": 7,
+        "oauthScenariosDriven": 7,
+        "reason": "the child's effective configuration carries this tool's fake client, so the OAuth handlers reached their real branches",
+        "handshakeObserved": true,
+        "sufficient": true
+      },
+      "oauthIdentities": {
+        "existing": "parity-existing@example.com",
+        "new": "parity-newcomer@example.com",
+        "source": "test/parity/seed.js oauthIdentities",
+        "appliedToChild": true
+      },
+      "redactions": [
+        {
+          "category": "generated-ids",
+          "name": "per-request upload output path",
+          "placeholder": "<upload-path>"
+        },
+        {
+          "category": "generated-ids",
+          "name": "bcrypt password hash",
+          "placeholder": "<bcrypt-hash>"
+        },
+        {
+          "category": "generated-ids",
+          "name": "JWT-shaped token",
+          "placeholder": "<generated-token>"
+        }
+      ],
+      "seeded": {
+        "attempted": true,
+        "ok": true,
+        "reason": null
+      },
+      "objectStoreSeed": {
+        "prepared": true,
+        "manifest": "ephemeral:s3-seed.json",
+        "entries": 6,
+        "reason": null
+      },
+      "timeoutMs": 15000,
+      "selection": "filtered",
+      "selectionPatterns": [
+        "pattern:/^(route\\.put\\.api\\-courses\\-courseId\\-lessons\\-lessonId\\-materials\\-materialId\\-assignment\\.json|route\\.put\\.api\\-courses\\-courseId\\-lessons\\-lessonId\\-materials\\-materialId\\-draft\\.json|route\\.put\\.api\\-courses\\-courseId\\-lessons\\-lessonId\\-materials\\-materialId\\-move\\.json|route\\.put\\.api\\-courses\\-courseId\\-lessons\\-lessonId\\-materials\\-materialId\\-name\\.json|route\\.put\\.api\\-courses\\-courseId\\-lessons\\-lessonId\\-materials\\-materialId\\-patchContent\\.json|route\\.put\\.api\\-courses\\-courseId\\-lessons\\-lessonId\\-move\\.json|route\\.put\\.api\\-courses\\-courseId\\-lessons\\-lessonId\\-name\\.json|route\\.put\\.api\\-courses\\-courseId\\-metadata\\.json|route\\.put\\.api\\-folders\\-folderId\\-name\\.json|route\\.put\\.api\\-trinkets\\-trinketId\\-code\\.json|route\\.put\\.api\\-trinkets\\-trinketId\\-description\\.json|route\\.put\\.api\\-trinkets\\-trinketId\\-metrics\\.json|route\\.put\\.api\\-trinkets\\-trinketId\\-name\\.json|route\\.put\\.api\\-trinkets\\-trinketId\\-published\\.json|route\\.put\\.api\\-trinkets\\-trinketId\\-slug\\.json|route\\.put\\.api\\-users\\-userId\\.json|quirk\\.fallback\\.post\\.api\\-interest|quirk\\.fail\\-redirect\\-leak\\.post\\-users|quirk\\.reply\\-chain\\.header\\-resolved\\.posted\\-zip\\-download|quirk\\.dead\\-301\\.course\\-by\\-slug\\-alias|quirk\\.oauth\\.new\\-user\\-created\\-then\\-failed|quirk\\.oauth\\.existing\\-user\\-succeeds|error\\-edge\\.asset\\-from\\-url\\.transport\\-refused|error\\-edge\\.asset\\-from\\-url\\.midstream\\-failure|error\\-edge\\.asset\\-from\\-url\\.query\\-bearing\\-url|client\\-contract\\.multipart\\-upload\\.api\\-user\\-assets|client\\-contract\\.multipart\\-upload\\.api\\-user\\-assets\\-replace|client\\-contract\\.multipart\\-upload\\.page\\-file\\-upload|client\\-contract\\.multipart\\-upload\\.page\\-file\\-avatar|client\\-contract\\.material\\-patch\\-conflict\\.put\\-patch\\-content|client\\-contract\\.share\\-email\\.post\\-api\\-trinket\\-email|client\\-contract\\.client\\-metric\\.production\\-fields|route\\.delete\\.api\\-admin\\-featured\\-course\\-courseId\\.json|route\\.delete\\.api\\-courses\\-courseId\\.json|route\\.delete\\.api\\-courses\\-courseId\\-invitations\\-invitationId\\.json|route\\.delete\\.api\\-courses\\-courseId\\-lessons\\-lessonId\\.json|route\\.delete\\.api\\-courses\\-courseId\\-lessons\\-lessonId\\-materials\\-materialId\\.json|route\\.delete\\.api\\-courses\\-courseId\\-users\\-userId\\.json|route\\.delete\\.api\\-drafts\\-trinketId\\.json|route\\.delete\\.api\\-folders\\-folderId\\.json|route\\.delete\\.api\\-trinkets\\-lang\\-list\\-shortCode\\.json|route\\.delete\\.api\\-trinkets\\-trinketId\\.json|route\\.delete\\.api\\-trinkets\\-trinketId\\-folder\\.json|route\\.delete\\.api\\-users\\.json|route\\.delete\\.api\\-users\\-assets\\-fileId\\.json|auth\\.outcome\\.user\\-not\\-found|client\\-contract\\.delete\\-trinket\\-folder\\.query\\-shape|route\\.put\\.api\\-courses\\-courseId\\-invitations\\-invitationId\\-email\\.json|route\\.put\\.api\\-courses\\-courseId\\-invitations\\-invitationId\\-resend\\.json|route\\.put\\.api\\-courses\\-courseId\\-lessons\\-lessonId\\-draft\\.json)$/"
+      ],
+      "appended": true,
+      "quirks": true
+    },
+    "fixtureProfiles": [
+      "default",
+      "recaptcha:success",
+      "recaptcha:rejected",
+      "recaptcha:non-200",
+      "recaptcha:transport-failure",
+      "recaptcha:malformed-json",
+      "oauth:success-existing-user",
+      "oauth:success-new-user",
+      "oauth:token-non-2xx",
+      "oauth:token-malformed-body",
+      "oauth:token-non-object-body",
+      "oauth:token-transport-failure",
+      "oauth:profile-missing-email",
+      "oauth:profile-transport-failure",
+      "asset:success",
+      "asset:non-2xx",
+      "asset:server-error",
+      "asset:redirect",
+      "asset:redirect-within-limit",
+      "asset:redirect-beyond-limit",
+      "asset:transport-refused",
+      "asset:midstream-failure",
+      "none"
+    ],
+    "routeManifest": {
+      "artifact": "ephemeral:route-manifest.baseline.json",
+      "routes": 233,
+      "expected": 233
+    }
+  },
+  "payloadDigest": {
+    "algorithm": "sha256",
+    "canonicalization": "JSON with object keys sorted lexicographically and no whitespace",
+    "value": "c4ab57fafd2643b0717fd86c4adf735b022d1bcc152207b15cd4fde3fdc39f23"
+  },
+  "artifactDigest": {
+    "algorithm": "sha256",
+    "canonicalization": "the artifact bytes as written, verbatim",
+    "value": "bc80401fb4de8811d8c6d185e14e61bc6b1eead7066c70851d57f0c9566ca798"
+  },
+  "note": "COMMITTED PROVENANCE RECORD for test/parity/corpus.json, the artifact it sits beside. This sidecar IS committed and is meant to be: committed references read it as the corpus's provenance record - test/parity/capture.js, test/parity/corpus.json, test/parity/replay.js, docs/baseline-parity.md, docs/preserved-quirks.md and CHANGELOG.md - so it is evidence in the delivery rather than scratch output. Every field above except artifactDigest is also embedded in corpus.json under its own `provenance` key, which remains the self-contained record; this file adds artifactDigest, a sha256 over the exact corpus bytes as written, which is what binds this record to that one file and lets a byte-for-byte comparison of two corpora keep the provenance outside the compared region. REGENERATED BY: `node test/parity/capture.js --app <a git worktree at 2f8712a with its own npm ci> --out test/parity/corpus.json --expect-baseline --manifest <a route manifest bound to that worktree> --overlay test/parity/server-overlay.json --port 3010`, run from the target worktree - capture.js writes the corpus and this sidecar in the same run - as one full pass followed by three appended passes, because the baseline application dies on three routes and capture.js stops a run when it does. The three are POST /api/admin/user/{userId}, and POST /{userSlug}/courses/{courseSlug}/copy in both Accept modes; their recorded transport failures are the observation of a route that kills the process, driven with the server demonstrably alive, and are the only transport failures in the artifact. Every pass ran on port 3010 - the port test/parity/server-overlay.json declares and `npm run verify:corpus` defaults to - because the absolute Location values and inline-script digests a recording carries name the authority the application was configured with, so a replay elsewhere reports harness noise. No `targetReplay` key is present here, so no target replay has been attested into this file. CORRECTED WORDING: this field is composed by test/parity/manifest.js's sidecarProvenance (manifest.js:2531) as \"RUN OUTPUT - not a delivery artifact, and not to be committed\", which contradicts the committed file it describes, and the same claim appears in the corpus's own embedded provenance note, which capture.js composes. Both generators are deliberately left as they are and the note is re-applied here instead: an artifact binds to its generator's BLOB, so editing capture.js would break the binding this record rests on - blob 93266288728d9a059fe3f95a2d1cd3ab6756f134, which commit 7f2cc64 is verified to hold. A re-capture re-emits the generator's wording, so this note has to be re-applied until those generators are corrected. Nothing else in this file was touched: the recorded commits, runtime, detail block and both digests are the captured evidence, and re-attesting them belongs to the run that produces them."
+}

@@ -143,6 +143,10 @@ describe('HTTP Server', function() {
       models.forEach(function(name) {
         should.exist(global[name], name + ' should be published as a global');
         global[name].should.be.a('function');
+        // Node 20 and later already define a global File class, so the two checks above cannot
+        // fail for that name; a mongoose model always carries a schema the built-in class does
+        // not, which is what makes a lost File global observable here.
+        should.exist(global[name].schema, name + ' should be a mongoose model');
       });
     });
   });

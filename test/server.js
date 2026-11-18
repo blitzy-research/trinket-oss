@@ -343,11 +343,18 @@ describe('HTTP Server', function() {
 
   describe('Session cookie', function() {
     it('should issue the session cookie with HttpOnly, SameSite=Lax and Path=/', function() {
+      var loggedInUser;
+
       server.route({
         method: 'GET',
         path: '/__session',
         handler: function(request, h) {
-          request.yar.set('userId', 'test-user-id');
+          // Log in through the session helper the server installs on every request instead
+          // of writing the session directly, so the helper the application's own login
+          // flows call is the one exercised; it performs the same yar.set internally.
+          request.yar._logIn({ _id: 'test-user-id' });
+          loggedInUser = request.user;
+
           return h.response('ok');
         }
       });
@@ -359,6 +366,9 @@ describe('HTTP Server', function() {
         var cookies = response.headers['set-cookie'];
 
         response.statusCode.should.equal(200);
+        response.payload.should.equal('ok');
+        should.exist(loggedInUser);
+        loggedInUser._id.should.equal('test-user-id');
         cookies.should.be.an('array');
         cookies[0].should.match(/^session=/);
         cookies[0].should.contain('; HttpOnly');

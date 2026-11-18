@@ -81,6 +81,7 @@
   },
   "scripts": {
     "test": "mocha",
+    "test:server": "mocha --globals User,Course,Lesson,Material,File,Trinket,Interaction,Folder,CourseInvitation,log test/server.js",
     "build:css": "vite build",
     "watch:css": "vite build --watch",
     "build": "npm run build:css",

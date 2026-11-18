@@ -1,0 +1,483 @@
+// The server module reads its configuration and opens its database connection at load
+// time, so the environment and the dependency stubs must be in place before it is
+// required. Every statement in this preamble is ordered for that reason.
+process.env.NODE_ENV = 'test';
+
+var SESSION_PASSWORD = 'trinket-test-session-password-0123456789';
+
+// Every value the cases assert is pinned here, so an untracked config/local.yaml cannot
+// change the result; the null debug filename keeps the run from writing a shared log file.
+process.env.NODE_CONFIG = JSON.stringify({
+  app: {
+    start: false,
+    port: 3000,
+    hostname: '127.0.0.1',
+    templates: 'lib/views/',
+    xframeDeny: ['/', '/login', '/signup', '/contact', '/educators'],
+    log: {
+      debug: { filename: null }
+    },
+    plugins: {
+      session: {
+        name: 'session',
+        cookieOptions: { password: SESSION_PASSWORD }
+      }
+    }
+  },
+  db: {
+    redis: { enabled: false }
+  }
+});
+
+var sinon = require('sinon')
+  , mongoose = require('mongoose')
+  , CatboxMongoose = require('../lib/util/catbox-mongoose')
+  , chai = require('chai')
+  , fs = require('fs')
+  , http = require('http')
+  , path = require('path')
+  , spawnSync = require('child_process').spawnSync
+  , should = chai.should();
+
+// config/db.js calls connect() while it loads, and no database is reachable here.
+sinon.stub(mongoose, 'connect').returns(Promise.resolve(mongoose));
+
+// The session cache provider only settles its start() on the mongoose connection's
+// 'open' event, which never fires against a stub, so its lifecycle is stubbed too.
+sinon.stub(CatboxMongoose.Engine.prototype, 'start').returns(Promise.resolve());
+sinon.stub(CatboxMongoose.Engine.prototype, 'isReady').returns(true);
+sinon.stub(CatboxMongoose.Engine.prototype, 'set').returns(Promise.resolve());
+sinon.stub(CatboxMongoose.Engine.prototype, 'get').returns(Promise.resolve(null));
+
+// These five stubs replace module-level state for the whole process, so the suite runs as
+// its own Mocha invocation with this file as an explicit argument (`npm run test:server`):
+// test/mocha.opts asks for --recursive, and a run that loaded the legacy bootstrap into
+// this process would need the stubs moved into a --require module loaded ahead of
+// test/helpers/db.js.
+
+// The module exports the promise returned by init(), never the server itself.
+var appPromise = require('../app.js');
+
+// The lifecycle case binds loopback only, and the probe addresses it by literal IPv4, so the
+// socket assertions do not depend on how the runtime resolves 'localhost' — a name that can
+// resolve to ::1 first — and the test server is not exposed on every interface of a shared host.
+var LOOPBACK = '127.0.0.1';
+
+// Sends one real HTTP request to a listening server, resolving with the status code and
+// rejecting with the socket error so a refused connection can be asserted.
+var probe = function(port, requestPath) {
+  return new Promise(function(resolve, reject) {
+    var request = http.get({ host: LOOPBACK, port: port, path: requestPath }, function(response) {
+      response.resume();
+      resolve(response.statusCode);
+    });
+
+    request.on('error', reject);
+  });
+};
+
+// Asserts the cache trio the response extension writes, for the responses it reaches: Boom
+// errors that fall through to the JSON branch, and non-Boom responses such as the 200 asset.
+// The 401 redirect and the rendered 403/404/50x branches return before the trio is applied,
+// so they carry neither pragma nor expires, which is why the HTML 404 case asserts that
+// absence rather than calling this helper.
+var assertCacheHeaders = function(response, cacheControlSubstring) {
+  response.headers['cache-control'].should.contain(cacheControlSubstring);
+  response.headers.pragma.should.equal('no-cache');
+  response.headers.expires.should.equal('0');
+};
+
+describe('HTTP Server', function() {
+  this.timeout(15000);
+
+  var server;
+  var configuredPort;
+  var configuredHost;
+  var configuredInfoPort;
+  var listeningAfterInit;
+
+  before(function() {
+    return appPromise.then(function(resolved) {
+      server = resolved;
+      configuredPort = server.settings.port;
+      configuredHost = server.settings.host;
+      configuredInfoPort = server.info.port;
+      listeningAfterInit = server.listener.listening;
+    });
+  });
+
+  // Puts back every value the lifecycle case rewrites. The framework also reports the bound
+  // port on info.port once the listener is up, so restoring settings alone would still leave
+  // the configured port this suite asserts depending on whether the lifecycle case had run.
+  var restoreServerSettings = function() {
+    server.settings.port = configuredPort;
+    server.settings.host = configuredHost;
+    server.info.port = configuredInfoPort;
+  };
+
+  after(function() {
+    if (!server) {
+      return;
+    }
+
+    restoreServerSettings();
+
+    if (server.listener && server.listener.listening) {
+      return server.stop();
+    }
+  });
+
+  describe('Module export', function() {
+    it('should resolve to a Hapi server without binding a port', function() {
+      server.should.be.an('object');
+      // Chai 3.5 types an async function as 'asyncfunction', so the check is on typeof.
+      (typeof server.inject).should.equal('function');
+      server.info.port.should.equal(3000);
+      listeningAfterInit.should.equal(false);
+    });
+
+    it('should publish the models as globals', function() {
+      var models = ['User', 'Course', 'Lesson', 'Material', 'File',
+        'Trinket', 'Interaction', 'Folder', 'CourseInvitation'];
+
+      models.forEach(function(name) {
+        should.exist(global[name], name + ' should be published as a global');
+        global[name].should.be.a('function');
+        // Node 20 and later already define a global File class, so the two checks above cannot
+        // fail for that name; a mongoose model always carries a schema the built-in class does
+        // not, which is what makes a lost File global observable here.
+        should.exist(global[name].schema, name + ' should be a mongoose model');
+      });
+    });
+  });
+
+  describe('Configuration guard', function() {
+    it('should refuse to start when the session cookie password is too short', function() {
+      // The child must override the suite's own 40-character password, or the guard it
+      // exists to assert would not trip. It starts from the pinned configuration above so
+      // that an untracked config/local.yaml cannot change the outcome of this case either.
+      var childConfig = JSON.parse(process.env.NODE_CONFIG);
+      childConfig.app.plugins.session.cookieOptions.password = 'short';
+
+      var child = spawnSync(process.execPath, ['-e', 'require(\'./app.js\');'], {
+        cwd: path.join(__dirname, '..'),
+        env: Object.assign({}, process.env, {
+          NODE_ENV: 'test',
+          NODE_CONFIG: JSON.stringify(childConfig)
+        }),
+        encoding: 'utf8',
+        // The spawn budget sits below the case's own 15-second budget because spawnSync
+        // blocks the event loop: a guard that never exits is reported by the assertion below
+        // rather than as a Mocha timeout that names no cause.
+        timeout: 10000
+      });
+
+      // A guard that never exits is killed by the spawn budget, which leaves a signal and no
+      // exit status, so the hang is asserted first and named as the cause of the failure.
+      should.not.exist(child.signal, 'the startup guard did not exit before the spawn budget elapsed');
+      child.status.should.equal(1);
+      child.stderr.should.contain('Session cookie password not configured');
+    });
+  });
+
+  describe('Not found responses', function() {
+    it('should answer an unknown API path with a 404 JSON error and cache headers', function() {
+      return server.inject({
+        method: 'GET',
+        url: '/api/nothing',
+        headers: { accept: 'application/json' }
+      }).then(function(response) {
+        var body = JSON.parse(response.payload);
+
+        response.statusCode.should.equal(404);
+        response.headers['content-type'].should.equal('application/json; charset=utf-8');
+        assertCacheHeaders(response, 'no-cache');
+        body.statusCode.should.equal(404);
+        body.error.should.equal('Not Found');
+        body.message.should.equal('Not Found');
+      });
+    });
+
+    it('should render the 404 view for an unknown HTML path', function() {
+      return server.inject({
+        method: 'GET',
+        url: '/nothing-here-98765',
+        headers: { accept: 'text/html' }
+      }).then(function(response) {
+        response.statusCode.should.equal(404);
+        response.headers['content-type'].should.equal('text/html; charset=utf-8');
+        response.payload.should.contain('<title>Page not found</title>');
+        should.not.exist(response.headers.pragma);
+      });
+    });
+
+    it('should treat a request without an Accept header as an HTML request', function() {
+      return server.inject({
+        method: 'GET',
+        url: '/nothing-here-98765'
+      }).then(function(response) {
+        response.statusCode.should.equal(404);
+        response.headers['content-type'].should.equal('text/html; charset=utf-8');
+        response.payload.should.contain('<title>Page not found</title>');
+      });
+    });
+  });
+
+  describe('Static assets', function() {
+    it('should serve a static asset with the no-store cache contract', function() {
+      var robots = fs.readFileSync(path.join(__dirname, '..', 'public', 'robots.txt'), 'utf8');
+
+      return server.inject({
+        method: 'GET',
+        url: '/robots.txt'
+      }).then(function(response) {
+        response.statusCode.should.equal(200);
+        response.headers['content-type'].should.equal('text/plain; charset=utf-8');
+        assertCacheHeaders(response, 'no-store');
+        should.not.exist(response.headers['x-frame-options']);
+        response.payload.should.equal(robots);
+      });
+    });
+  });
+
+  describe('Response headers', function() {
+    it('should add X-Frame-Options deny only for paths in app.xframeDeny', function() {
+      return server.inject({
+        method: 'POST',
+        url: '/',
+        headers: { accept: 'application/json' }
+      }).then(function(response) {
+        var body = JSON.parse(response.payload);
+
+        response.statusCode.should.equal(404);
+        response.headers['x-frame-options'].should.equal('deny');
+        body.error.should.equal('Not Found');
+
+        return server.inject({
+          method: 'GET',
+          url: '/api/nothing',
+          headers: { accept: 'application/json' }
+        });
+      }).then(function(response) {
+        var body = JSON.parse(response.payload);
+
+        response.statusCode.should.equal(404);
+        should.not.exist(response.headers['x-frame-options']);
+        body.error.should.equal('Not Found');
+      });
+    });
+  });
+
+  describe('Session authentication', function() {
+    it('should redirect an unauthenticated HTML request to /login and reject the JSON request with 401',
+      function() {
+        return server.inject({
+          method: 'GET',
+          url: '/welcome',
+          headers: { accept: 'text/html' }
+        }).then(function(response) {
+          response.statusCode.should.equal(302);
+          response.headers.location.should.equal('/login');
+          response.payload.should.equal('');
+
+          return server.inject({
+            method: 'GET',
+            url: '/welcome',
+            headers: { accept: 'application/json' }
+          });
+        }).then(function(response) {
+          var body = JSON.parse(response.payload);
+
+          response.statusCode.should.equal(401);
+          response.headers['content-type'].should.equal('application/json; charset=utf-8');
+          assertCacheHeaders(response, 'no-cache');
+          body.statusCode.should.equal(401);
+          body.error.should.equal('Unauthorized');
+          body.message.should.equal('Not logged in');
+        });
+      });
+  });
+
+  describe('Edge cases', function() {
+    it('should answer a method the route does not declare with a 404 rather than a crash', function() {
+      return server.inject({
+        method: 'DELETE',
+        url: '/login',
+        headers: { accept: 'application/json' }
+      }).then(function(response) {
+        var body = JSON.parse(response.payload);
+
+        response.statusCode.should.equal(404);
+        response.headers['x-frame-options'].should.equal('deny');
+        body.error.should.equal('Not Found');
+      });
+    });
+
+    it('should reject a malformed path encoding with 400', function() {
+      return server.inject({
+        method: 'GET',
+        url: '/%E0%A4%A',
+        headers: { accept: 'application/json' }
+      }).then(function(response) {
+        var body = JSON.parse(response.payload);
+
+        response.statusCode.should.equal(400);
+        response.headers['content-type'].should.equal('application/json; charset=utf-8');
+        assertCacheHeaders(response, 'no-cache');
+        body.statusCode.should.equal(400);
+        body.error.should.equal('Bad Request');
+      });
+    });
+
+    it('should reject an oversized payload with 413', function() {
+      return server.inject({
+        method: 'POST',
+        url: '/login',
+        payload: 'x'.repeat(1200000),
+        headers: { accept: 'application/json' }
+      }).then(function(response) {
+        var body = JSON.parse(response.payload);
+
+        response.statusCode.should.equal(413);
+        response.headers['content-type'].should.equal('application/json; charset=utf-8');
+        assertCacheHeaders(response, 'no-cache');
+        response.headers['x-frame-options'].should.equal('deny');
+        body.statusCode.should.equal(413);
+        body.error.should.equal('Request Entity Too Large');
+        body.message.should.equal('Payload content length greater than maximum allowed: 1048576');
+      });
+    });
+  });
+
+  describe('Error handling', function() {
+    it('should turn a throwing handler into the server error response and stay alive', function() {
+      server.route({
+        method: 'GET',
+        path: '/__boom',
+        handler: function() {
+          throw new Error('boom');
+        }
+      });
+
+      return server.inject({
+        method: 'GET',
+        url: '/__boom',
+        headers: { accept: 'application/json' }
+      }).then(function(response) {
+        var body = JSON.parse(response.payload);
+
+        response.statusCode.should.equal(500);
+        assertCacheHeaders(response, 'no-cache');
+        body.statusCode.should.equal(500);
+        body.error.should.equal('Internal Server Error');
+
+        return server.inject({
+          method: 'GET',
+          url: '/nothing-here-98765',
+          headers: { accept: 'application/json' }
+        });
+      }).then(function(response) {
+        var body = JSON.parse(response.payload);
+
+        response.statusCode.should.equal(404);
+        body.error.should.equal('Not Found');
+      });
+    });
+  });
+
+  describe('Session cookie', function() {
+    it('should issue the session cookie with HttpOnly, SameSite=Lax and Path=/', function() {
+      // The cookie is asserted as transmitted: the response extension that intends to add
+      // Expires and, when configured, SameSite=None; Secure has no observable effect on
+      // Hapi 20, so those attributes are deliberately not expected here.
+      var loggedInUser;
+
+      server.route({
+        method: 'GET',
+        path: '/__session',
+        handler: function(request, h) {
+          // Log in through the session helper the server installs on every request instead
+          // of writing the session directly, so the helper the application's own login
+          // flows call is the one exercised; it performs the same yar.set internally.
+          request.yar._logIn({ _id: 'test-user-id' });
+          loggedInUser = request.user;
+
+          return h.response('ok');
+        }
+      });
+
+      return server.inject({
+        method: 'GET',
+        url: '/__session'
+      }).then(function(response) {
+        var cookies = response.headers['set-cookie'];
+
+        response.statusCode.should.equal(200);
+        response.payload.should.equal('ok');
+        should.exist(loggedInUser);
+        loggedInUser._id.should.equal('test-user-id');
+        cookies.should.be.an('array');
+        cookies[0].should.match(/^session=/);
+        cookies[0].should.contain('; HttpOnly');
+        cookies[0].should.contain('; SameSite=Lax');
+        cookies[0].should.contain('; Path=/');
+      });
+    });
+  });
+
+  describe('Listener lifecycle', function() {
+    it('should start on an ephemeral port, serve, close, refuse further requests and stay closable',
+      function() {
+        var ephemeralPort;
+
+        // Configuration cannot express port 0 (the module falls back to 3000), and the
+        // framework reads its port from settings, so port 0 is set immediately before
+        // start() to let the OS assign one and avoid colliding with any other process.
+        server.settings.port = 0;
+        // The framework reads the host from settings as well as the port, so the listener is pinned
+        // to loopback here too: that keeps this one real listener off every other interface of a
+        // machine whose port space is shared with other work, whatever app.hostname resolves to.
+        server.settings.host = LOOPBACK;
+
+        return server.start().then(function() {
+          server.info.port.should.be.above(0);
+          ephemeralPort = server.info.port;
+
+          return probe(ephemeralPort, '/nothing-here-98765');
+        }).then(function(statusCode) {
+          statusCode.should.equal(404);
+
+          return server.stop();
+        }).then(function() {
+          return probe(ephemeralPort, '/nothing-here-98765').then(function() {
+            throw new Error('the closed listener accepted a connection');
+          }, function(error) {
+            error.code.should.equal('ECONNREFUSED');
+          });
+        }).then(function() {
+          return server.stop();
+        }).then(function() {
+          restoreServerSettings();
+        });
+      });
+
+    it('should keep injection answering after the listener is closed', function() {
+      // The closed-listener state the title claims is established here rather than inherited
+      // from the case above, so this case holds when it runs, or is filtered, on its own.
+      var closedListener = server.listener.listening ? server.stop() : Promise.resolve();
+
+      return closedListener.then(function() {
+        server.listener.listening.should.equal(false);
+
+        return server.inject({
+          method: 'GET',
+          url: '/api/nothing',
+          headers: { accept: 'application/json' }
+        });
+      }).then(function(response) {
+        response.statusCode.should.equal(404);
+        JSON.parse(response.payload).error.should.equal('Not Found');
+      });
+    });
+  });
+});

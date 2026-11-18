@@ -49,6 +49,12 @@ sinon.stub(CatboxMongoose.Engine.prototype, 'isReady').returns(true);
 sinon.stub(CatboxMongoose.Engine.prototype, 'set').returns(Promise.resolve());
 sinon.stub(CatboxMongoose.Engine.prototype, 'get').returns(Promise.resolve(null));
 
+// These five stubs replace module-level state for the whole process, so the suite runs as
+// its own Mocha invocation with this file as an explicit argument (`npm run test:server`):
+// test/mocha.opts asks for --recursive, and a run that loaded the legacy bootstrap into
+// this process would need the stubs moved into a --require module loaded ahead of
+// test/helpers/db.js.
+
 // The module exports the promise returned by init(), never the server itself.
 var appPromise = require('../app.js');
 
@@ -70,8 +76,11 @@ var probe = function(port, requestPath) {
   });
 };
 
-// Every response the module's pipeline touches carries the same cache trio, and only the
-// cache-control value differs by branch: error responses no-cache, the 200 asset no-store.
+// Asserts the cache trio the response extension writes, for the responses it reaches: Boom
+// errors that fall through to the JSON branch, and non-Boom responses such as the 200 asset.
+// The 401 redirect and the rendered 403/404/50x branches return before the trio is applied,
+// so they carry neither pragma nor expires, which is why the HTML 404 case asserts that
+// absence rather than calling this helper.
 var assertCacheHeaders = function(response, cacheControlSubstring) {
   response.headers['cache-control'].should.contain(cacheControlSubstring);
   response.headers.pragma.should.equal('no-cache');
@@ -374,6 +383,9 @@ describe('HTTP Server', function() {
 
   describe('Session cookie', function() {
     it('should issue the session cookie with HttpOnly, SameSite=Lax and Path=/', function() {
+      // The cookie is asserted as transmitted: the response extension that intends to add
+      // Expires and, when configured, SameSite=None; Secure has no observable effect on
+      // Hapi 20, so those attributes are deliberately not expected here.
       var loggedInUser;
 
       server.route({
@@ -418,9 +430,9 @@ describe('HTTP Server', function() {
         // framework reads its port from settings, so port 0 is set immediately before
         // start() to let the OS assign one and avoid colliding with any other process.
         server.settings.port = 0;
-        // The configured host is the IPv4 wildcard, and the framework reads the host from
-        // settings too: loopback keeps the one real listener off every other interface of a
-        // machine whose port space is shared with other work.
+        // The framework reads the host from settings as well as the port, so the listener is pinned
+        // to loopback here too: that keeps this one real listener off every other interface of a
+        // machine whose port space is shared with other work, whatever app.hostname resolves to.
         server.settings.host = LOOPBACK;
 
         return server.start().then(function() {

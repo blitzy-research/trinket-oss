@@ -42,11 +42,16 @@ sinon.stub(CatboxMongoose.Engine.prototype, 'get').returns(Promise.resolve(null)
 // The module exports the promise returned by init(), never the server itself.
 var appPromise = require('../app.js');
 
+// The lifecycle case binds loopback only, and the probe addresses it by literal IPv4, so the
+// socket assertions do not depend on how the runtime resolves 'localhost' — a name that can
+// resolve to ::1 first — and the test server is not exposed on every interface of a shared host.
+var LOOPBACK = '127.0.0.1';
+
 // Sends one real HTTP request to a listening server, resolving with the status code and
 // rejecting with the socket error so a refused connection can be asserted.
 var probe = function(port, requestPath) {
   return new Promise(function(resolve, reject) {
-    var request = http.get({ host: 'localhost', port: port, path: requestPath }, function(response) {
+    var request = http.get({ host: LOOPBACK, port: port, path: requestPath }, function(response) {
       response.resume();
       resolve(response.statusCode);
     });
@@ -68,22 +73,35 @@ describe('HTTP Server', function() {
 
   var server;
   var configuredPort;
+  var configuredHost;
+  var configuredInfoPort;
   var listeningAfterInit;
 
   before(function() {
     return appPromise.then(function(resolved) {
       server = resolved;
-      configuredPort = server.info.port;
+      configuredPort = server.settings.port;
+      configuredHost = server.settings.host;
+      configuredInfoPort = server.info.port;
       listeningAfterInit = server.listener.listening;
     });
   });
+
+  // Puts back every value the lifecycle case rewrites. The framework also reports the bound
+  // port on info.port once the listener is up, so restoring settings alone would still leave
+  // the configured port this suite asserts depending on whether the lifecycle case had run.
+  var restoreServerSettings = function() {
+    server.settings.port = configuredPort;
+    server.settings.host = configuredHost;
+    server.info.port = configuredInfoPort;
+  };
 
   after(function() {
     if (!server) {
       return;
     }
 
-    server.settings.port = configuredPort;
+    restoreServerSettings();
 
     if (server.listener && server.listener.listening) {
       return server.stop();
@@ -100,8 +118,13 @@ describe('HTTP Server', function() {
     });
 
     it('should publish the models as globals', function() {
-      global.User.should.be.a('function');
-      global.Trinket.should.be.a('function');
+      var models = ['User', 'Course', 'Lesson', 'Material', 'File',
+        'Trinket', 'Interaction', 'Folder', 'CourseInvitation'];
+
+      models.forEach(function(name) {
+        should.exist(global[name], name + ' should be published as a global');
+        global[name].should.be.a('function');
+      });
     });
   });
 
@@ -128,9 +151,15 @@ describe('HTTP Server', function() {
           })
         }),
         encoding: 'utf8',
-        timeout: 60000
+        // The spawn budget sits below the case's own 15-second budget because spawnSync
+        // blocks the event loop: a guard that never exits is reported by the assertion below
+        // rather than as a Mocha timeout that names no cause.
+        timeout: 10000
       });
 
+      // A guard that never exits is killed by the spawn budget, which leaves a signal and no
+      // exit status, so the hang is asserted first and named as the cause of the failure.
+      should.not.exist(child.signal, 'the startup guard did not exit before the spawn budget elapsed');
       child.status.should.equal(1);
       child.stderr.should.contain('Session cookie password not configured');
     });
@@ -387,6 +416,10 @@ describe('HTTP Server', function() {
         // framework reads its port from settings, so port 0 is set immediately before
         // start() to let the OS assign one and avoid colliding with any other process.
         server.settings.port = 0;
+        // The configured host is the IPv4 wildcard, and the framework reads the host from
+        // settings too: loopback keeps the one real listener off every other interface of a
+        // machine whose port space is shared with other work.
+        server.settings.host = LOOPBACK;
 
         return server.start().then(function() {
           server.info.port.should.be.above(0);
@@ -406,15 +439,23 @@ describe('HTTP Server', function() {
         }).then(function() {
           return server.stop();
         }).then(function() {
-          server.settings.port = configuredPort;
+          restoreServerSettings();
         });
       });
 
     it('should keep injection answering after the listener is closed', function() {
-      return server.inject({
-        method: 'GET',
-        url: '/api/nothing',
-        headers: { accept: 'application/json' }
+      // The closed-listener state the title claims is established here rather than inherited
+      // from the case above, so this case holds when it runs, or is filtered, on its own.
+      var closedListener = server.listener.listening ? server.stop() : Promise.resolve();
+
+      return closedListener.then(function() {
+        server.listener.listening.should.equal(false);
+
+        return server.inject({
+          method: 'GET',
+          url: '/api/nothing',
+          headers: { accept: 'application/json' }
+        });
       }).then(function(response) {
         response.statusCode.should.equal(404);
         JSON.parse(response.payload).error.should.equal('Not Found');

@@ -5,11 +5,21 @@ process.env.NODE_ENV = 'test';
 
 var SESSION_PASSWORD = 'trinket-test-session-password-0123456789';
 
+// Every value the cases assert is pinned here, so an untracked config/local.yaml cannot
+// change the result; the null debug filename keeps the run from writing a shared log file.
 process.env.NODE_CONFIG = JSON.stringify({
   app: {
     start: false,
+    port: 3000,
+    hostname: '127.0.0.1',
+    templates: 'lib/views/',
+    xframeDeny: ['/', '/login', '/signup', '/contact', '/educators'],
+    log: {
+      debug: { filename: null }
+    },
     plugins: {
       session: {
+        name: 'session',
         cookieOptions: { password: SESSION_PASSWORD }
       }
     }
@@ -131,24 +141,16 @@ describe('HTTP Server', function() {
   describe('Configuration guard', function() {
     it('should refuse to start when the session cookie password is too short', function() {
       // The child must override the suite's own 40-character password, or the guard it
-      // exists to assert would not trip.
+      // exists to assert would not trip. It starts from the pinned configuration above so
+      // that an untracked config/local.yaml cannot change the outcome of this case either.
+      var childConfig = JSON.parse(process.env.NODE_CONFIG);
+      childConfig.app.plugins.session.cookieOptions.password = 'short';
+
       var child = spawnSync(process.execPath, ['-e', 'require(\'./app.js\');'], {
         cwd: path.join(__dirname, '..'),
         env: Object.assign({}, process.env, {
           NODE_ENV: 'test',
-          NODE_CONFIG: JSON.stringify({
-            app: {
-              start: false,
-              plugins: {
-                session: {
-                  cookieOptions: { password: 'short' }
-                }
-              }
-            },
-            db: {
-              redis: { enabled: false }
-            }
-          })
+          NODE_CONFIG: JSON.stringify(childConfig)
         }),
         encoding: 'utf8',
         // The spawn budget sits below the case's own 15-second budget because spawnSync

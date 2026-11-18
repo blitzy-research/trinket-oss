@@ -55,6 +55,14 @@ var probe = function(port, requestPath) {
   });
 };
 
+// Every response the module's pipeline touches carries the same cache trio, and only the
+// cache-control value differs by branch: error responses no-cache, the 200 asset no-store.
+var assertCacheHeaders = function(response, cacheControlSubstring) {
+  response.headers['cache-control'].should.contain(cacheControlSubstring);
+  response.headers.pragma.should.equal('no-cache');
+  response.headers.expires.should.equal('0');
+};
+
 describe('HTTP Server', function() {
   this.timeout(15000);
 
@@ -139,9 +147,7 @@ describe('HTTP Server', function() {
 
         response.statusCode.should.equal(404);
         response.headers['content-type'].should.equal('application/json; charset=utf-8');
-        response.headers['cache-control'].should.contain('no-cache');
-        response.headers.pragma.should.equal('no-cache');
-        response.headers.expires.should.equal('0');
+        assertCacheHeaders(response, 'no-cache');
         body.statusCode.should.equal(404);
         body.error.should.equal('Not Found');
         body.message.should.equal('Not Found');
@@ -183,9 +189,7 @@ describe('HTTP Server', function() {
       }).then(function(response) {
         response.statusCode.should.equal(200);
         response.headers['content-type'].should.equal('text/plain; charset=utf-8');
-        response.headers['cache-control'].should.contain('no-store');
-        response.headers.pragma.should.equal('no-cache');
-        response.headers.expires.should.equal('0');
+        assertCacheHeaders(response, 'no-store');
         should.not.exist(response.headers['x-frame-options']);
         response.payload.should.equal(robots);
       });
@@ -199,8 +203,11 @@ describe('HTTP Server', function() {
         url: '/',
         headers: { accept: 'application/json' }
       }).then(function(response) {
+        var body = JSON.parse(response.payload);
+
         response.statusCode.should.equal(404);
         response.headers['x-frame-options'].should.equal('deny');
+        body.error.should.equal('Not Found');
 
         return server.inject({
           method: 'GET',
@@ -208,8 +215,11 @@ describe('HTTP Server', function() {
           headers: { accept: 'application/json' }
         });
       }).then(function(response) {
+        var body = JSON.parse(response.payload);
+
         response.statusCode.should.equal(404);
         should.not.exist(response.headers['x-frame-options']);
+        body.error.should.equal('Not Found');
       });
     });
   });
@@ -236,9 +246,7 @@ describe('HTTP Server', function() {
 
           response.statusCode.should.equal(401);
           response.headers['content-type'].should.equal('application/json; charset=utf-8');
-          response.headers['cache-control'].should.contain('no-cache');
-          response.headers.pragma.should.equal('no-cache');
-          response.headers.expires.should.equal('0');
+          assertCacheHeaders(response, 'no-cache');
           body.statusCode.should.equal(401);
           body.error.should.equal('Unauthorized');
           body.message.should.equal('Not logged in');
@@ -271,9 +279,8 @@ describe('HTTP Server', function() {
 
         response.statusCode.should.equal(400);
         response.headers['content-type'].should.equal('application/json; charset=utf-8');
-        response.headers['cache-control'].should.contain('no-cache');
-        response.headers.pragma.should.equal('no-cache');
-        response.headers.expires.should.equal('0');
+        assertCacheHeaders(response, 'no-cache');
+        body.statusCode.should.equal(400);
         body.error.should.equal('Bad Request');
       });
     });
@@ -289,12 +296,11 @@ describe('HTTP Server', function() {
 
         response.statusCode.should.equal(413);
         response.headers['content-type'].should.equal('application/json; charset=utf-8');
-        response.headers['cache-control'].should.contain('no-cache');
-        response.headers.pragma.should.equal('no-cache');
-        response.headers.expires.should.equal('0');
+        assertCacheHeaders(response, 'no-cache');
         response.headers['x-frame-options'].should.equal('deny');
+        body.statusCode.should.equal(413);
         body.error.should.equal('Request Entity Too Large');
-        body.message.should.contain('1048576');
+        body.message.should.equal('Payload content length greater than maximum allowed: 1048576');
       });
     });
   });
@@ -317,9 +323,8 @@ describe('HTTP Server', function() {
         var body = JSON.parse(response.payload);
 
         response.statusCode.should.equal(500);
-        response.headers['cache-control'].should.contain('no-cache');
-        response.headers.pragma.should.equal('no-cache');
-        response.headers.expires.should.equal('0');
+        assertCacheHeaders(response, 'no-cache');
+        body.statusCode.should.equal(500);
         body.error.should.equal('Internal Server Error');
 
         return server.inject({
@@ -328,7 +333,10 @@ describe('HTTP Server', function() {
           headers: { accept: 'application/json' }
         });
       }).then(function(response) {
-        JSON.parse(response.payload).error.should.equal('Not Found');
+        var body = JSON.parse(response.payload);
+
+        response.statusCode.should.equal(404);
+        body.error.should.equal('Not Found');
       });
     });
   });
